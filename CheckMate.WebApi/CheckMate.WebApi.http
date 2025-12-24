@@ -1,0 +1,6 @@
+@CheckMate.WebApi_HostAddress = http://localhost:5167
+
+GET {{CheckMate.WebApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
