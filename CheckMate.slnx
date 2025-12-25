@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+  </Folder>
   <Project Path="CheckMate.DB/CheckMate.DB.sqlproj" Id="54abca40-415e-4e56-ba4d-4442b2f9537c">
     <Build />
     <Deploy />
