@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { Template } from '@/types/template';
+import { Template } from "@/types/template";
 
 interface TemplateListProps {
   templates: Template[];
@@ -8,11 +8,17 @@ interface TemplateListProps {
   onDelete: (id: string) => void;
 }
 
-export default function TemplateList({ templates, onEdit, onDelete }: TemplateListProps) {
+export default function TemplateList({
+  templates,
+  onEdit,
+  onDelete,
+}: TemplateListProps) {
   return (
     <div className="template-list">
       {templates.length === 0 ? (
-        <p className="empty-message">No templates found. Create your first template!</p>
+        <p className="empty-message">
+          No templates found. Create your first template!
+        </p>
       ) : (
         <table className="templates-table">
           <thead>
