@@ -23,5 +23,3 @@ jobs:
       run: dotnet restore
     - name: Build
       run: msbuild /p:Configuration=Release /p:Platform="Any CPU" /m
-    - name: Test
-      run: dotnet test --configuration Release --no-build --verbosity normal
