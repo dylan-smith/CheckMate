@@ -37,7 +37,7 @@ export default function Home() {
       setShowForm(false);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to create template",
+        err instanceof Error ? err.message : "Failed to create template"
       );
     }
   };
@@ -54,7 +54,7 @@ export default function Home() {
       setShowForm(false);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to update template",
+        err instanceof Error ? err.message : "Failed to update template"
       );
     }
   };
@@ -66,7 +66,7 @@ export default function Home() {
       await loadTemplates();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to delete template",
+        err instanceof Error ? err.message : "Failed to delete template"
       );
     }
   };
