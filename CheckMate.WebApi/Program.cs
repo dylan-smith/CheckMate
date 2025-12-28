@@ -13,6 +13,16 @@ public class Program
         builder.Services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+        builder.Services.AddCors(options =>
+        {
+            options.AddPolicy("AllowNextJS", policy =>
+            {
+                policy.WithOrigins("http://localhost:3000")
+                      .AllowAnyHeader()
+                      .AllowAnyMethod();
+            });
+        });
+
         builder.Services.AddControllers();
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
         builder.Services.AddOpenApi();
@@ -26,6 +36,8 @@ public class Program
         }
 
         app.UseHttpsRedirection();
+
+        app.UseCors("AllowNextJS");
 
         app.UseAuthorization();
 
