@@ -72,23 +72,23 @@ jobs:
         cache: 'npm'
         cache-dependency-path: checkmate-web/package-lock.json
 
-    - name: Install npm dependencies
+    - name: npm ci
       run: npm ci
       working-directory: ./checkmate-web
 
-    - name: Run ESLint
+    - name: npm run lint
       run: npm run lint
       working-directory: ./checkmate-web
 
-    - name: Check TypeScript types
+    - name: npm run type-check
       run: npm run type-check
       working-directory: ./checkmate-web
 
-    - name: Check code formatting
+    - name: npm run format:check
       run: npm run format:check
       working-directory: ./checkmate-web
 
-    - name: Build React project
+    - name: npm run build
       run: npm run build
       working-directory: ./checkmate-web
 
