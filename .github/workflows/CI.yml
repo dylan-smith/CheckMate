@@ -107,8 +107,8 @@ jobs:
         azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_TOKEN }}
         action: "upload"
         skip_app_build: true
-        app_location: "/checkmate-web"
-        output_location: "/checkmate-web/out"
+        app_location: "./checkmate-web"
+        output_location: "./checkmate-web/out"
         repo_token: ${{ secrets.GITHUB_TOKEN }}
 
   build-actions:
