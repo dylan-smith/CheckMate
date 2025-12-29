@@ -5,6 +5,7 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+    types: [opened, synchronize, reopened, closed]
   schedule:
     - cron: "0 7 * * *"
   workflow_dispatch:
@@ -14,6 +15,8 @@ permissions:
 
 jobs:
   build-dotnet:
+    if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+
     permissions:
       contents: read
       actions: write
@@ -49,6 +52,8 @@ jobs:
       uses: github/codeql-action/analyze@v4
 
   build-react:
+    if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+
     permissions:
       contents: read
       actions: write
@@ -99,12 +104,16 @@ jobs:
       if: github.event_name == 'push' && github.ref == 'refs/heads/master'
       uses: Azure/static-web-apps-deploy@v1
       with:
-        azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+        azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_TOKEN }}
         action: "upload"
+        skip_app_build: true
         app_location: "/checkmate-web"
         output_location: "out"
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
 
   build-actions:
+    if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+
     permissions:
       contents: read
       actions: write
@@ -123,3 +132,16 @@ jobs:
   
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
+
+  close_pull_request:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clean up Preview Static Site
+        id: closepullrequest
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_TOKEN }}
+          action: "close"
