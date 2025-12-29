@@ -1,0 +1,4 @@
+name: "CodeQL code scanning custom configuration"
+
+paths-ignore: 
+  - checkmate-web/out
