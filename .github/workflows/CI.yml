@@ -111,7 +111,7 @@ jobs:
         skip_app_build: true
         skip_api_build: true
         app_location: "./checkmate-web"
-        output_location: "/out"
+        output_location: "out"
         repo_token: ${{ secrets.GITHUB_TOKEN }}
 
   build-actions:
