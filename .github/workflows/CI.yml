@@ -110,7 +110,7 @@ jobs:
         action: "upload"
         skip_app_build: true
         app_location: "./checkmate-web"
-        output_location: "./checkmate-web/out"
+        output_location: "out"
         repo_token: ${{ secrets.GITHUB_TOKEN }}
 
   build-actions:
