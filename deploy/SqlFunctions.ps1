@@ -78,17 +78,6 @@ function Execute-SQLCMD
 	}
 }
 
-function Decode-JwtPayload {
-    param([string]$Jwt)
-
-    $payload = $Jwt.Split('.')[1]
-    $payload += '=' * ((4 - $payload.Length % 4) % 4)
-    $bytes = [Convert]::FromBase64String($payload.Replace('-', '+').Replace('_', '/'))
-    $json = [System.Text.Encoding]::UTF8.GetString($bytes)
-    Write-Verbose "Decoded JWT Payload: $json"
-    return $json | ConvertFrom-Json
-}
-
 function Get-SqlConnection
 {
     param([string]$DatabaseServerName,
@@ -99,10 +88,6 @@ function Get-SqlConnection
     }
 
     $token = az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv
-
-    $claims = Decode-JwtPayload $token
-
-    $claims | Format-List | Write-Verbose
 
     if ([string]::IsNullOrWhiteSpace($token)) {
         Write-Error "Failed to acquire access token for Azure SQL Database"
