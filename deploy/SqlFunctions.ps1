@@ -80,7 +80,7 @@ function Get-SqlConnection
 
     if ([string]::IsNullOrWhiteSpace($DatabaseName))
     {
-        $ConnString = "Data Source=$DatabaseServerName;Authentication=Active Directory Default;Encrypt=True;ConnectRetryCount=4;ConnectRetryInterval=15;Connection Timeout=90;"
+        $ConnString = "Server=$DatabaseServerName;Database=$DatabaseName;Authentication=Active Directory Default;Encrypt=True;"
     } else {
         $ConnString = "Server=$DatabaseServerName;Database=$DatabaseName;Authentication=Active Directory Default;Encrypt=True;"
     }
