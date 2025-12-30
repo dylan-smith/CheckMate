@@ -94,9 +94,11 @@ function Get-SqlConnection
     {
         Try
         {
-            $Conn = New-Object System.Data.SqlClient.SqlConnection
-            $Conn.ConnectionString = $ConnString
             Write-Verbose "Opening SQL connection to $ConnString..."
+            $Conn = New-Object System.Data.SqlClient.SqlConnection
+            Write-Verbose "Opening SQL connection to $ConnString...2"
+            $Conn.ConnectionString = $ConnString
+            Write-Verbose "Opening SQL connection to $ConnString...3"
             $Conn.Open()
             $Success = $true
         }
