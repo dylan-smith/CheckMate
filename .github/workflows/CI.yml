@@ -92,8 +92,6 @@ jobs:
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-    - run: az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv
-
     - name: Deploy Database
       run: ./DeployDB.ps1 -DatabaseUpgradeScriptsPath '../CheckMate.DB' -DatabaseServerName ${{ vars.AZURE_SQL_SERVER_NAME }} -DatabaseName ${{ vars.DATABASE_NAME }} -verbose
       shell: pwsh
