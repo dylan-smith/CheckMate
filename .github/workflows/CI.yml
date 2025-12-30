@@ -72,7 +72,7 @@ jobs:
       with:
         app-name: 'CheckMate-API'
         slot-name: 'Production'
-        package: ./CheckMate-WebApi/dist
+        package: ./CheckMate.WebApi/dist
 
   build-react:
     if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.action != 'closed')
