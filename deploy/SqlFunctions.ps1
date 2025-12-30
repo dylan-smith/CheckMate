@@ -87,6 +87,12 @@ function Get-SqlConnection
 	    Write-Error "Database Server must be provided"
     }
 
+    $token = az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv
+
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        Write-Error "Failed to acquire access token for Azure SQL Database"
+    }
+
     if ([string]::IsNullOrWhiteSpace($DatabaseName))
     {
         $ConnString = "Server=$DatabaseServerName;Authentication=Active Directory Default;Encrypt=True;"
@@ -106,6 +112,8 @@ function Get-SqlConnection
             Write-Verbose "Opening SQL connection to $ConnString..."
             $Conn = New-Object Microsoft.Data.SqlClient.SqlConnection
             $Conn.ConnectionString = $ConnString
+            $Conn.AccessToken = $token
+            Write-Verbose "Opening SQL connection to $ConnString...2"
             $Conn.Open()
             $Success = $true
         }
