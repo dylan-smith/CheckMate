@@ -23,7 +23,7 @@ jobs:
       security-events: write
       id-token: write
 
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v6
@@ -40,14 +40,13 @@ jobs:
       with:
         dotnet-version: 10.0.x
 
-    - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # commit hash for v2
-
     - name: Restore nuget dependencies
-      run: dotnet restore --ignore-failed-sources
+      run: dotnet restore
+      working-directory: ./CheckMate.WebApi
 
     - name: Build API
-      run: msbuild /p:Configuration=Release /p:Platform="Any CPU" /m
+      run: dotnet build
+      working-directory: ./CheckMate.WebApi
 
     - name: dotnet publish
       if: github.ref == 'refs/heads/master' && github.event_name == 'push'
@@ -73,6 +72,31 @@ jobs:
         app-name: 'CheckMate-API'
         slot-name: 'Production'
         package: ./CheckMate.WebApi/dist
+
+  deploy-database:
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Login to Azure
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Deploy Database
+      run: ./deploy/DeployDB.ps1 -DatabaseUpgradeScriptsPath './CheckMate.DB' `
+        -DatabaseServerName ${{ vars.AZURE_SQL_SERVER_NAME }} `
+        -DatabaseName ${{ vars.DATABASE_NAME }} `
+        -verbose
 
   build-react:
     if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.action != 'closed')
