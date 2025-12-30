@@ -52,7 +52,7 @@ jobs:
     - name: dotnet publish
       if: github.ref == 'refs/heads/master' && github.event_name == 'push'
       run: dotnet publish -c Release -o ./dist
-      working-directory: ./CheckMate-WebApi
+      working-directory: ./CheckMate.WebApi
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
