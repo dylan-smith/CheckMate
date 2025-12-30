@@ -149,8 +149,6 @@ jobs:
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
 
-    - run: ls -R ./checkmate-web/out
-
     - name: Deploy to Azure Static Web Apps
       uses: Azure/static-web-apps-deploy@v1
       with:
