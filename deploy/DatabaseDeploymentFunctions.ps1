@@ -36,15 +36,13 @@ function Add-RowToScriptsTable
 function Test-Database
 {
     param([string]$DatabaseServerName, 
-          [string]$DatabaseName, 
-          [string]$DatabaseLogin, 
-          [string]$DatabasePassword)
+          [string]$DatabaseName)
 
     if ([string]::IsNullOrWhiteSpace($DatabaseName)) {
 	    Write-Error "Database Name must be provided"
     }
 
-    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
+    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName
 
     $Sql = "SELECT COUNT(*) FROM sys.databases WHERE name = '$DatabaseName' AND State = 0"
     $DatabaseCount = Execute-Scalar $Sql $Conn
@@ -56,12 +54,10 @@ function Test-Database
 function Get-DatabaseEdition
 {
     param([string]$DatabaseServerName,
-          [string]$DatabaseName,
-          [string]$DatabaseLogin,
-          [string]$DatabasePassword)
+          [string]$DatabaseName)
 
     $Sql = "SELECT DATABASEPROPERTYEX('$DatabaseName', 'EDITION')"
-    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
+    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName
 
     $DatabaseEdition = Execute-Scalar $Sql $Conn
     $Conn.Close()
@@ -73,12 +69,10 @@ function Get-DatabaseEdition
 function Get-DatabaseServiceObjective
 {
     param([string]$DatabaseServerName,
-          [string]$DatabaseName,
-          [string]$DatabaseLogin,
-          [string]$DatabasePassword)
+          [string]$DatabaseName)
 
     $Sql = "SELECT DATABASEPROPERTYEX('$DatabaseName', 'ServiceObjective')"
-    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
+    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName
 
     $DatabaseServiceObjective = Execute-Scalar $Sql $Conn
     $Conn.Close()
@@ -90,9 +84,7 @@ function Get-DatabaseServiceObjective
 function Drop-Database
 {
     param([string]$DatabaseServerName, 
-          [string]$DatabaseName, 
-          [string]$DatabaseLogin, 
-          [string]$DatabasePassword)
+          [string]$DatabaseName)
 
     Write-Verbose "Dropping Database $DatabaseName..."
 
@@ -100,17 +92,17 @@ function Drop-Database
 	    Write-Error "Database Name must be provided"
     }
 
-    if (Test-Database -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword)
+    if (Test-Database -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName)
     {
-        $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
+        $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName
         $Sql = "DROP DATABASE [$DatabaseName]"
         Execute-NonQuery $Sql $Conn
         $Conn.Close()
 
-        while (Test-Database -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword)
+        while (Test-Database -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName)
         {
             Write-Verbose "Waiting for DB drop to complete..."
-            sleep -Seconds 10
+            Start-Sleep -Seconds 10
             $SleepCount++
 
             if ($SleepCount -gt 10)
@@ -127,8 +119,6 @@ function Create-Database
 {
     param([string]$DatabaseServerName, 
           [string]$DatabaseName, 
-          [string]$DatabaseLogin, 
-          [string]$DatabasePassword,
           [string]$DatabaseEdition,
           [string]$DatabaseServiceObjective)
 
@@ -147,7 +137,7 @@ function Create-Database
         $Sql = "CREATE DATABASE [$DatabaseName]"
     }
     
-    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
+    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName
     Execute-NonQuery $Sql $Conn
     $Conn.Close()
 
@@ -159,7 +149,7 @@ function Create-Database
 	$Sql += "  [DateRun] DATETIME NOT NULL `n"
 	$Sql += ")"
 	
-    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
+    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName
 	Execute-NonQuery $Sql $Conn
     $Conn.Close()
 
@@ -170,9 +160,7 @@ function Upgrade-Database
 {
     param([string]$DatabaseUpgradeScriptsPath, 
           [string]$DatabaseServerName, 
-          [string]$DatabaseName, 
-          [string]$DatabaseLogin, 
-          [string]$DatabasePassword)
+          [string]$DatabaseName)
 
     Write-Verbose "Upgrading database $DatabaseName..."
 
@@ -189,7 +177,7 @@ function Upgrade-Database
     Write-Verbose "Total Scripts: $($UpgradeScripts.length)"
 
     Write-Verbose "Looking in $ScriptsTable for scripts already run..."
-    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
+    $Conn = Get-SqlConnection -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName
     
     $Sql = "SELECT COUNT(*) FROM sys.tables WHERE name = '$ScriptsTable'"
     $TableCount = Execute-Scalar $Sql $Conn

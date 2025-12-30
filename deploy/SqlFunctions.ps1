@@ -72,9 +72,7 @@ function Execute-SQLCMD
 function Get-SqlConnection
 {
     param([string]$DatabaseServerName,
-          [string]$DatabaseName,
-          [string]$DatabaseLogin,
-          [string]$DatabasePassword)
+          [string]$DatabaseName)
 
     if ([string]::IsNullOrWhiteSpace($DatabaseServerName)) {
 	    Write-Error "Database Server must be provided"
@@ -82,24 +80,10 @@ function Get-SqlConnection
 
     if ([string]::IsNullOrWhiteSpace($DatabaseName))
     {
-        if ([string]::IsNullOrWhiteSpace($DatabaseLogin)) {
-	        $ConnString = "Data Source=$DatabaseServerName;Integrated Security=True;ConnectRetryCount=4;ConnectRetryInterval=15;Connection Timeout=90;"
-        }
-        else {
-	        $ConnString = "Server=$DatabaseServerName;User Id=$DatabaseLogin;Password=$DatabasePassword;ConnectRetryCount=4;ConnectRetryInterval=15;Connection Timeout=90;"
-        }
+        $ConnString = "Data Source=$DatabaseServerName;Integrated Security=True;ConnectRetryCount=4;ConnectRetryInterval=15;Connection Timeout=90;"
     } else {
-        if ([string]::IsNullOrWhiteSpace($DatabaseLogin)) {
-	        $ConnString = "Data Source=$DatabaseServerName;Initial Catalog=$DatabaseName;Integrated Security=True;ConnectRetryCount=4;ConnectRetryInterval=15;Connection Timeout=90;"
-        }
-        else {
-    	    $ConnString = "Server=$DatabaseServerName;Database=$DatabaseName;User Id=$DatabaseLogin;Password=$DatabasePassword;ConnectRetryCount=4;ConnectRetryInterval=15;Connection Timeout=90;"
-        }
+        $ConnString = "Data Source=$DatabaseServerName;Initial Catalog=$DatabaseName;Integrated Security=True;ConnectRetryCount=4;ConnectRetryInterval=15;Connection Timeout=90;"
     }
-
-    # Write-Verbose "Using Connection String: $ConnString"
-
-    
 
     $RetryCount = 4
     $Retries = 0

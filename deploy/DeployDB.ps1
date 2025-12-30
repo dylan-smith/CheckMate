@@ -3,8 +3,6 @@ Param(
 	[string]$DatabaseUpgradeScriptsPath,	
 	[string]$DatabaseServerName,
 	[string]$DatabaseName,
-	[string]$DatabaseLogin,
-	[string]$DatabasePassword,
     [string]$DatabaseEdition = "Basic",
     [string]$DatabaseServiceObjective = "Basic",
     [switch]$DropDatabase
@@ -13,7 +11,6 @@ Param(
 Write-Verbose "Database Upgrade Scripts Path: $DatabaseUpgradeScriptsPath"
 Write-Verbose "Database Server: $DatabaseServerName"
 Write-Verbose "Database Name: $DatabaseName"
-Write-Verbose "Database Login: $DatabaseLogin"
 Write-Verbose "Database Edition: $DatabaseEdition"
 Write-Verbose "Database Service Objective: $DatabaseServiceObjective"
 Write-Verbose "Drop Database: $DropDatabase"
@@ -25,15 +22,15 @@ if ([System.IO.Path]::IsPathRooted($DatabaseUpgradeScriptsPath) -eq $false) {
 }
 
 if ($DropDatabase) {
-    $DatabaseEdition = Get-DatabaseEdition -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
-    $DatabaseServiceObjective = Get-DatabaseServiceObjective -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
-    Drop-Database -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
+    $DatabaseEdition = Get-DatabaseEdition -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName
+    $DatabaseServiceObjective = Get-DatabaseServiceObjective -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName
+    Drop-Database -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName
 }
 
-if ((Test-Database $DatabaseServerName $DatabaseName $DatabaseLogin $DatabasePassword) -eq $false)
+if ((Test-Database $DatabaseServerName $DatabaseName) -eq $false)
 {
     Write-Verbose "Database $DatabaseName does not exist, creating database..."
-    Create-Database -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword -DatabaseEdition $DatabaseEdition -DatabaseServiceObjective $DatabaseServiceObjective
+    Create-Database -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseEdition $DatabaseEdition -DatabaseServiceObjective $DatabaseServiceObjective
 }
 
-Upgrade-Database -DatabaseUpgradeScriptsPath $DatabaseUpgradeScriptsPath -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName -DatabaseLogin $DatabaseLogin -DatabasePassword $DatabasePassword
+Upgrade-Database -DatabaseUpgradeScriptsPath $DatabaseUpgradeScriptsPath -DatabaseServerName $DatabaseServerName -DatabaseName $DatabaseName
