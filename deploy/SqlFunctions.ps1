@@ -90,7 +90,7 @@ function Get-SqlConnection
     $RetryInterval = 15
     $Success = $false
 
-    while ($Success -eq $false -or $Retries -gt $RetryCount)
+    while ($Success -eq $false -and $Retries -lt $RetryCount)
     {
         Try
         {
@@ -104,6 +104,7 @@ function Get-SqlConnection
         }
         Catch
         {
+            Write-Verbose $_.Exception.Message
             Write-Verbose "SQL connection failed, retrying [$Retries of $RetryCount]..."
             $Retries++
             Start-Sleep -s $RetryInterval
