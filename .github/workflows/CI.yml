@@ -93,10 +93,7 @@ jobs:
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
     - name: Deploy Database
-      run: ./deploy/DeployDB.ps1 -DatabaseUpgradeScriptsPath './CheckMate.DB' `
-        -DatabaseServerName ${{ vars.AZURE_SQL_SERVER_NAME }} `
-        -DatabaseName ${{ vars.DATABASE_NAME }} `
-        -verbose
+      run: ./deploy/DeployDB.ps1 -DatabaseUpgradeScriptsPath './CheckMate.DB' -DatabaseServerName ${{ vars.AZURE_SQL_SERVER_NAME }} -DatabaseName ${{ vars.DATABASE_NAME }} -verbose
 
   build-react:
     if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.action != 'closed')
