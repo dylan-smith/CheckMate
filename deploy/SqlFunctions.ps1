@@ -128,7 +128,6 @@ function Get-SqlConnection
             $Conn = New-Object Microsoft.Data.SqlClient.SqlConnection
             $Conn.ConnectionString = $ConnString
             $Conn.AccessToken = $token
-            Write-Verbose "Opening SQL connection to $ConnString...2"
             $Conn.Open()
             $Success = $true
         }
