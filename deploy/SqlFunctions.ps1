@@ -95,9 +95,9 @@ function Get-SqlConnection
 
     if ([string]::IsNullOrWhiteSpace($DatabaseName))
     {
-        $ConnString = "Server=$DatabaseServerName;Authentication=Active Directory Default;Encrypt=True;"
+        $ConnString = "Server=$DatabaseServerName;Encrypt=True;"
     } else {
-        $ConnString = "Server=$DatabaseServerName;Database=$DatabaseName;Authentication=Active Directory Default;Encrypt=True;"
+        $ConnString = "Server=$DatabaseServerName;Database=$DatabaseName;Encrypt=True;"
     }
 
     $RetryCount = 4
