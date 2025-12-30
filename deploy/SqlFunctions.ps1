@@ -3,9 +3,9 @@
 
 function Execute-NonQuery
 {
-	param([string]$Sql, [System.Data.SqlClient.SqlConnection]$Conn)
+	param([string]$Sql, [Microsoft.Data.SqlClient.SqlConnection]$Conn)
 	
-	$Cmd = New-Object System.Data.SqlClient.SqlCommand
+	$Cmd = New-Object Microsoft.Data.SqlClient.SqlCommand
 	$Cmd.Connection = $Conn
 	$Cmd.CommandText = $Sql
     $Cmd.CommandTimeout = 600
@@ -21,9 +21,9 @@ function Execute-NonQuery
 
 function Execute-Scalar
 {
-	param([string]$Sql, [System.Data.SqlClient.SqlConnection]$Conn)
+	param([string]$Sql, [Microsoft.Data.SqlClient.SqlConnection]$Conn)
 	
-	$Cmd = New-Object System.Data.SqlClient.SqlCommand
+	$Cmd = New-Object Microsoft.Data.SqlClient.SqlCommand
 	$Cmd.Connection = $Conn
 	$Cmd.CommandText = $Sql
 	
@@ -37,14 +37,14 @@ function Execute-Scalar
 
 function Get-DataTable
 {
-	param([string]$Sql, [System.Data.SqlClient.SqlConnection]$Conn)
+	param([string]$Sql, [Microsoft.Data.SqlClient.SqlConnection]$Conn)
 	
     try {
-		$Cmd = New-Object System.Data.SqlClient.SqlCommand
+		$Cmd = New-Object Microsoft.Data.SqlClient.SqlCommand
 		$Cmd.Connection = $Conn
 		$Cmd.CommandText = $Sql
 	
-		$Adapter = New-Object System.Data.SqlClient.SqlDataAdapter
+		$Adapter = New-Object Microsoft.Data.SqlClient.SqlDataAdapter
 		$Adapter.SelectCommand = $Cmd
 
 		$Result = New-Object System.Data.DataTable
@@ -80,7 +80,7 @@ function Get-SqlConnection
 
     if ([string]::IsNullOrWhiteSpace($DatabaseName))
     {
-        $ConnString = "Server=$DatabaseServerName;Database=$DatabaseName;Authentication=Active Directory Default;Encrypt=True;"
+        $ConnString = "Server=$DatabaseServerName;Authentication=Active Directory Default;Encrypt=True;"
     } else {
         $ConnString = "Server=$DatabaseServerName;Database=$DatabaseName;Authentication=Active Directory Default;Encrypt=True;"
     }
@@ -95,7 +95,7 @@ function Get-SqlConnection
         Try
         {
             Write-Verbose "Opening SQL connection to $ConnString..."
-            $Conn = New-Object System.Data.SqlClient.SqlConnection
+            $Conn = New-Object Microsoft.Data.SqlClient.SqlConnection
             $Conn.ConnectionString = $ConnString
             $Conn.Open()
             $Success = $true
@@ -119,7 +119,7 @@ function Get-SqlConnection
 
 function Get-SmoServer
 {
-    param([System.Data.SqlClient.SqlConnection]$Conn)
+    param([Microsoft.Data.SqlClient.SqlConnection]$Conn)
 
     $ServerConnection = New-Object Microsoft.SqlServer.Management.Common.ServerConnection($Conn)
     $Server = New-Object Microsoft.SqlServer.Management.Smo.Server($ServerConnection)
