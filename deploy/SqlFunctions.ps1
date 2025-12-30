@@ -1,5 +1,6 @@
 [Reflection.Assembly]::LoadWithPartialName("Microsoft.SqlServer.ConnectionInfo") | Out-Null
 [Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.Smo') | Out-Null
+[Reflection.Assembly]::LoadWithPartialName('Microsoft.Data.SqlClient') | Out-Null
 
 function Execute-NonQuery
 {
