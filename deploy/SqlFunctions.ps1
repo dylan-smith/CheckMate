@@ -1,6 +1,17 @@
+# Ensure SqlServer module is available (includes Microsoft.Data.SqlClient)
+if (-not (Get-Module -ListAvailable -Name SqlServer)) {
+    Write-Verbose "Installing SqlServer module..."
+    Install-Module -Name SqlServer -Force -AllowClobber -Scope CurrentUser
+}
+
+Import-Module SqlServer -ErrorAction SilentlyContinue
+
+# Load required assemblies
 [Reflection.Assembly]::LoadWithPartialName("Microsoft.SqlServer.ConnectionInfo") | Out-Null
 [Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.Smo') | Out-Null
-[Reflection.Assembly]::LoadWithPartialName('Microsoft.Data.SqlClient') | Out-Null
+
+# Load Microsoft.Data.SqlClient
+Add-Type -Path (Join-Path (Split-Path (Get-Module SqlServer).Path) "Microsoft.Data.SqlClient.dll") -ErrorAction SilentlyContinue
 
 function Execute-NonQuery
 {
