@@ -11,7 +11,7 @@ Import-Module SqlServer -ErrorAction SilentlyContinue
 [Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.Smo') | Out-Null
 
 # Load Microsoft.Data.SqlClient
-Add-Type -Path (Join-Path (Split-Path (Get-Module SqlServer).Path) "Microsoft.Data.SqlClient.dll") -ErrorAction SilentlyContinue
+# Add-Type -Path (Join-Path (Split-Path (Get-Module SqlServer).Path) "Microsoft.Data.SqlClient.dll") -ErrorAction SilentlyContinue
 
 function Execute-NonQuery
 {
