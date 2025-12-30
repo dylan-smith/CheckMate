@@ -104,7 +104,7 @@ function Get-SqlConnection
         }
         Catch
         {
-            Write-Verbose "SQL connection failed, retrying [$Retry of $RetryCount]..."
+            Write-Verbose "SQL connection failed, retrying [$Retries of $RetryCount]..."
             $Retries++
             Start-Sleep -s $RetryInterval
         }
