@@ -82,7 +82,7 @@ function Get-SqlConnection
     {
         $ConnString = "Data Source=$DatabaseServerName;Authentication=Active Directory Default;Encrypt=True;ConnectRetryCount=4;ConnectRetryInterval=15;Connection Timeout=90;"
     } else {
-        $ConnString = "Data Source=$DatabaseServerName;Initial Catalog=$DatabaseName;Authentication=Active Directory Default;Encrypt=True;ConnectRetryCount=4;ConnectRetryInterval=15;Connection Timeout=90;"
+        $ConnString = "Server=$DatabaseServerName;Database=$DatabaseName;Authentication=Active Directory Default;Encrypt=True;"
     }
 
     $RetryCount = 4
@@ -96,6 +96,7 @@ function Get-SqlConnection
         {
             $Conn = New-Object System.Data.SqlClient.SqlConnection
             $Conn.ConnectionString = $ConnString
+            Write-Verbose "Opening SQL connection to $ConnString..."
             $Conn.Open()
             $Success = $true
         }
