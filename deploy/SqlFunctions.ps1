@@ -5,6 +5,7 @@
 # }
 
 # Import-Module SqlServer -ErrorAction SilentlyContinue
+Install-Package Microsoft.Data.SqlClient -Force
 
 # Load required assemblies
 [Reflection.Assembly]::LoadWithPartialName("Microsoft.SqlServer.ConnectionInfo") | Out-Null
