@@ -94,6 +94,7 @@ jobs:
 
     - name: Deploy Database
       run: ./deploy/DeployDB.ps1 -DatabaseUpgradeScriptsPath './CheckMate.DB' -DatabaseServerName ${{ vars.AZURE_SQL_SERVER_NAME }} -DatabaseName ${{ vars.DATABASE_NAME }} -verbose
+      shell: pwsh
 
   build-react:
     if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.action != 'closed')
