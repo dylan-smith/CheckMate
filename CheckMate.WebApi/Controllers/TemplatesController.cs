@@ -2,6 +2,7 @@ using CheckMate.WebApi.Data;
 using CheckMate.WebApi.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authorization;
 
 namespace CheckMate.WebApi.Controllers;
 
@@ -71,6 +72,7 @@ public class TemplatesController(ApplicationDbContext context) : ControllerBase
         return NoContent();
     }
 
+    [Authorize(Roles = "admin")]
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteTemplate(Guid id)
     {
