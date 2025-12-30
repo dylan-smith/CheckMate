@@ -198,7 +198,6 @@ function Upgrade-Database
     	Write-Error "$ScriptsTable table does not exist in $DatabaseName"
     }
     
-    $Sql = "SELECT * FROM [$ScriptsTable]"
     $ScriptsAlreadyRun = Get-ScriptsAlreadyRun $Conn
     
     $ScriptsToRun = @($UpgradeScripts | Where-Object {$ScriptsAlreadyRun -NotContains $_})
