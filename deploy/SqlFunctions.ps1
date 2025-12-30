@@ -116,6 +116,9 @@ function Get-SqlConnection
         {
             $Retries++
             Write-Verbose $_.Exception.Message
+            if ($_.Exception.InnerException) {
+                Write-Verbose $_.Exception.InnerException.Message
+            }
             Write-Verbose "SQL connection failed, retrying [$Retries of $RetryCount]..."
             Start-Sleep -s $RetryInterval
         }
