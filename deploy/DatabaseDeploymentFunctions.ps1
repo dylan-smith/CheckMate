@@ -4,7 +4,7 @@ $ScriptsTable = 'ScriptsRun'
 
 function Get-ScriptsAlreadyRun
 {
-	param([System.Data.SqlClient.SqlConnection]$Conn)
+	param([Microsoft.Data.SqlClient.SqlConnection]$Conn)
 	
 	try {
 		$Sql = "SELECT * FROM $ScriptsTable"
@@ -24,7 +24,7 @@ function Get-ScriptsAlreadyRun
 
 function Add-RowToScriptsTable 
 {
-	param([System.Data.SqlClient.SqlConnection]$Conn, 
+	param([Microsoft.Data.SqlClient.SqlConnection]$Conn, 
           [string]$ScriptName)
 
 	Write-Verbose "Inserting into $ScriptsTable table: $ScriptName"
