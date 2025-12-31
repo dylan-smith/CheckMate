@@ -1,5 +1,7 @@
 using CheckMate.WebApi.Data;
 using Microsoft.EntityFrameworkCore;
+using Azure.Identity;
+using Microsoft.Data.SqlClient;
 
 namespace CheckMate.WebApi;
 
@@ -11,7 +13,26 @@ public class Program
 
         // Add services to the container.
         builder.Services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+        {
+            var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+            // Only use Managed Identity when running in Azure App Service
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WEBSITE_INSTANCE_ID")))
+            {
+                var sqlConnection = new SqlConnection(connectionString);
+
+                sqlConnection.AccessToken = new DefaultAzureCredential().GetToken(
+                    new Azure.Core.TokenRequestContext(new[] { "https://database.windows.net/.default" })
+                ).Token;
+
+                options.UseSqlServer(sqlConnection);
+            }
+            else
+            {
+                // Use connection string authentication for local development
+                options.UseSqlServer(connectionString);
+            }
+        });
 
         builder.Services.AddCors(options =>
         {
