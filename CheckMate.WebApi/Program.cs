@@ -50,7 +50,7 @@ public class Program
 
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole();
-        builder.Logging.AddFilter("Azure.Identity", LogLevel.Information);
+        builder.Logging.AddFilter("Azure.Identity", LogLevel.Debug);
 
         var app = builder.Build();
 
