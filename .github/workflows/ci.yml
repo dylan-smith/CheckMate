@@ -165,7 +165,8 @@ jobs:
     name: Infrastructure What-If (Bicep)
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
-    environment: production
+    # No environment: PR runs use a separate read-and-preview-only identity and never get the
+    # production environment's credentials or secrets.
     permissions:
       id-token: write
       contents: read
@@ -178,7 +179,7 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v3
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          client-id: ${{ vars.AZURE_WHATIF_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
@@ -192,7 +193,9 @@ jobs:
             --exclude-change-types Ignore NoChange
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-          AZURE_SQL_CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
+          # What-if can't read existing app setting values, so the real secret adds nothing to the
+          # preview; keep it out of PR runs, whose workflow definition comes from the PR branch.
+          AZURE_SQL_CONNECTION_STRING: what-if-placeholder
 
   deploy-infrastructure:
     name: Deploy Infrastructure (Bicep)
