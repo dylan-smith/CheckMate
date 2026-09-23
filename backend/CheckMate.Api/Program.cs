@@ -1,6 +1,8 @@
+using System.Data.Common;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
 using CheckMate.Api.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -116,7 +118,7 @@ else
             await dbContext.Database.CloseConnectionAsync();
         }, connectTimeout.Token);
     }
-    catch (Exception ex)
+    catch (Exception ex) when (ex is DbException or RetryLimitExceededException or OperationCanceledException)
     {
         throw new InvalidOperationException(
             "Cannot connect to the database. Ensure the database has been created and migrations have been applied.",
