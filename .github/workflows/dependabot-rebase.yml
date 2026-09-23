@@ -1,0 +1,56 @@
+name: Dependabot Rebase Next
+
+# main requires branches to be up to date, so after one Dependabot PR merges the rest fall
+# behind. This asks Dependabot to rebase the oldest behind PR that has auto-merge enabled,
+# one at a time: when it merges, the push to main runs this again for the next one. The
+# hourly schedule picks things back up if a PR fails CI or an event is missed.
+#
+# Requires the AUTOMERGE_TOKEN Actions secret (Settings > Secrets > Actions): the same PAT
+# as the Dependabot secret used by dependabot-auto-merge.yml. Dependabot ignores commands
+# from github-actions[bot], so the comment has to come from a user with write access.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency: dependabot-rebase
+
+jobs:
+  rebase-next:
+    name: Rebase next Dependabot PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request rebase
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          prs=$(gh pr list --author app/dependabot --state open \
+                --json number,mergeStateStatus,autoMergeRequest,createdAt,statusCheckRollup \
+                --jq 'map(select(.autoMergeRequest != null)) | sort_by(.createdAt)')
+
+          # An up-to-date PR with checks still running is already on its way in; let it finish
+          in_flight=$(echo "$prs" | jq -r '
+            map(select(.mergeStateStatus != "BEHIND"
+                       and any(.statusCheckRollup[]; (.status // "COMPLETED") != "COMPLETED"
+                                                      or .state == "PENDING")))
+            | first | .number // empty')
+          if [ -n "$in_flight" ]; then
+            echo "PR #$in_flight is already running checks"
+            exit 0
+          fi
+
+          next=$(echo "$prs" | jq -r 'map(select(.mergeStateStatus == "BEHIND")) | first | .number // empty')
+          if [ -z "$next" ]; then
+            echo "No Dependabot PRs are behind main"
+            exit 0
+          fi
+
+          echo "Requesting rebase of PR #$next"
+          gh pr comment "$next" --body "@dependabot rebase"
