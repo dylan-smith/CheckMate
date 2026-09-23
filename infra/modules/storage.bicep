@@ -6,7 +6,9 @@ param location string
 @maxLength(24)
 param storageAccountName string
 
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+// The static website itself ($web container, index/404 documents) is a data-plane setting that ARM
+// can't manage; CI enables it with `az storage blob service-properties update --static-website`.
+resource storageAccount 'Microsoft.Storage/storageAccounts@2025-01-01' = {
   name: storageAccountName
   location: location
   sku: {
@@ -14,24 +16,12 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
   kind: 'StorageV2'
   properties: {
+    accessTier: 'Hot'
     supportsHttpsTrafficOnly: true
     minimumTlsVersion: 'TLS1_2'
-    accessTier: 'Hot'
-  }
-}
-
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
-  parent: storageAccount
-  name: 'default'
-  properties: {
-    // staticWebsite is a valid ARM property but absent from Bicep type definitions (type gap)
-    // See: https://aka.ms/bicep-type-issues
-    #disable-next-line BCP037
-    staticWebsite: {
-      enabled: true
-      indexDocument: 'index.html'
-      error404Document: 'index.html'
-    }
+    allowBlobPublicAccess: true
+    allowSharedKeyAccess: true
+    allowCrossTenantReplication: false
   }
 }
 

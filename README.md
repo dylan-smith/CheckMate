@@ -1,6 +1,6 @@
 # CheckMate
 
-[![CI](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml)
+[![CI](https://github.com/dylan-smith/CheckMate2/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-smith/CheckMate2/actions/workflows/ci.yml)
 
 A checklist management app with:
 - **Backend:** ASP.NET Core Web API (.NET 10) + Entity Framework Core + SQL Server
@@ -134,38 +134,46 @@ All Azure resources are defined using [Bicep](https://learn.microsoft.com/en-us/
 ```
 infra/
 ├── main.bicep           # Root template — wires all modules together
-├── main.bicepparam      # Example/default parameter values
+├── main.bicepparam      # Production parameter values (resource names, regions, SKUs)
 └── modules/
-    ├── appservice.bicep # App Service Plan + App Service (Linux/.NET 10)
+    ├── appservice.bicep # App Service Plan + App Service (Windows/.NET 10) and its app settings
     ├── monitoring.bicep # Log Analytics Workspace + Application Insights
-    ├── sql.bicep        # Azure SQL Server + Database
-    └── storage.bicep    # Storage Account with static website enabled
+    ├── sql.bicep        # Azure SQL Server (Entra-only auth) + serverless Database
+    └── storage.bicep    # Storage Account for the frontend static website
 ```
 
 The `deploy-infrastructure` CI job runs `infra/main.bicep` on every push to `main`, ensuring the Azure environment is always in sync with the declared configuration. All other deployment jobs depend on this job.
 
+The template owns **all** App Service app settings (connection string, CORS origin, Application Insights), so add new settings in `infra/modules/appservice.bicep` rather than in the portal — anything set by hand is removed on the next deployment. The static website (`$web` container, `index.html` documents) is a data-plane setting that ARM can't manage, so CI enables it with `az storage blob service-properties update`.
+
 #### Deploying Infrastructure Manually
 
-To provision or update infrastructure outside of CI, make sure you are logged in to Azure (`az login`), then run:
+To preview or apply infrastructure changes outside of CI, log in to Azure (`az login`, with MFA), set the runtime connection string, and run:
 
 ```bash
-az deployment group create \
-  --resource-group <AZURE_RESOURCE_GROUP> \
-  --template-file infra/main.bicep \
-  --parameters infra/main.bicepparam \
-  --parameters sqlAdminPassword=<password>
-```
+export AZURE_SQL_CONNECTION_STRING='<connection string>'
 
-Customise `infra/main.bicepparam` with your own resource names and region before deploying.
+# Preview — should show no Create/Delete against the existing resources
+az deployment group what-if \
+  --resource-group Checkmate2 \
+  --template-file infra/main.bicep \
+  --parameters infra/main.bicepparam
+
+# Apply
+az deployment group create \
+  --resource-group Checkmate2 \
+  --template-file infra/main.bicep \
+  --parameters infra/main.bicepparam
+```
 
 ### Deployment Architecture
 
 | Component | Azure Service | Endpoint |
 |-----------|--------------|----------|
-| Backend API | Azure App Service (Linux/.NET 10) | `https://<AZURE_BACKEND_APP_NAME>.azurewebsites.net` |
-| Frontend | Azure Storage Account (static website) | `https://<AZURE_STORAGE_ACCOUNT_NAME>.z22.web.core.windows.net` |
-| Database | Azure SQL Server + Database | — |
-| Monitoring | Log Analytics + Application Insights | — |
+| Backend API | Azure App Service (Windows/.NET 10) | `https://checkmate2-hkbqbkbyhdceexc4.westus2-01.azurewebsites.net` |
+| Frontend | Azure Storage Account (static website) | `https://checkmate2.z22.web.core.windows.net` |
+| Database | Azure SQL serverless database (Entra-only auth) | — |
+| Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs go to the `Checkmate2` workspace) | — |
 
 ### Required GitHub Variables
 
@@ -174,25 +182,18 @@ Customise `infra/main.bicepparam` with your own resource names and region before
 | `AZURE_CLIENT_ID` | Azure service principal client ID (for OIDC login) |
 | `AZURE_TENANT_ID` | Azure Active Directory tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
-| `AZURE_RESOURCE_GROUP` | Azure resource group for all resources |
-| `AZURE_LOCATION` | Azure region (e.g. `eastus`) |
+| `AZURE_RESOURCE_GROUP` | Azure resource group containing all resources |
 | `AZURE_BACKEND_APP_NAME` | Name of the Azure App Service for the backend |
 | `AZURE_BACKEND_URL` | Public URL of the backend API (e.g. `https://checkmate-api.azurewebsites.net`) |
-| `AZURE_APP_SERVICE_PLAN_NAME` | Name of the Azure App Service Plan |
-| `AZURE_APP_SERVICE_PLAN_SKU` | App Service Plan SKU (e.g. `B1`) |
-| `AZURE_STORAGE_ACCOUNT_NAME` | Name of the Azure Storage Account for the frontend |
-| `AZURE_SQL_SERVER_NAME` | Name of the Azure SQL Server |
-| `AZURE_SQL_DATABASE_NAME` | Name of the SQL Database (e.g. `CheckMate`) |
-| `AZURE_SQL_ADMIN_LOGIN` | SQL Server administrator login name |
-| `AZURE_LOG_ANALYTICS_WORKSPACE_NAME` | Name of the Log Analytics Workspace |
-| `AZURE_APP_INSIGHTS_NAME` | Name of the Application Insights component |
+| `AZURE_STORAGE_ACCOUNT_NAME` | Name of the Azure Storage Account used to host the frontend static website |
+
+All other resource names, regions and SKUs live in `infra/main.bicepparam`.
 
 ### Required GitHub Secrets
 
 | Secret | Description |
 |--------|-------------|
-| `AZURE_SQL_CONNECTION_STRING` | Full SQL Server connection string used at runtime |
-| `AZURE_SQL_ADMIN_PASSWORD` | SQL Server administrator password (used during infrastructure provisioning) |
+| `AZURE_SQL_CONNECTION_STRING` | SQL Server connection string used at runtime and for migrations (applied to the App Service by the Bicep deployment) |
 
 ### Environment
 
@@ -204,9 +205,9 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gu
 
 Use the provided templates when opening issues or pull requests:
 
-- [Bug Report](https://github.com/dylan-smith/CheckMate/issues/new?template=bug_report.md)
-- [Feature Request](https://github.com/dylan-smith/CheckMate/issues/new?template=feature_request.md)
-- [Enhancement](https://github.com/dylan-smith/CheckMate/issues/new?template=enhancement.md)
+- [Bug Report](https://github.com/dylan-smith/CheckMate2/issues/new?template=bug_report.md)
+- [Feature Request](https://github.com/dylan-smith/CheckMate2/issues/new?template=feature_request.md)
+- [Enhancement](https://github.com/dylan-smith/CheckMate2/issues/new?template=enhancement.md)
 
 Pull requests should follow the [PR template](./.github/PULL_REQUEST_TEMPLATE.md) checklist before requesting review.
 

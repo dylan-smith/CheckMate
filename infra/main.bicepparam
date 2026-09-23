@@ -1,24 +1,26 @@
 using './main.bicep'
 
-// Azure region - choose one closest to your users
-param location = 'eastus'
+// Production values for the Checkmate2 resource group. Names and regions must match the existing
+// resources exactly, otherwise a deployment creates new resources instead of updating them.
+param location = 'westus2'
+param storageLocation = 'westus'
+param appInsightsLocation = 'westus'
 
 // App Service (backend API)
-param appServiceName = 'checkmate-api'
-param appServicePlanName = 'checkmate-plan'
-param appServicePlanSku = 'B1'
+param appServiceName = 'CheckMate2'
+param appServicePlanName = 'CheckMate2-API'
+param appServicePlanSku = 'F1'
 
 // Storage Account (frontend static website)
-// Must be globally unique, lowercase, 3-24 characters, no hyphens
-param storageAccountName = 'checkmatefrontend'
+param storageAccountName = 'checkmate2'
 
-// SQL Server and Database
-param sqlServerName = 'checkmate-sql'
-param sqlDatabaseName = 'CheckMate'
-param sqlAdminLogin = 'checkmate-admin'
-// sqlAdminPassword is intentionally omitted here - pass it at deploy time:
-//   az deployment group create ... --parameters sqlAdminPassword=<password>
+// SQL Server and Database (Entra-only auth; the existing server's admin is left unchanged)
+param sqlServerName = 'checkmate2'
+param sqlDatabaseName = 'CheckMate2'
+
+// Passed in from the AZURE_SQL_CONNECTION_STRING secret; never commit it.
+param sqlConnectionString = readEnvironmentVariable('AZURE_SQL_CONNECTION_STRING')
 
 // Monitoring
-param logAnalyticsWorkspaceName = 'checkmate-law'
-param appInsightsName = 'checkmate-ai'
+param logAnalyticsWorkspaceName = 'Checkmate2'
+param appInsightsName = 'Checkmate2'

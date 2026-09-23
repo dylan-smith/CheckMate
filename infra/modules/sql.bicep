@@ -7,24 +7,46 @@ param serverName string
 @description('Name of the Azure SQL Database.')
 param databaseName string
 
-@description('SQL Server administrator login name.')
-param adminLogin string
+@description('Entra ID admin login (UPN or group name). Only applied when the server is first created; leave empty to keep the existing admin.')
+param entraAdminLogin string = ''
 
-@description('SQL Server administrator login password.')
-@secure()
-param adminPassword string
+@description('Object ID of the Entra ID admin. Required when entraAdminLogin is set.')
+param entraAdminObjectId string = ''
 
-resource sqlServer 'Microsoft.Sql/servers@2023-05-01-preview' = {
+@description('Serverless vCore maximum capacity.')
+param maxCapacity int = 2
+
+@description('Serverless minimum capacity (vCores).')
+param minCapacity string = '0.5'
+
+@description('Minutes of inactivity before the serverless database auto-pauses.')
+param autoPauseDelay int = 60
+
+@description('Maximum database size in bytes.')
+param maxSizeBytes int = 34359738368
+
+@description('Use the Azure SQL free offer (monthly free vCore-seconds and storage).')
+param useFreeLimit bool = true
+
+resource sqlServer 'Microsoft.Sql/servers@2023-08-01' = {
   name: serverName
   location: location
   properties: {
-    administratorLogin: adminLogin
-    administratorLoginPassword: adminPassword
     minimalTlsVersion: '1.2'
+    publicNetworkAccess: 'Enabled'
+    // Entra-only authentication: no SQL admin password to manage.
+    administrators: empty(entraAdminLogin) ? null : {
+      administratorType: 'ActiveDirectory'
+      azureADOnlyAuthentication: true
+      login: entraAdminLogin
+      sid: entraAdminObjectId
+      tenantId: tenant().tenantId
+      principalType: 'User'
+    }
   }
 }
 
-resource allowAzureServices 'Microsoft.Sql/servers/firewallRules@2023-05-01-preview' = {
+resource allowAzureServices 'Microsoft.Sql/servers/firewallRules@2023-08-01' = {
   parent: sqlServer
   name: 'AllowAllWindowsAzureIps'
   properties: {
@@ -33,13 +55,25 @@ resource allowAzureServices 'Microsoft.Sql/servers/firewallRules@2023-05-01-prev
   }
 }
 
-resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-05-01-preview' = {
+resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-08-01' = {
   parent: sqlServer
   name: databaseName
   location: location
   sku: {
-    name: 'Basic'
-    tier: 'Basic'
+    name: 'GP_S_Gen5'
+    tier: 'GeneralPurpose'
+    family: 'Gen5'
+    capacity: maxCapacity
+  }
+  properties: {
+    collation: 'SQL_Latin1_General_CP1_CI_AS'
+    maxSizeBytes: maxSizeBytes
+    minCapacity: json(minCapacity)
+    autoPauseDelay: autoPauseDelay
+    zoneRedundant: false
+    requestedBackupStorageRedundancy: 'Local'
+    useFreeLimit: useFreeLimit
+    freeLimitExhaustionBehavior: useFreeLimit ? 'AutoPause' : null
   }
 }
 

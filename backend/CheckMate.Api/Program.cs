@@ -1,6 +1,8 @@
+using System.Data.Common;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
 using CheckMate.Api.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -76,7 +78,10 @@ else
         ?? throw new InvalidOperationException("Connection string 'CheckMate' not found.");
 
     builder.Services.AddDbContext<ChecklistDbContext>(options =>
-        options.UseSqlServer(connectionString));
+        options.UseSqlServer(connectionString, sqlOptions => sqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 8,
+            maxRetryDelay: TimeSpan.FromSeconds(10),
+            errorNumbersToAdd: null)));
 }
 
 var app = builder.Build();
@@ -98,10 +103,26 @@ else
 {
     Console.WriteLine("[Startup] Testing database connectivity...");
 
-    if (!dbContext.Database.CanConnect())
+    // Open the connection through the SQL Server execution strategy so that transient errors,
+    // such as 40613 while a serverless Azure SQL database resumes from auto-pause, are retried,
+    // while permanent errors like invalid credentials fail at once. Individual attempts can each
+    // run up to the connection timeout, so a hard deadline keeps the whole check under the
+    // ASP.NET Core Module's default 120-second startup time limit.
+    using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+
+    try
+    {
+        await dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async cancellationToken =>
+        {
+            await dbContext.Database.OpenConnectionAsync(cancellationToken);
+            await dbContext.Database.CloseConnectionAsync();
+        }, connectTimeout.Token);
+    }
+    catch (Exception ex) when (ex is DbException or RetryLimitExceededException or OperationCanceledException)
     {
         throw new InvalidOperationException(
-            "Cannot connect to the database. Ensure the database has been created and migrations have been applied.");
+            "Cannot connect to the database. Ensure the database has been created and migrations have been applied.",
+            ex);
     }
 
     Console.WriteLine("[Startup] Database connectivity confirmed.");

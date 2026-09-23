@@ -1,7 +1,13 @@
 targetScope = 'resourceGroup'
 
-@description('Azure region for all resources. Defaults to the resource group location.')
+@description('Default Azure region for resources. Defaults to the resource group location.')
 param location string = resourceGroup().location
+
+@description('Azure region for the frontend Storage Account.')
+param storageLocation string = location
+
+@description('Azure region for the Application Insights component.')
+param appInsightsLocation string = location
 
 @description('Name of the Azure App Service (backend API).')
 param appServiceName string
@@ -9,9 +15,8 @@ param appServiceName string
 @description('Name of the Azure App Service Plan.')
 param appServicePlanName string
 
-@description('SKU for the App Service Plan (e.g. B1, S1, P1v3).')
-@allowed(['B1', 'B2', 'B3', 'S1', 'S2', 'S3', 'P1v3', 'P2v3', 'P3v3'])
-param appServicePlanSku string = 'B1'
+@description('SKU for the App Service Plan (e.g. F1, B1, S1, P1v3).')
+param appServicePlanSku string = 'F1'
 
 @description('Name of the Azure Storage Account for the frontend static website (globally unique, lowercase, 3-24 characters).')
 @minLength(3)
@@ -22,14 +27,17 @@ param storageAccountName string
 param sqlServerName string
 
 @description('Name of the Azure SQL Database.')
-param sqlDatabaseName string = 'CheckMate'
+param sqlDatabaseName string
 
-@description('SQL Server administrator login name.')
-param sqlAdminLogin string
+@description('Entra ID admin login for the SQL Server. Only needed when creating the server.')
+param sqlEntraAdminLogin string = ''
 
-@description('SQL Server administrator login password.')
+@description('Object ID of the SQL Server Entra ID admin. Only needed when creating the server.')
+param sqlEntraAdminObjectId string = ''
+
+@description('SQL connection string used by the API at runtime.')
 @secure()
-param sqlAdminPassword string
+param sqlConnectionString string
 
 @description('Name of the Log Analytics Workspace.')
 param logAnalyticsWorkspaceName string
@@ -40,9 +48,29 @@ param appInsightsName string
 module monitoring 'modules/monitoring.bicep' = {
   name: 'monitoring'
   params: {
-    location: location
+    workspaceLocation: location
+    appInsightsLocation: appInsightsLocation
     workspaceName: logAnalyticsWorkspaceName
     appInsightsName: appInsightsName
+  }
+}
+
+module storage 'modules/storage.bicep' = {
+  name: 'storage'
+  params: {
+    location: storageLocation
+    storageAccountName: storageAccountName
+  }
+}
+
+module sql 'modules/sql.bicep' = {
+  name: 'sql'
+  params: {
+    location: location
+    serverName: sqlServerName
+    databaseName: sqlDatabaseName
+    entraAdminLogin: sqlEntraAdminLogin
+    entraAdminObjectId: sqlEntraAdminObjectId
   }
 }
 
@@ -53,26 +81,13 @@ module appService 'modules/appservice.bicep' = {
     planName: appServicePlanName
     appName: appServiceName
     planSku: appServicePlanSku
+    appInsightsId: monitoring.outputs.appInsightsId
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
-  }
-}
-
-module sql 'modules/sql.bicep' = {
-  name: 'sql'
-  params: {
-    location: location
-    serverName: sqlServerName
-    databaseName: sqlDatabaseName
-    adminLogin: sqlAdminLogin
-    adminPassword: sqlAdminPassword
-  }
-}
-
-module storage 'modules/storage.bicep' = {
-  name: 'storage'
-  params: {
-    location: location
-    storageAccountName: storageAccountName
+    appInsightsInstrumentationKey: monitoring.outputs.appInsightsInstrumentationKey
+    logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
+    sqlConnectionString: sqlConnectionString
+    // The browser sends the origin without a trailing slash.
+    corsAllowedOrigin: replace(storage.outputs.primaryWebEndpoint, '.net/', '.net')
   }
 }
 
@@ -84,6 +99,3 @@ output frontendWebEndpoint string = storage.outputs.primaryWebEndpoint
 
 @description('Fully qualified domain name of the SQL Server.')
 output sqlServerFqdn string = sql.outputs.sqlServerFqdn
-
-@description('Application Insights connection string.')
-output appInsightsConnectionString string = monitoring.outputs.appInsightsConnectionString
