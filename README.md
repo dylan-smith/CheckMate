@@ -189,6 +189,17 @@ az deployment group create \
 
 All other resource names, regions and SKUs live in `infra/main.bicepparam`.
 
+The `infrastructure-what-if` PR job doesn't use the `production` environment, so it only sees **repository-level** variables. Define these at repository level (the environment can keep its own copies):
+
+| Variable | Description |
+|----------|-------------|
+| `AZURE_WHATIF_CLIENT_ID` | Client ID of the read-only managed identity used for PR what-if previews |
+| `AZURE_TENANT_ID` | Azure Active Directory tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+| `AZURE_RESOURCE_GROUP` | Azure resource group containing all resources |
+
+The what-if identity is a user-assigned managed identity with a federated credential for this repository's `pull_request` tokens and a custom role on the resource group limited to `*/read`, `Microsoft.Resources/deployments/validate/action`, `Microsoft.Resources/deployments/whatIf/action` and `Microsoft.Resources/deployments/write` (needed for nested module deployments; it can't write any resource).
+
 ### Required GitHub Secrets
 
 | Secret | Description |
@@ -197,7 +208,7 @@ All other resource names, regions and SKUs live in `infra/main.bicepparam`.
 
 ### Environment
 
-The workflow uses the `production` GitHub Environment for all deployments. Configure the `production` environment in your repository settings to enable approval gates and environment-specific secrets.
+The workflow uses the `production` GitHub Environment for all deployments. Configure the `production` environment in your repository settings to enable approval gates and environment-specific secrets, and restrict its deployment branches to `main` so pull requests can't use its credentials or secrets.
 
 ## Contributing
 
