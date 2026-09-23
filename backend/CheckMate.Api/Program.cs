@@ -102,15 +102,19 @@ else
     Console.WriteLine("[Startup] Testing database connectivity...");
 
     // Open the connection through the SQL Server execution strategy so that transient errors,
-    // such as 40613 while a serverless Azure SQL database resumes from auto-pause, are retried
-    // (roughly a minute in total), while permanent errors like invalid credentials fail at once.
+    // such as 40613 while a serverless Azure SQL database resumes from auto-pause, are retried,
+    // while permanent errors like invalid credentials fail at once. Individual attempts can each
+    // run up to the connection timeout, so a hard deadline keeps the whole check under the
+    // ASP.NET Core Module's default 120-second startup time limit.
+    using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+
     try
     {
-        dbContext.Database.CreateExecutionStrategy().Execute(() =>
+        await dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async cancellationToken =>
         {
-            dbContext.Database.OpenConnection();
-            dbContext.Database.CloseConnection();
-        });
+            await dbContext.Database.OpenConnectionAsync(cancellationToken);
+            await dbContext.Database.CloseConnectionAsync();
+        }, connectTimeout.Token);
     }
     catch (Exception ex)
     {
