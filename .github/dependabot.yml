@@ -15,6 +15,11 @@ updates:
     labels:
       - "dependencies"
       - "backend"
+    groups:
+      # EF Core packages must stay on the same version; bumping them separately breaks the build
+      ef-core:
+        patterns:
+          - "Microsoft.EntityFrameworkCore*"
 
   # GitHub Actions dependencies
   - package-ecosystem: "github-actions"
@@ -38,3 +43,11 @@ updates:
     labels:
       - "dependencies"
       - "frontend"
+    groups:
+      # react and react-dom must be the exact same version at runtime
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
