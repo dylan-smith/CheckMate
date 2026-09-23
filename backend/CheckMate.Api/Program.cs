@@ -76,7 +76,10 @@ else
         ?? throw new InvalidOperationException("Connection string 'CheckMate' not found.");
 
     builder.Services.AddDbContext<ChecklistDbContext>(options =>
-        options.UseSqlServer(connectionString, sqlOptions => sqlOptions.EnableRetryOnFailure()));
+        options.UseSqlServer(connectionString, sqlOptions => sqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 8,
+            maxRetryDelay: TimeSpan.FromSeconds(10),
+            errorNumbersToAdd: null)));
 }
 
 var app = builder.Build();
@@ -98,24 +101,22 @@ else
 {
     Console.WriteLine("[Startup] Testing database connectivity...");
 
-    // A serverless Azure SQL database can take up to a minute to resume from auto-pause,
-    // so keep retrying for a while before treating the database as unreachable. The deadline
-    // stays under the ASP.NET Core Module's default 120-second startup time limit.
-    var connectDeadline = DateTime.UtcNow.AddSeconds(75);
-    var attempt = 1;
-
-    while (!dbContext.Database.CanConnect())
+    // Open the connection through the SQL Server execution strategy so that transient errors,
+    // such as 40613 while a serverless Azure SQL database resumes from auto-pause, are retried
+    // (roughly a minute in total), while permanent errors like invalid credentials fail at once.
+    try
     {
-        if (DateTime.UtcNow >= connectDeadline)
+        dbContext.Database.CreateExecutionStrategy().Execute(() =>
         {
-            throw new InvalidOperationException(
-                "Cannot connect to the database. Ensure the database has been created and migrations have been applied.");
-        }
-
-        Console.WriteLine(
-            $"[Startup] Database not reachable (attempt {attempt}); it may be resuming from auto-pause. Retrying in 5 seconds...");
-        attempt++;
-        Thread.Sleep(TimeSpan.FromSeconds(5));
+            dbContext.Database.OpenConnection();
+            dbContext.Database.CloseConnection();
+        });
+    }
+    catch (Exception ex)
+    {
+        throw new InvalidOperationException(
+            "Cannot connect to the database. Ensure the database has been created and migrations have been applied.",
+            ex);
     }
 
     Console.WriteLine("[Startup] Database connectivity confirmed.");
