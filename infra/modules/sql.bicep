@@ -13,6 +13,10 @@ param entraAdminLogin string = ''
 @description('Object ID of the Entra ID admin. Required when entraAdminLogin is set.')
 param entraAdminObjectId string = ''
 
+@description('Principal type of the Entra ID admin.')
+@allowed(['User', 'Group', 'Application'])
+param entraAdminPrincipalType string = 'User'
+
 @description('Serverless vCore maximum capacity.')
 param maxCapacity int = 2
 
@@ -31,19 +35,26 @@ param useFreeLimit bool = true
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01' = {
   name: serverName
   location: location
-  properties: {
-    minimalTlsVersion: '1.2'
-    publicNetworkAccess: 'Enabled'
-    // Entra-only authentication: no SQL admin password to manage.
-    administrators: empty(entraAdminLogin) ? null : {
-      administratorType: 'ActiveDirectory'
-      azureADOnlyAuthentication: true
-      login: entraAdminLogin
-      sid: entraAdminObjectId
-      tenantId: tenant().tenantId
-      principalType: 'User'
-    }
-  }
+  // Entra-only authentication: no SQL admin password to manage. The administrators property is
+  // omitted entirely (not sent as null) when no admin is supplied, so the existing admin is untouched.
+  properties: union(
+    {
+      minimalTlsVersion: '1.2'
+      publicNetworkAccess: 'Enabled'
+    },
+    empty(entraAdminLogin)
+      ? {}
+      : {
+          administrators: {
+            administratorType: 'ActiveDirectory'
+            azureADOnlyAuthentication: true
+            login: entraAdminLogin
+            sid: entraAdminObjectId
+            tenantId: tenant().tenantId
+            principalType: entraAdminPrincipalType
+          }
+        }
+  )
 }
 
 resource allowAzureServices 'Microsoft.Sql/servers/firewallRules@2023-08-01' = {

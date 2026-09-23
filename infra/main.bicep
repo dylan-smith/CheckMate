@@ -35,6 +35,10 @@ param sqlEntraAdminLogin string = ''
 @description('Object ID of the SQL Server Entra ID admin. Only needed when creating the server.')
 param sqlEntraAdminObjectId string = ''
 
+@description('Principal type of the SQL Server Entra ID admin (User, Group or Application).')
+@allowed(['User', 'Group', 'Application'])
+param sqlEntraAdminPrincipalType string = 'User'
+
 @description('SQL connection string used by the API at runtime.')
 @secure()
 param sqlConnectionString string
@@ -71,6 +75,7 @@ module sql 'modules/sql.bicep' = {
     databaseName: sqlDatabaseName
     entraAdminLogin: sqlEntraAdminLogin
     entraAdminObjectId: sqlEntraAdminObjectId
+    entraAdminPrincipalType: sqlEntraAdminPrincipalType
   }
 }
 
