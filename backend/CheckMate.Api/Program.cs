@@ -76,7 +76,7 @@ else
         ?? throw new InvalidOperationException("Connection string 'CheckMate' not found.");
 
     builder.Services.AddDbContext<ChecklistDbContext>(options =>
-        options.UseSqlServer(connectionString));
+        options.UseSqlServer(connectionString, sqlOptions => sqlOptions.EnableRetryOnFailure()));
 }
 
 var app = builder.Build();
@@ -98,10 +98,24 @@ else
 {
     Console.WriteLine("[Startup] Testing database connectivity...");
 
-    if (!dbContext.Database.CanConnect())
+    // A serverless Azure SQL database can take up to a minute to resume from auto-pause,
+    // so keep retrying for a while before treating the database as unreachable. The deadline
+    // stays under the ASP.NET Core Module's default 120-second startup time limit.
+    var connectDeadline = DateTime.UtcNow.AddSeconds(75);
+    var attempt = 1;
+
+    while (!dbContext.Database.CanConnect())
     {
-        throw new InvalidOperationException(
-            "Cannot connect to the database. Ensure the database has been created and migrations have been applied.");
+        if (DateTime.UtcNow >= connectDeadline)
+        {
+            throw new InvalidOperationException(
+                "Cannot connect to the database. Ensure the database has been created and migrations have been applied.");
+        }
+
+        Console.WriteLine(
+            $"[Startup] Database not reachable (attempt {attempt}); it may be resuming from auto-pause. Retrying in 5 seconds...");
+        attempt++;
+        Thread.Sleep(TimeSpan.FromSeconds(5));
     }
 
     Console.WriteLine("[Startup] Database connectivity confirmed.");
