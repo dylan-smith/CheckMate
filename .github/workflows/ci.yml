@@ -190,6 +190,7 @@ jobs:
             --resource-group "${AZURE_RESOURCE_GROUP}" \
             --template-file infra/main.bicep \
             --parameters infra/main.bicepparam \
+            --validation-level ProviderNoRbac \
             --exclude-change-types Ignore NoChange
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
