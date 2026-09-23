@@ -11,6 +11,7 @@ on: pull_request_target
 
 permissions:
   contents: read
+  pull-requests: read # fetch-metadata reads the PR through GITHUB_TOKEN
 
 jobs:
   auto-merge:

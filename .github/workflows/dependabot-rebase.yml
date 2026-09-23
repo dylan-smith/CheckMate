@@ -31,7 +31,7 @@ jobs:
           GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          prs=$(gh pr list --author app/dependabot --state open \
+          prs=$(gh pr list --app dependabot --state open \
                 --json number,mergeStateStatus,autoMergeRequest,createdAt,statusCheckRollup \
                 --jq 'map(select(.autoMergeRequest != null)) | sort_by(.createdAt)')
 
