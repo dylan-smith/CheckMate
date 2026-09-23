@@ -76,16 +76,19 @@ resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-08-01' = {
     family: 'Gen5'
     capacity: maxCapacity
   }
-  properties: {
-    collation: 'SQL_Latin1_General_CP1_CI_AS'
-    maxSizeBytes: maxSizeBytes
-    minCapacity: json(minCapacity)
-    autoPauseDelay: autoPauseDelay
-    zoneRedundant: false
-    requestedBackupStorageRedundancy: 'Local'
-    useFreeLimit: useFreeLimit
-    freeLimitExhaustionBehavior: useFreeLimit ? 'AutoPause' : null
-  }
+  // freeLimitExhaustionBehavior is only valid with the free offer, so it's omitted (not sent as null) otherwise.
+  properties: union(
+    {
+      collation: 'SQL_Latin1_General_CP1_CI_AS'
+      maxSizeBytes: maxSizeBytes
+      minCapacity: json(minCapacity)
+      autoPauseDelay: autoPauseDelay
+      zoneRedundant: false
+      requestedBackupStorageRedundancy: 'Local'
+      useFreeLimit: useFreeLimit
+    },
+    useFreeLimit ? { freeLimitExhaustionBehavior: 'AutoPause' } : {}
+  )
 }
 
 @description('Fully qualified domain name of the SQL Server.')
