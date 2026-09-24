@@ -10,21 +10,17 @@ on:
     - cron: '0 0 * * *'
 
 permissions:
-  actions: read
   contents: read
-  security-events: write
 
 jobs:
   backend:
     name: Backend Build & Test
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: read
       security-events: write
       checks: write
       pull-requests: write
-      issues: read
     steps:
       - uses: actions/checkout@v7
 
@@ -71,12 +67,10 @@ jobs:
     name: Frontend Build, Lint & Test
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: read
       security-events: write
       checks: write
       pull-requests: write
-      issues: read
     defaults:
       run:
         working-directory: frontend
@@ -137,7 +131,6 @@ jobs:
       contents: read
       checks: write
       pull-requests: write
-      issues: read
     defaults:
       run:
         working-directory: frontend
