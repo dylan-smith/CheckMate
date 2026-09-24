@@ -150,36 +150,42 @@ The template owns **all** App Service app settings (connection string, CORS orig
 
 To preview or apply infrastructure changes outside of CI, log in to Azure (`az login`, with MFA), set the runtime connection string, and run:
 
-```bash
-export AZURE_SQL_CONNECTION_STRING='<connection string>'
+```powershell
+$env:AZURE_SQL_CONNECTION_STRING = '<connection string>'
 
 # Preview — should show no Create/Delete against the existing resources
-az deployment group what-if \
-  --resource-group Checkmate2 \
-  --template-file infra/main.bicep \
-  --parameters infra/main.bicepparam
+az deployment group what-if --resource-group CheckMate --template-file infra/main.bicep --parameters infra/main.bicepparam
 
 # Apply
-az deployment group create \
-  --resource-group Checkmate2 \
-  --template-file infra/main.bicep \
-  --parameters infra/main.bicepparam
+az deployment group create --resource-group CheckMate --template-file infra/main.bicep --parameters infra/main.bicepparam
 ```
+
+#### Identities & Permissions
+
+The template doesn't manage identities, role assignments or database users, so a new environment needs these set up by hand:
+
+| Identity | Grants |
+|----------|--------|
+| `checkmate-deploy` (user-assigned managed identity, `AZURE_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:environment:production`; **Contributor** on the resource group; **Storage Blob Data Owner** on the frontend storage account (static website setup and `npm run deploy` use `--auth-mode login`); `db_owner` database user (runs the migrations) |
+| `checkmate-pr-whatif` (user-assigned managed identity, `AZURE_WHATIF_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:pull_request`; custom **CheckMate What-If Reader** role (`*/read`, `Microsoft.Resources/deployments/validate/action`, `Microsoft.Resources/deployments/whatIf/action`, `Microsoft.Resources/deployments/write`) on the resource group |
+| App Service system-assigned identity | `db_datareader` + `db_datawriter` database user (the API's runtime connection) |
+
+GitHub issues OIDC tokens for this repo with immutable-ID subjects, so federated credentials must use the portal's **Other issuer** scenario (issuer `https://token.actions.githubusercontent.com`) rather than the GitHub Actions template. Create the database users as the SQL Entra admin, e.g. `CREATE USER [checkmate-deploy] FROM EXTERNAL PROVIDER; ALTER ROLE db_owner ADD MEMBER [checkmate-deploy];`.
 
 ### Deployment Architecture
 
 | Component | Azure Service | Endpoint |
 |-----------|--------------|----------|
-| Backend API | Azure App Service (Windows/.NET 10) | `https://checkmate2-hkbqbkbyhdceexc4.westus2-01.azurewebsites.net` |
-| Frontend | Azure Storage Account (static website) | `https://checkmate2.z22.web.core.windows.net` |
+| Backend API | Azure App Service (Windows/.NET 10) | `https://checkmate-heesaxh5agdygvew.westus2-01.azurewebsites.net` |
+| Frontend | Azure Storage Account (static website) | `https://checkmateweb.z22.web.core.windows.net` |
 | Database | Azure SQL serverless database (Entra-only auth) | — |
-| Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs go to the `Checkmate2` workspace) | — |
+| Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs go to the `CheckMate` workspace) | — |
 
 ### Required GitHub Variables
 
 | Variable | Description |
 |----------|-------------|
-| `AZURE_CLIENT_ID` | Azure service principal client ID (for OIDC login) |
+| `AZURE_CLIENT_ID` | Client ID of the `checkmate-deploy` managed identity (for OIDC login) |
 | `AZURE_TENANT_ID` | Azure Active Directory tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
 | `AZURE_RESOURCE_GROUP` | Azure resource group containing all resources |

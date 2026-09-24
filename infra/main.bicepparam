@@ -1,26 +1,30 @@
 using './main.bicep'
 
-// Production values for the Checkmate2 resource group. Names and regions must match the existing
-// resources exactly, otherwise a deployment creates new resources instead of updating them.
+// Production values for the CheckMate resource group. Deploying with these values into an empty resource
+// group provisions the whole environment; redeploying updates the existing resources in place, so renaming
+// anything here creates a new resource instead of renaming the old one.
 param location = 'westus2'
 param storageLocation = 'westus'
 param appInsightsLocation = 'westus'
 
 // App Service (backend API)
-param appServiceName = 'CheckMate2'
-param appServicePlanName = 'CheckMate2-API'
+param appServiceName = 'CheckMate'
+param appServicePlanName = 'CheckMate-Plan'
 param appServicePlanSku = 'F1'
 
-// Storage Account (frontend static website)
-param storageAccountName = 'checkmate2'
+// Storage Account (frontend static website; 'checkmate' is taken globally)
+param storageAccountName = 'checkmateweb'
 
-// SQL Server and Database (Entra-only auth; the existing server's admin is left unchanged)
-param sqlServerName = 'checkmate2'
-param sqlDatabaseName = 'CheckMate2'
+// SQL Server and Database (Entra-only auth; 'checkmate' is taken globally)
+param sqlServerName = 'checkmate-sql'
+param sqlDatabaseName = 'CheckMate'
+param sqlEntraAdminLogin = 'Dylan@devopsdylan.com'
+param sqlEntraAdminObjectId = '148c80fc-4e2d-4fec-9539-aa1a23b344ab'
+param sqlEntraAdminPrincipalType = 'User'
 
 // Passed in from the AZURE_SQL_CONNECTION_STRING secret; never commit it.
 param sqlConnectionString = readEnvironmentVariable('AZURE_SQL_CONNECTION_STRING')
 
 // Monitoring
-param logAnalyticsWorkspaceName = 'Checkmate2'
-param appInsightsName = 'Checkmate2'
+param logAnalyticsWorkspaceName = 'CheckMate'
+param appInsightsName = 'CheckMate'
