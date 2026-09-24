@@ -1,6 +1,6 @@
 # CheckMate
 
-[![CI](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml)
+[![CI](https://github.com/dylan-smith/CheckMate2/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-smith/CheckMate2/actions/workflows/ci.yml)
 
 A checklist management app with:
 - **Backend:** ASP.NET Core Web API (.NET 10) + Entity Framework Core + SQL Server
@@ -91,6 +91,10 @@ CheckMate/
 │   ├── CheckMate.Database/     # Database CLI project for migrations
 │   └── CheckMate.Api.Tests/    # xUnit backend tests
 ├── frontend/                    # React + TypeScript (Vite)
+├── infra/                       # Bicep Infrastructure as Code
+│   ├── main.bicep               # Root Bicep template
+│   ├── main.bicepparam          # Example parameter values
+│   └── modules/                 # Reusable Bicep modules
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── LICENSE
@@ -123,12 +127,53 @@ npm run test:e2e:ui
 
 The CI workflow (`.github/workflows/ci.yml`) includes deployment jobs that run after all checks pass. Deployment only runs on pushes to `main` (not on pull requests).
 
+### Infrastructure as Code
+
+All Azure resources are defined using [Bicep](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/overview) templates located in the `infra/` directory:
+
+```
+infra/
+├── main.bicep           # Root template — wires all modules together
+├── main.bicepparam      # Production parameter values (resource names, regions, SKUs)
+└── modules/
+    ├── appservice.bicep # App Service Plan + App Service (Windows/.NET 10) and its app settings
+    ├── monitoring.bicep # Log Analytics Workspace + Application Insights
+    ├── sql.bicep        # Azure SQL Server (Entra-only auth) + serverless Database
+    └── storage.bicep    # Storage Account for the frontend static website
+```
+
+The `deploy-infrastructure` CI job runs `infra/main.bicep` on every push to `main`, ensuring the Azure environment is always in sync with the declared configuration. All other deployment jobs depend on this job.
+
+The template owns **all** App Service app settings (connection string, CORS origin, Application Insights), so add new settings in `infra/modules/appservice.bicep` rather than in the portal — anything set by hand is removed on the next deployment. The static website (`$web` container, `index.html` documents) is a data-plane setting that ARM can't manage, so CI enables it with `az storage blob service-properties update`.
+
+#### Deploying Infrastructure Manually
+
+To preview or apply infrastructure changes outside of CI, log in to Azure (`az login`, with MFA), set the runtime connection string, and run:
+
+```bash
+export AZURE_SQL_CONNECTION_STRING='<connection string>'
+
+# Preview — should show no Create/Delete against the existing resources
+az deployment group what-if \
+  --resource-group Checkmate2 \
+  --template-file infra/main.bicep \
+  --parameters infra/main.bicepparam
+
+# Apply
+az deployment group create \
+  --resource-group Checkmate2 \
+  --template-file infra/main.bicep \
+  --parameters infra/main.bicepparam
+```
+
 ### Deployment Architecture
 
 | Component | Azure Service | Endpoint |
 |-----------|--------------|----------|
-| Backend API | Azure App Service | `https://<AZURE_BACKEND_APP_NAME>.azurewebsites.net` |
-| Frontend | Azure Storage Account (static website) | `https://checkmate.z22.web.core.windows.net` |
+| Backend API | Azure App Service (Windows/.NET 10) | `https://checkmate2-hkbqbkbyhdceexc4.westus2-01.azurewebsites.net` |
+| Frontend | Azure Storage Account (static website) | `https://checkmate2.z22.web.core.windows.net` |
+| Database | Azure SQL serverless database (Entra-only auth) | — |
+| Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs go to the `Checkmate2` workspace) | — |
 
 ### Required GitHub Variables
 
@@ -137,20 +182,33 @@ The CI workflow (`.github/workflows/ci.yml`) includes deployment jobs that run a
 | `AZURE_CLIENT_ID` | Azure service principal client ID (for OIDC login) |
 | `AZURE_TENANT_ID` | Azure Active Directory tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+| `AZURE_RESOURCE_GROUP` | Azure resource group containing all resources |
 | `AZURE_BACKEND_APP_NAME` | Name of the Azure App Service for the backend |
 | `AZURE_BACKEND_URL` | Public URL of the backend API (e.g. `https://checkmate-api.azurewebsites.net`) |
-| `AZURE_RESOURCE_GROUP` | Azure resource group containing both the backend App Service and frontend Storage Account |
 | `AZURE_STORAGE_ACCOUNT_NAME` | Name of the Azure Storage Account used to host the frontend static website |
+
+All other resource names, regions and SKUs live in `infra/main.bicepparam`.
+
+The `infrastructure-what-if` PR job doesn't use the `production` environment, so it only sees **repository-level** variables. Define these at repository level (the environment can keep its own copies):
+
+| Variable | Description |
+|----------|-------------|
+| `AZURE_WHATIF_CLIENT_ID` | Client ID of the read-only managed identity used for PR what-if previews |
+| `AZURE_TENANT_ID` | Azure Active Directory tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+| `AZURE_RESOURCE_GROUP` | Azure resource group containing all resources |
+
+The what-if identity is a user-assigned managed identity with a federated credential for this repository's `pull_request` tokens and a custom role on the resource group limited to `*/read`, `Microsoft.Resources/deployments/validate/action`, `Microsoft.Resources/deployments/whatIf/action` and `Microsoft.Resources/deployments/write` (needed for nested module deployments; it can't write any resource).
 
 ### Required GitHub Secrets
 
 | Secret | Description |
 |--------|-------------|
-| `AZURE_SQL_CONNECTION_STRING` | SQL Server connection string for the deployed database |
+| `AZURE_SQL_CONNECTION_STRING` | SQL Server connection string used at runtime and for migrations (applied to the App Service by the Bicep deployment) |
 
 ### Environment
 
-The workflow uses the `production` GitHub Environment for all deployments. Configure the `production` environment in your repository settings to enable approval gates and environment-specific secrets.
+The workflow uses the `production` GitHub Environment for all deployments. Configure the `production` environment in your repository settings to enable approval gates and environment-specific secrets, and restrict its deployment branches to `main` so pull requests can't use its credentials or secrets.
 
 ## Contributing
 
@@ -158,9 +216,9 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gu
 
 Use the provided templates when opening issues or pull requests:
 
-- [Bug Report](https://github.com/dylan-smith/CheckMate/issues/new?template=bug_report.md)
-- [Feature Request](https://github.com/dylan-smith/CheckMate/issues/new?template=feature_request.md)
-- [Enhancement](https://github.com/dylan-smith/CheckMate/issues/new?template=enhancement.md)
+- [Bug Report](https://github.com/dylan-smith/CheckMate2/issues/new?template=bug_report.md)
+- [Feature Request](https://github.com/dylan-smith/CheckMate2/issues/new?template=feature_request.md)
+- [Enhancement](https://github.com/dylan-smith/CheckMate2/issues/new?template=enhancement.md)
 
 Pull requests should follow the [PR template](./.github/PULL_REQUEST_TEMPLATE.md) checklist before requesting review.
 

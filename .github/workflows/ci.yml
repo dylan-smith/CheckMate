@@ -26,16 +26,16 @@ jobs:
       pull-requests: write
       issues: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
       - name: Initialize CodeQL
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@v4.38.1
         with:
           languages: csharp
           build-mode: manual
@@ -63,7 +63,7 @@ jobs:
 
       - name: Perform CodeQL Analysis
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@v4.38.1
         with:
           category: "/language:csharp"
 
@@ -74,18 +74,18 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
       - name: Initialize CodeQL
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@v4.38.1
         with:
           languages: javascript-typescript
           build-mode: none
@@ -111,7 +111,7 @@ jobs:
 
       - name: Perform CodeQL Analysis
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@v4.38.1
         with:
           category: "/language:javascript-typescript"
 
@@ -127,13 +127,13 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Restore backend dependencies
@@ -164,8 +164,45 @@ jobs:
           path: frontend/playwright-report/
           retention-days: 30
 
-  deploy-backend:
-    name: Deploy Backend (ASP.NET Core)
+  infrastructure-what-if:
+    name: Infrastructure What-If (Bicep)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    # No environment: PR runs use a separate read-and-preview-only identity and never get the
+    # production environment's credentials or secrets.
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint Bicep templates
+        run: az bicep lint --file infra/main.bicep
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_WHATIF_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preview infrastructure changes
+        shell: bash
+        run: |
+          az deployment group what-if \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --template-file infra/main.bicep \
+            --parameters infra/main.bicepparam \
+            --validation-level ProviderNoRbac \
+            --exclude-change-types Ignore NoChange
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          # What-if can't read existing app setting values, so the real secret adds nothing to the
+          # preview; keep it out of PR runs, whose workflow definition comes from the PR branch.
+          AZURE_SQL_CONNECTION_STRING: what-if-placeholder
+
+  deploy-infrastructure:
+    name: Deploy Infrastructure (Bicep)
     runs-on: ubuntu-latest
     needs: [backend, frontend, e2e-tests]
     if: github.ref == 'refs/heads/main'
@@ -174,10 +211,58 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Bicep template
+        shell: bash
+        run: |
+          az deployment group create \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --name "ci-${GITHUB_RUN_ID}" \
+            --template-file infra/main.bicep \
+            --parameters infra/main.bicepparam \
+            --only-show-errors \
+            --output none
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_SQL_CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
+
+      # Static website hosting is a data-plane setting that ARM templates can't manage.
+      - name: Enable static website hosting
+        shell: bash
+        run: |
+          az storage blob service-properties update \
+            --account-name "${AZURE_STORAGE_ACCOUNT_NAME}" \
+            --auth-mode login \
+            --static-website \
+            --index-document index.html \
+            --404-document index.html \
+            --only-show-errors \
+            --output none
+        env:
+          AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}
+
+  deploy-backend:
+    name: Deploy Backend (ASP.NET Core)
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -209,20 +294,6 @@ jobs:
         env:
           CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
 
-      - name: Set connection string
-        shell: bash
-        run: |
-          az webapp config appsettings set \
-            --name "${AZURE_BACKEND_APP_NAME}" \
-            --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --settings "ConnectionStrings__CheckMate=${AZURE_SQL_CONNECTION_STRING}" \
-            --only-show-errors \
-            --output none
-        env:
-          AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
-          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-          AZURE_SQL_CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
-
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
@@ -241,12 +312,12 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -282,21 +353,9 @@ jobs:
             --query 'primaryEndpoints.web' \
             --output tsv)"
           FRONTEND_ORIGIN="${FRONTEND_ORIGIN%/}"
-          echo "FRONTEND_ORIGIN=${FRONTEND_ORIGIN}" >> "$GITHUB_ENV"
           echo "frontend-origin=${FRONTEND_ORIGIN}" >> "$GITHUB_OUTPUT"
         env:
           AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}
-
-      - name: Update backend CORS allowed origins
-        shell: bash
-        run: |
-          az webapp config appsettings set \
-            --name "${AZURE_BACKEND_APP_NAME}" \
-            --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --settings "Cors__AllowedOrigins__0=${FRONTEND_ORIGIN}"
-        env:
-          AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
-          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
 
   smoke-tests:
     name: Smoke Tests
@@ -310,12 +369,12 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -328,6 +387,8 @@ jobs:
       - name: Run smoke tests
         env:
           SMOKE_BASE_URL: ${{ needs['deploy-frontend'].outputs['frontend-origin'] }}
+          # The smoke tests first poll the API until it's healthy (see e2e/smoke.global-setup.ts).
+          SMOKE_API_URL: ${{ vars.AZURE_BACKEND_URL }}
         run: npm run test:smoke
 
       - uses: actions/upload-artifact@v7

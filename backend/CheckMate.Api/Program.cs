@@ -1,6 +1,8 @@
+using System.Data.Common;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
 using CheckMate.Api.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -75,8 +77,14 @@ else
     var connectionString = builder.Configuration.GetConnectionString("CheckMate")
         ?? throw new InvalidOperationException("Connection string 'CheckMate' not found.");
 
+    // Resuming a serverless database from auto-pause can take longer than the 30-second connection
+    // timeout, which surfaces as client timeout error -2. EF Core doesn't treat -2 as transient, so
+    // add it: the next attempt connects once the resume finishes.
     builder.Services.AddDbContext<ChecklistDbContext>(options =>
-        options.UseSqlServer(connectionString));
+        options.UseSqlServer(connectionString, sqlOptions => sqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 8,
+            maxRetryDelay: TimeSpan.FromSeconds(10),
+            errorNumbersToAdd: [-2])));
 }
 
 var app = builder.Build();
@@ -98,13 +106,30 @@ else
 {
     Console.WriteLine("[Startup] Testing database connectivity...");
 
-    if (!dbContext.Database.CanConnect())
-    {
-        throw new InvalidOperationException(
-            "Cannot connect to the database. Ensure the database has been created and migrations have been applied.");
-    }
+    // Open the connection through the SQL Server execution strategy so that transient errors,
+    // such as 40613 while a serverless Azure SQL database resumes from auto-pause, are retried.
+    // Individual attempts can each run up to the connection timeout, so a hard deadline keeps the
+    // whole check under the ASP.NET Core Module's default 120-second startup time limit.
+    using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
 
-    Console.WriteLine("[Startup] Database connectivity confirmed.");
+    try
+    {
+        await dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async cancellationToken =>
+        {
+            await dbContext.Database.OpenConnectionAsync(cancellationToken);
+            await dbContext.Database.CloseConnectionAsync();
+        }, connectTimeout.Token);
+
+        Console.WriteLine("[Startup] Database connectivity confirmed.");
+    }
+    catch (Exception ex) when (ex is DbException or RetryLimitExceededException or OperationCanceledException)
+    {
+        // Don't fail startup: a crashed in-process app keeps serving HTTP 500.30 until it is
+        // restarted, even after the database comes back. Start anyway and let each request retry
+        // through EF Core's retry-on-failure; the deployment smoke tests catch lasting failures.
+        Console.WriteLine(
+            $"[Startup] WARNING: Could not confirm database connectivity; starting anyway. {ex.GetType().Name}: {ex.Message}");
+    }
 }
 
 app.UseCors();
