@@ -176,8 +176,8 @@ GitHub issues OIDC tokens for this repo with immutable-ID subjects, so federated
 
 | Component | Azure Service | Endpoint |
 |-----------|--------------|----------|
-| Backend API | Azure App Service (Windows/.NET 10) | `https://checkmate2-hkbqbkbyhdceexc4.westus2-01.azurewebsites.net` |
-| Frontend | Azure Storage Account (static website) | `https://checkmate2.z22.web.core.windows.net` |
+| Backend API | Azure App Service (Windows/.NET 10) | `https://checkmate-heesaxh5agdygvew.westus2-01.azurewebsites.net` |
+| Frontend | Azure Storage Account (static website) | `https://checkmateweb.z22.web.core.windows.net` |
 | Database | Azure SQL serverless database (Entra-only auth) | — |
 | Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs go to the `CheckMate` workspace) | — |
 
