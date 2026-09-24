@@ -24,7 +24,13 @@ export default async function globalSetup() {
   const origin = new URL(process.env.SMOKE_BASE_URL ?? 'http://localhost:4173')
     .origin
   const url = new URL('/api/checklists', apiUrl).toString()
-  const timeoutMs = Number(process.env.SMOKE_READY_TIMEOUT_MS ?? 6 * 60_000)
+  const timeoutOverride = process.env.SMOKE_READY_TIMEOUT_MS
+  const timeoutMs = Number(timeoutOverride ?? 6 * 60_000)
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error(
+      `[smoke] SMOKE_READY_TIMEOUT_MS must be a positive number of milliseconds, got '${timeoutOverride}'.`,
+    )
+  }
   const deadline = Date.now() + timeoutMs
 
   for (let attempt = 1; ; attempt++) {
@@ -32,7 +38,10 @@ export default async function globalSetup() {
     try {
       const response = await fetch(url, {
         headers: { Origin: origin },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        // Never let one attempt run past the overall deadline.
+        signal: AbortSignal.timeout(
+          Math.max(1, Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now())),
+        ),
       })
       const allowOrigin = response.headers.get('access-control-allow-origin')
       if (response.ok && (allowOrigin === origin || allowOrigin === '*')) {

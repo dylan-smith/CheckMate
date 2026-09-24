@@ -77,11 +77,14 @@ else
     var connectionString = builder.Configuration.GetConnectionString("CheckMate")
         ?? throw new InvalidOperationException("Connection string 'CheckMate' not found.");
 
+    // Resuming a serverless database from auto-pause can take longer than the 30-second connection
+    // timeout, which surfaces as client timeout error -2. EF Core doesn't treat -2 as transient, so
+    // add it: the next attempt connects once the resume finishes.
     builder.Services.AddDbContext<ChecklistDbContext>(options =>
         options.UseSqlServer(connectionString, sqlOptions => sqlOptions.EnableRetryOnFailure(
             maxRetryCount: 8,
             maxRetryDelay: TimeSpan.FromSeconds(10),
-            errorNumbersToAdd: null)));
+            errorNumbersToAdd: [-2])));
 }
 
 var app = builder.Build();
