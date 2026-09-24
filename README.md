@@ -1,6 +1,6 @@
 # CheckMate
 
-[![CI](https://github.com/dylan-smith/CheckMate2/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-smith/CheckMate2/actions/workflows/ci.yml)
+[![CI](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml)
 
 A checklist management app with:
 - **Backend:** ASP.NET Core Web API (.NET 10) + Entity Framework Core + SQL Server
@@ -216,9 +216,9 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gu
 
 Use the provided templates when opening issues or pull requests:
 
-- [Bug Report](https://github.com/dylan-smith/CheckMate2/issues/new?template=bug_report.md)
-- [Feature Request](https://github.com/dylan-smith/CheckMate2/issues/new?template=feature_request.md)
-- [Enhancement](https://github.com/dylan-smith/CheckMate2/issues/new?template=enhancement.md)
+- [Bug Report](https://github.com/dylan-smith/CheckMate/issues/new?template=bug_report.md)
+- [Feature Request](https://github.com/dylan-smith/CheckMate/issues/new?template=feature_request.md)
+- [Enhancement](https://github.com/dylan-smith/CheckMate/issues/new?template=enhancement.md)
 
 Pull requests should follow the [PR template](./.github/PULL_REQUEST_TEMPLATE.md) checklist before requesting review.
 
