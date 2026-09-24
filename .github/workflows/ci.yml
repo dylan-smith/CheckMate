@@ -55,15 +55,15 @@ jobs:
           check_name: Backend Test Results
           comment_mode: 'off'
           files: "**/TestResults/*.trx"
-          json_file: test-results/backend.json
+          json_file: backend-test-results.json
 
       - name: Upload Backend Test Results Summary
         uses: actions/upload-artifact@v7
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           name: test-results-backend
-          path: test-results/backend.json
-          if-no-files-found: ignore
+          path: backend-test-results.json
+          if-no-files-found: warn
 
       - name: Perform CodeQL Analysis
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -124,15 +124,15 @@ jobs:
           check_name: Frontend Test Results
           comment_mode: 'off'
           files: "frontend/vitest-report/results.xml"
-          json_file: test-results/frontend.json
+          json_file: frontend-test-results.json
 
       - name: Upload Frontend Test Results Summary
         uses: actions/upload-artifact@v7
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           name: test-results-frontend
-          path: test-results/frontend.json
-          if-no-files-found: ignore
+          path: frontend-test-results.json
+          if-no-files-found: warn
 
       - name: Perform CodeQL Analysis
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -180,14 +180,14 @@ jobs:
           check_name: E2E Test Results
           comment_mode: 'off'
           files: "frontend/playwright-report/results.xml"
-          json_file: test-results/e2e.json
+          json_file: e2e-test-results.json
       - name: Upload E2E Test Results Summary
         uses: actions/upload-artifact@v7
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           name: test-results-e2e
-          path: test-results/e2e.json
-          if-no-files-found: ignore
+          path: e2e-test-results.json
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v7
         if: ${{ failure() }}
         with:
@@ -229,7 +229,7 @@ jobs:
             // Each test job writes its results as JSON via publish-unit-test-result-action (json_file).
             const body = [marker, '# Test Results'];
             for (const section of sections) {
-              const path = `test-results/${section.file}.json`;
+              const path = `test-results/${section.file}-test-results.json`;
               if (!fs.existsSync(path)) {
                 body.push(`## ⚠️ ${section.title}`, `No test results were produced (job ${section.result}).`);
                 continue;
