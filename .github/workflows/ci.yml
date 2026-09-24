@@ -20,7 +20,6 @@ jobs:
       contents: read
       security-events: write
       checks: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v7
 
@@ -54,8 +53,17 @@ jobs:
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           check_name: Backend Test Results
-          comment_mode: always
+          comment_mode: 'off'
           files: "**/TestResults/*.trx"
+          json_file: test-results/backend.json
+
+      - name: Upload Backend Test Results Summary
+        uses: actions/upload-artifact@v7
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          name: test-results-backend
+          path: test-results/backend.json
+          if-no-files-found: ignore
 
       - name: Perform CodeQL Analysis
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -70,7 +78,6 @@ jobs:
       contents: read
       security-events: write
       checks: write
-      pull-requests: write
     defaults:
       run:
         working-directory: frontend
@@ -115,8 +122,17 @@ jobs:
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           check_name: Frontend Test Results
-          comment_mode: always
+          comment_mode: 'off'
           files: "frontend/vitest-report/results.xml"
+          json_file: test-results/frontend.json
+
+      - name: Upload Frontend Test Results Summary
+        uses: actions/upload-artifact@v7
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          name: test-results-frontend
+          path: test-results/frontend.json
+          if-no-files-found: ignore
 
       - name: Perform CodeQL Analysis
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -130,7 +146,6 @@ jobs:
     permissions:
       contents: read
       checks: write
-      pull-requests: write
     defaults:
       run:
         working-directory: frontend
@@ -163,14 +178,79 @@ jobs:
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           check_name: E2E Test Results
-          comment_mode: always
+          comment_mode: 'off'
           files: "frontend/playwright-report/results.xml"
+          json_file: test-results/e2e.json
+      - name: Upload E2E Test Results Summary
+        uses: actions/upload-artifact@v7
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          name: test-results-e2e
+          path: test-results/e2e.json
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v7
         if: ${{ failure() }}
         with:
           name: playwright-report
           path: frontend/playwright-report/
           retention-days: 30
+
+  test-results-comment:
+    name: Test Results PR Comment
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, e2e-tests]
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Download test result summaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: test-results-*
+          merge-multiple: true
+          path: test-results
+
+      - name: Create or update PR comment
+        uses: actions/github-script@v9
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          E2E_RESULT: ${{ needs['e2e-tests'].result }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- checkmate-test-results -->';
+            const sections = [
+              { title: 'Backend Tests', file: 'backend', result: process.env.BACKEND_RESULT },
+              { title: 'Frontend Unit Tests', file: 'frontend', result: process.env.FRONTEND_RESULT },
+              { title: 'E2E Tests', file: 'e2e', result: process.env.E2E_RESULT },
+            ];
+
+            // Each test job writes its results as JSON via publish-unit-test-result-action (json_file).
+            const body = [marker, '# Test Results'];
+            for (const section of sections) {
+              const path = `test-results/${section.file}.json`;
+              if (!fs.existsSync(path)) {
+                body.push(`## ⚠️ ${section.title}`, `No test results were produced (job ${section.result}).`);
+                continue;
+              }
+              const results = JSON.parse(fs.readFileSync(path, 'utf8'));
+              const icon = results.conclusion === 'success' ? '✅' : '❌';
+              body.push(`## ${icon} ${section.title}`, results.summary.trim());
+              if (results.conclusion !== 'success') {
+                body.push(`[View failure details](${results.check_url})`);
+              }
+            }
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find((c) => c.user.type === 'Bot' && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: body.join('\n\n') });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: body.join('\n\n') });
+            }
 
   infrastructure-what-if:
     name: Infrastructure What-If (Bicep)
