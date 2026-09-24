@@ -208,6 +208,10 @@ publish/
 # in these scripts will be unencrypted
 PublishScripts/
 
+# Bicep compiled ARM JSON (build artefacts — Bicep source files are the source of truth)
+infra/**/*.json
+!infra/bicepconfig.json
+
 # NuGet Packages
 *.nupkg
 # NuGet Symbol Packages
