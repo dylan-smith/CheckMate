@@ -247,9 +247,14 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
     # No environment: PR runs use a separate read-and-preview-only identity and never get the
     # production environment's credentials or secrets.
+    # Serialize the find-then-create/update of the PR comment so overlapping runs on one PR can't both create one.
+    concurrency:
+      group: infrastructure-what-if-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     permissions:
       id-token: write
       contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
 
@@ -271,12 +276,24 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/main.bicepparam \
             --validation-level ProviderNoRbac \
-            --exclude-change-types Ignore NoChange
+            --exclude-change-types Ignore NoChange \
+            | tee "${RUNNER_TEMP}/what-if.txt"
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           # What-if can't read existing app setting values, so the real secret adds nothing to the
           # preview; keep it out of PR runs, whose workflow definition comes from the PR branch.
           AZURE_SQL_CONNECTION_STRING: what-if-placeholder
+          AZURE_CORE_NO_COLOR: 'true'
+
+      - name: Comment infrastructure changes on PR
+        uses: actions/github-script@v9
+        env:
+          WHAT_IF_OUTPUT: ${{ runner.temp }}/what-if.txt
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        with:
+          script: |
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/what-if-comment.cjs`);
+            await run({ github, context });
 
   deploy-infrastructure:
     name: Deploy Infrastructure (Bicep)
