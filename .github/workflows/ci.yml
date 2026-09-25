@@ -12,6 +12,16 @@ on:
 permissions:
   contents: read
 
+# Runs on main deploy to production, so only one runs at a time: another run's Bicep deployment or backend
+# deploy mustn't reconfigure, restart or resume the API while this one has it paused (see deploy-backend). A
+# workflow-level group holds the lock for the whole infrastructure, backend and frontend sequence, which
+# job-level groups can't. Never cancel a running deployment: stopping it partway through migrations would leave
+# the API paused. A newer main run waiting its turn replaces an older waiting one, which is fine since it has
+# the newer code. Other runs (pull requests) get a group of their own, so they never wait.
+concurrency:
+  group: ${{ github.ref == 'refs/heads/main' && 'production-deploy' || format('ci-{0}', github.run_id) }}
+  cancel-in-progress: false
+
 jobs:
   backend:
     name: Backend Build & Test
@@ -273,11 +283,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [backend, frontend, e2e-tests]
     if: github.ref == 'refs/heads/main'
-    # Shares deploy-backend's group: the Bicep deployment updates the App Service's config and settings, which
-    # restarts the app, so it mustn't run while another run has the API paused.
-    concurrency:
-      group: production-deploy
-      cancel-in-progress: false
     environment: production
     permissions:
       id-token: write
@@ -326,12 +331,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [deploy-infrastructure]
     if: github.ref == 'refs/heads/main'
-    # One deployment at a time (shared with deploy-infrastructure), so one run can't resume the API or change its
-    # config while another is still migrating. Never cancel a running deployment: stopping it partway through
-    # migrations would leave the API paused.
-    concurrency:
-      group: production-deploy
-      cancel-in-progress: false
     environment: production
     permissions:
       id-token: write
