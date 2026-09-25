@@ -56,7 +56,14 @@ jobs:
         run: dotnet format CheckMate.slnx --verify-no-changes --no-restore
 
       - name: Test
+        id: test
         run: dotnet test --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx" --results-directory TestResults
+
+      # Coverlet (configured in coverage.runsettings) writes its report under a run id folder; give it a fixed
+      # name for the PR comment.
+      - name: Collect Backend Coverage
+        if: always() && steps.test.outcome != 'skipped'
+        run: cp TestResults/*/coverage.cobertura.xml backend-coverage.xml
 
       - name: Publish Backend Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
@@ -72,7 +79,9 @@ jobs:
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           name: test-results-backend
-          path: backend-test-results.json
+          path: |
+            backend-test-results.json
+            backend-coverage.xml
           if-no-files-found: warn
 
       - name: Perform CodeQL Analysis
@@ -125,7 +134,12 @@ jobs:
         run: npx prettier --check .
 
       - name: Test
-        run: npm test
+        id: test
+        run: npm test -- --coverage
+
+      - name: Collect Frontend Coverage
+        if: always() && steps.test.outcome != 'skipped'
+        run: cp coverage/coverage-summary.json ../frontend-coverage.json
 
       - name: Publish Frontend Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
@@ -141,7 +155,9 @@ jobs:
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           name: test-results-frontend
-          path: frontend-test-results.json
+          path: |
+            frontend-test-results.json
+            frontend-coverage.json
           if-no-files-found: warn
 
       - name: Perform CodeQL Analysis

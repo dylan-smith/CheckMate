@@ -31,3 +31,6 @@ dist-ssr
 
 # Vitest
 /vitest-report/
+
+# Vitest coverage
+/coverage/
