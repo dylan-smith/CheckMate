@@ -58,3 +58,8 @@ updates:
           - "react-dom"
           - "@types/react"
           - "@types/react-dom"
+      # @vitest/coverage-v8 requires the exact same vitest version
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
