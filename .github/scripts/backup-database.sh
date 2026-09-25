@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Exports the database to a BACPAC file in RUNNER_TEMP and sets BACKUP_FILE (its file name) for later steps.
+# Backs up the database by exporting it to a BACPAC file in RUNNER_TEMP, and sets BACKUP_FILE (its file
+# name) for later steps.
 # Retries cover the serverless database resuming from auto-pause, like DbUpRunner does.
 #
 # Requires CONNECTION_STRING: the same one the migrations use, so the backup is always of the database they change.

@@ -383,8 +383,8 @@ jobs:
 
       # Back up the database before every migration run. The backup goes to the db-backups container, and
       # its lifecycle policy (infra/modules/storage.bicep) deletes old copies. If this fails, migrations don't run.
-      - name: Export database (BACPAC)
-        run: bash .github/scripts/export-database.sh
+      - name: Backup database (BACPAC)
+        run: bash .github/scripts/backup-database.sh
         env:
           CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
 
