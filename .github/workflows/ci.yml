@@ -381,6 +381,42 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      # Back up the database before every migration run. The backup goes to the db-backups container, and
+      # its lifecycle policy (infra/modules/storage.bicep) deletes old copies. If this fails, migrations don't run.
+      - name: Install SqlPackage
+        run: dotnet tool install --global microsoft.sqlpackage
+
+      - name: Export database (BACPAC)
+        shell: bash
+        run: |
+          TOKEN=$(az account get-access-token --resource https://database.windows.net/ --query accessToken --output tsv)
+          echo "::add-mask::${TOKEN}"
+          BACKUP_FILE="${SQL_DATABASE}-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA::7}.bacpac"
+          sqlpackage /Action:Export \
+            /SourceServerName:"${SQL_SERVER}" \
+            /SourceDatabaseName:"${SQL_DATABASE}" \
+            /AccessToken:"${TOKEN}" \
+            /TargetFile:"${RUNNER_TEMP}/${BACKUP_FILE}"
+          echo "BACKUP_FILE=${BACKUP_FILE}" >> "$GITHUB_ENV"
+        env:
+          SQL_SERVER: checkmate-sql.database.windows.net
+          SQL_DATABASE: CheckMate
+
+      - name: Upload backup to Blob Storage
+        shell: bash
+        run: |
+          az storage blob upload \
+            --account-name "${AZURE_STORAGE_ACCOUNT_NAME}" \
+            --auth-mode login \
+            --container-name db-backups \
+            --name "${BACKUP_FILE}" \
+            --file "${RUNNER_TEMP}/${BACKUP_FILE}" \
+            --only-show-errors \
+            --output none
+          echo "Backed up to db-backups/${BACKUP_FILE}" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}
+
       - name: Run database migrations
         run: ./backend/database-publish/CheckMate.Database "$CONNECTION_STRING"
         env:
