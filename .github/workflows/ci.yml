@@ -12,6 +12,16 @@ on:
 permissions:
   contents: read
 
+# Runs on main deploy to production, so only one runs at a time: another run's Bicep deployment or backend
+# deploy mustn't reconfigure, restart or resume the API while this one has it paused (see deploy-backend). A
+# workflow-level group holds the lock for the whole infrastructure, backend and frontend sequence, which
+# job-level groups can't. Never cancel a running deployment: stopping it partway through migrations would leave
+# the API paused. A newer main run waiting its turn replaces an older waiting one, which is fine since it has
+# the newer code. Other runs (pull requests) get a group of their own, so they never wait.
+concurrency:
+  group: ${{ github.ref == 'refs/heads/main' && 'production-deploy' || format('ci-{0}', github.run_id) }}
+  cancel-in-progress: false
+
 jobs:
   backend:
     name: Backend Build & Test
@@ -205,8 +215,14 @@ jobs:
       group: test-results-comment-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     permissions:
+      contents: read
       pull-requests: write
     steps:
+      # Only the comment script is needed. Check out before downloading, since checkout cleans the workspace.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+
       - name: Download test result summaries
         uses: actions/download-artifact@v8
         with:
@@ -222,39 +238,8 @@ jobs:
           E2E_RESULT: ${{ needs['e2e-tests'].result }}
         with:
           script: |
-            const fs = require('fs');
-            const marker = '<!-- checkmate-test-results -->';
-            const sections = [
-              { title: 'Backend Tests', file: 'backend', result: process.env.BACKEND_RESULT },
-              { title: 'Frontend Unit Tests', file: 'frontend', result: process.env.FRONTEND_RESULT },
-              { title: 'E2E Tests', file: 'e2e', result: process.env.E2E_RESULT },
-            ];
-
-            // Each test job writes its results as JSON via publish-unit-test-result-action (json_file).
-            const body = [marker, '# Test Results'];
-            for (const section of sections) {
-              const path = `test-results/${section.file}-test-results.json`;
-              if (!fs.existsSync(path)) {
-                body.push(`## ⚠️ ${section.title}`, `No test results were produced (job ${section.result}).`);
-                continue;
-              }
-              const results = JSON.parse(fs.readFileSync(path, 'utf8'));
-              const icon = results.conclusion === 'success' ? '✅' : '❌';
-              body.push(`## ${icon} ${section.title}`, results.summary.trim());
-              if (results.conclusion !== 'success') {
-                body.push(`[View failure details](${results.check_url})`);
-              }
-            }
-
-            const { owner, repo } = context.repo;
-            const issue_number = context.issue.number;
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
-            const existing = comments.find((c) => c.user.type === 'Bot' && c.body.startsWith(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: body.join('\n\n') });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body: body.join('\n\n') });
-            }
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/test-results-comment.cjs`);
+            await run({ github, context });
 
   infrastructure-what-if:
     name: Infrastructure What-If (Bicep)
@@ -381,32 +366,24 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # Back up the database before every migration run. The backup goes to the db-backups container, and
-      # its lifecycle policy (infra/modules/storage.bicep) deletes old copies. If this fails, migrations don't run.
+      # Installed before the API is paused so the install doesn't add to the downtime.
       - name: Install SqlPackage
         run: dotnet tool install --global microsoft.sqlpackage
 
-      - name: Export database (BACPAC)
-        shell: bash
-        # Uses the same connection string as the migrations so the backup is always of the database they change.
-        # Retries cover the serverless database resuming from auto-pause, like DbUpRunner does.
-        run: |
-          BACKUP_FILE="CheckMate-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA::7}.bacpac"
-          for attempt in 1 2 3 4 5; do
-            if sqlpackage /Action:Export \
-              /SourceConnectionString:"${CONNECTION_STRING}" \
-              /TargetFile:"${RUNNER_TEMP}/${BACKUP_FILE}"; then
-              break
-            fi
-            if [ "${attempt}" -eq 5 ]; then
-              echo "::error::Database export failed after ${attempt} attempts"
-              exit 1
-            fi
-            echo "Export attempt ${attempt} failed; retrying in 15 seconds"
-            rm -f "${RUNNER_TEMP}/${BACKUP_FILE}"
-            sleep 15
-          done
-          echo "BACKUP_FILE=${BACKUP_FILE}" >> "$GITHUB_ENV"
+      # Pause the API from before the backup until the new version is deployed, so the old API never runs
+      # against the migrated database (and the backup can't miss writes made after it).
+      - name: Pause API
+        id: pause
+        run: bash .github/scripts/pause-api.sh
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          AZURE_BACKEND_URL: ${{ vars.AZURE_BACKEND_URL }}
+
+      # Back up the database before every migration run. The backup goes to the db-backups container, and
+      # its lifecycle policy (infra/modules/storage.bicep) deletes old copies. If this fails, migrations don't run.
+      - name: Backup database (BACPAC)
+        run: bash .github/scripts/backup-database.sh
         env:
           CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
 
@@ -426,15 +403,36 @@ jobs:
           AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}
 
       - name: Run database migrations
+        id: migrate
         run: ./backend/database-publish/CheckMate.Database "$CONNECTION_STRING"
         env:
           CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
 
       - name: Deploy to Azure App Service
+        id: deploy
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ vars.AZURE_BACKEND_APP_NAME }}
           package: ./backend/publish
+
+      # Resume only if this run paused the API (so a run that fails before pausing never resumes one an earlier
+      # run left paused), and then either after the new API deploys, or after a failure or cancellation before
+      # migrations started, since the database then still matches the running API. That last case needs the API to
+      # have been live when this run paused it: if an earlier run left it paused, its migrations may have changed
+      # the database.
+      - name: Resume API
+        id: resume
+        if: >-
+          always() && steps.pause.outcome != 'skipped' && (steps.deploy.outcome == 'success' ||
+          (steps.migrate.outcome == 'skipped' && steps.pause.outputs['was-live'] == 'true'))
+        run: bash .github/scripts/resume-api.sh
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+
+      - name: Report API left paused
+        if: always() && steps.pause.outcome != 'skipped' && steps.resume.outcome != 'success'
+        run: echo "::error::The API is still paused, so it isn't serving users. Either a deployment stopped after its migrations started (this run or an earlier one), or resuming failed. Deploy a fix, or restore the backup and remove the app's deploy-pause-* access restriction rules."
 
   deploy-frontend:
     name: Deploy Frontend (React)

@@ -24,6 +24,15 @@ type ErrorResponse = {
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5269'
 
+// fetch rejects with a TypeError when the API can't be reached at all, including while a deployment has
+// it paused (see the deploy-backend job in ci.yml), so tell the user to retry rather than show a generic error.
+const unreachableMessage =
+  "Can't reach CheckMate right now. It may be updating, so try again in a minute."
+
+function describeFetchError(error: unknown, fallback: string) {
+  return error instanceof TypeError ? unreachableMessage : fallback
+}
+
 function App() {
   const [checklists, setChecklists] = useState<Checklist[]>([])
   const [name, setName] = useState('')
@@ -54,8 +63,8 @@ function App() {
 
       const payload = (await response.json()) as Checklist[]
       setChecklists(payload)
-    } catch {
-      setErrorMessage('Unable to load checklists.')
+    } catch (error) {
+      setErrorMessage(describeFetchError(error, 'Unable to load checklists.'))
     } finally {
       setLoading(false)
     }
@@ -102,8 +111,8 @@ function App() {
       setName('')
       setEditingId(null)
       await loadChecklists()
-    } catch {
-      setErrorMessage('Unable to save checklist.')
+    } catch (error) {
+      setErrorMessage(describeFetchError(error, 'Unable to save checklist.'))
     } finally {
       setSubmitting(false)
     }
@@ -138,8 +147,8 @@ function App() {
       }
 
       await loadChecklists()
-    } catch {
-      setErrorMessage('Unable to delete checklist.')
+    } catch (error) {
+      setErrorMessage(describeFetchError(error, 'Unable to delete checklist.'))
     }
   }
 

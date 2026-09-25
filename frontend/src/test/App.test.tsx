@@ -66,16 +66,18 @@ describe('App', () => {
       })
     })
 
-    it('shows error message when fetch throws', async () => {
+    it('shows error message when the API is unreachable', async () => {
       mockFetch(async () => {
-        throw new Error('Network error')
+        throw new TypeError('Failed to fetch')
       })
 
       render(<App />)
 
       await waitFor(() => {
         expect(
-          screen.getByText('Unable to load checklists.'),
+          screen.getByText(
+            "Can't reach CheckMate right now. It may be updating, so try again in a minute.",
+          ),
         ).toBeInTheDocument()
       })
     })
@@ -222,13 +224,13 @@ describe('App', () => {
       })
     })
 
-    it('shows error when create request throws', async () => {
+    it('shows error when the API is unreachable during create', async () => {
       const user = userEvent.setup()
       let firstLoad = true
 
       mockFetch(async (_url, init) => {
         if (init?.method === 'POST') {
-          throw new Error('Network error')
+          throw new TypeError('Failed to fetch')
         }
         if (firstLoad) {
           firstLoad = false
@@ -251,7 +253,9 @@ describe('App', () => {
 
       await waitFor(() => {
         expect(
-          screen.getByText('Unable to save checklist.'),
+          screen.getByText(
+            "Can't reach CheckMate right now. It may be updating, so try again in a minute.",
+          ),
         ).toBeInTheDocument()
       })
     })
@@ -510,12 +514,12 @@ describe('App', () => {
       })
     })
 
-    it('shows error when delete request throws', async () => {
+    it('shows error when the API is unreachable during delete', async () => {
       const user = userEvent.setup()
 
       mockFetch(async (_url, init) => {
         if (init?.method === 'DELETE') {
-          throw new Error('Network error')
+          throw new TypeError('Failed to fetch')
         }
         return jsonResponse([{ id: 1, name: 'Persistent' }])
       })
@@ -530,7 +534,9 @@ describe('App', () => {
 
       await waitFor(() => {
         expect(
-          screen.getByText('Unable to delete checklist.'),
+          screen.getByText(
+            "Can't reach CheckMate right now. It may be updating, so try again in a minute.",
+          ),
         ).toBeInTheDocument()
       })
     })
