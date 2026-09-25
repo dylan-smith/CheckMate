@@ -136,7 +136,7 @@ infra/
 ├── main.bicep           # Root template — wires all modules together
 ├── main.bicepparam      # Production parameter values (resource names, regions, SKUs)
 └── modules/
-    ├── appservice.bicep # App Service Plan + App Service (Windows/.NET 10) and its app settings
+    ├── appservice.bicep # App Service Plan + App Service (Linux/.NET 10) and its app settings
     ├── monitoring.bicep # Log Analytics Workspace + Application Insights
     ├── sql.bicep        # Azure SQL Server (Entra-only auth) + serverless Database
     └── storage.bicep    # Storage Account for the frontend static website
@@ -176,7 +176,7 @@ GitHub issues OIDC tokens for this repo with immutable-ID subjects, so federated
 
 | Component | Azure Service | Endpoint |
 |-----------|--------------|----------|
-| Backend API | Azure App Service (Windows/.NET 10) | `https://checkmate-heesaxh5agdygvew.westus2-01.azurewebsites.net` |
+| Backend API | Azure App Service (Linux/.NET 10) | `https://checkmate-heesaxh5agdygvew.westus2-01.azurewebsites.net` |
 | Frontend | Azure Storage Account (static website) | `https://checkmateweb.z22.web.core.windows.net` |
 | Database | Azure SQL serverless database (Entra-only auth) | — |
 | Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs go to the `CheckMate` workspace) | — |
