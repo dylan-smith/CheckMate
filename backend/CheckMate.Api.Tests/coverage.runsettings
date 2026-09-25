@@ -6,8 +6,9 @@
       <DataCollector friendlyName="XPlat Code Coverage">
         <Configuration>
           <Format>cobertura</Format>
-          <!-- Source-generated code (such as the OpenAPI XML comment support) isn't ours to test. -->
-          <ExcludeByFile>**/obj/**</ExcludeByFile>
+          <!-- Source-generated code (such as the OpenAPI XML comment support) isn't ours to test, and Program.cs is
+               startup wiring that unit tests don't run. -->
+          <ExcludeByFile>**/obj/**,**/Program.cs</ExcludeByFile>
           <ExcludeByAttribute>GeneratedCodeAttribute,CompilerGeneratedAttribute</ExcludeByAttribute>
         </Configuration>
       </DataCollector>
