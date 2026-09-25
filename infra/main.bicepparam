@@ -16,7 +16,7 @@ param appServicePlanSku = 'F1'
 param storageAccountName = 'checkmateweb'
 
 // Database backups (BACPAC exports taken by CI before migrations, in the db-backups container)
-param backupRetentionDays = 30
+param backupRetentionDays = 14
 
 // SQL Server and Database (Entra-only auth; 'checkmate' is taken globally)
 param sqlServerName = 'checkmate-sql'

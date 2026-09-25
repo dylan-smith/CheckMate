@@ -19,6 +19,9 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2025-01-01' = {
     name: 'Standard_LRS'
   }
   kind: 'StorageV2'
+  tags: {
+    purpose: 'what-if-test'
+  }
   properties: {
     accessTier: 'Hot'
     supportsHttpsTrafficOnly: true
@@ -38,6 +41,14 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2025-01-01'
 resource backupContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2025-01-01' = {
   parent: blobService
   name: 'db-backups'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource whatIfTestContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2025-01-01' = {
+  parent: blobService
+  name: 'what-if-test'
   properties: {
     publicAccess: 'None'
   }
