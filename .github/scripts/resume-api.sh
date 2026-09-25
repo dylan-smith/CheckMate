@@ -5,6 +5,7 @@
 # Requires AZURE_RESOURCE_GROUP and AZURE_BACKEND_APP_NAME.
 set -euo pipefail
 
+# `remove` only matches Deny rules when given --action Deny; without it, it looks for an Allow rule and fails.
 for rule in deploy-pause-ipv4 deploy-pause-ipv6; do
   if [ "$(az webapp config access-restriction show \
     --resource-group "${AZURE_RESOURCE_GROUP}" \
@@ -15,6 +16,7 @@ for rule in deploy-pause-ipv4 deploy-pause-ipv6; do
       --resource-group "${AZURE_RESOURCE_GROUP}" \
       --name "${AZURE_BACKEND_APP_NAME}" \
       --rule-name "${rule}" \
+      --action Deny \
       --only-show-errors \
       --output none
   fi
