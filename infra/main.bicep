@@ -43,6 +43,10 @@ param sqlEntraAdminPrincipalType string = 'User'
 @secure()
 param sqlConnectionString string
 
+@description('Days to keep database backups before they are deleted automatically.')
+@minValue(1)
+param backupRetentionDays int = 30
+
 @description('Name of the Log Analytics Workspace.')
 param logAnalyticsWorkspaceName string
 
@@ -64,6 +68,7 @@ module storage 'modules/storage.bicep' = {
   params: {
     location: storageLocation
     storageAccountName: storageAccountName
+    backupRetentionDays: backupRetentionDays
   }
 }
 

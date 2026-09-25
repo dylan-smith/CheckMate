@@ -166,7 +166,7 @@ The template doesn't manage identities, role assignments or database users, so a
 
 | Identity | Grants |
 |----------|--------|
-| `checkmate-deploy` (user-assigned managed identity, `AZURE_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:environment:production`; **Contributor** on the resource group; **Storage Blob Data Owner** on the frontend storage account (static website setup and `npm run deploy` use `--auth-mode login`); `db_owner` database user (runs the migrations) |
+| `checkmate-deploy` (user-assigned managed identity, `AZURE_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:environment:production`; **Contributor** on the resource group; **Storage Blob Data Owner** on the frontend storage account (static website setup, `npm run deploy` and database backup uploads use `--auth-mode login`); `db_owner` database user (runs the migrations and pre-migration backups) |
 | `checkmate-pr-whatif` (user-assigned managed identity, `AZURE_WHATIF_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:pull_request`; custom **CheckMate What-If Reader** role (`*/read`, `Microsoft.Resources/deployments/validate/action`, `Microsoft.Resources/deployments/whatIf/action`, `Microsoft.Resources/deployments/write`) on the resource group |
 | App Service system-assigned identity | `db_datareader` + `db_datawriter` database user (the API's runtime connection) |
 
@@ -180,6 +180,20 @@ GitHub issues OIDC tokens for this repo with immutable-ID subjects, so federated
 | Frontend | Azure Storage Account (static website) | `https://checkmateweb.z22.web.core.windows.net` |
 | Database | Azure SQL serverless database (Entra-only auth) | — |
 | Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs go to the `CheckMate` workspace) | — |
+
+### Database Backups
+
+Before running migrations, the `deploy-backend` job exports the database to a BACPAC and uploads it to the private `db-backups` container in the `checkmateweb` storage account. It does this on every deploy, including the daily scheduled run. Files are named `CheckMate-<UTC timestamp>-<commit>.bacpac`. A lifecycle management rule deletes backups older than `backupRetentionDays` (30 days, set in `infra/main.bicepparam`). If the backup fails, the migrations don't run.
+
+To restore, import a backup into a **new** database, check it, then point the app at it or swap the names:
+
+```powershell
+az storage blob list --auth-mode login --account-name checkmateweb --container-name db-backups --output table
+az storage blob download --auth-mode login --account-name checkmateweb --container-name db-backups --name <file>.bacpac --file backup.bacpac
+sqlpackage /Action:Import /SourceFile:backup.bacpac /TargetServerName:checkmate-sql.database.windows.net /TargetDatabaseName:CheckMate-Restored /UniversalAuthentication:True
+```
+
+The Azure SQL built-in point-in-time restore (7 days) is still available for restoring to a moment between backups.
 
 ### Required GitHub Variables
 
