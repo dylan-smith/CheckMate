@@ -258,6 +258,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # What-if reports false positives (noise) for this template on every run, so the PR's changes are the ones
+      # it reports beyond those it reports for main.
+      - name: Checkout main for comparison
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.base_ref }}
+          path: baseline
+          sparse-checkout: infra
+
       - name: Lint Bicep templates
         run: az bicep lint --file infra/main.bicep
 
@@ -285,10 +294,30 @@ jobs:
           AZURE_SQL_CONNECTION_STRING: what-if-placeholder
           AZURE_CORE_NO_COLOR: 'true'
 
+      # If this fails (say main's templates are broken), the comment shows every change instead of failing the PR.
+      - name: Preview main's infrastructure changes
+        id: baseline
+        continue-on-error: true
+        shell: bash
+        run: |
+          az deployment group what-if \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --template-file baseline/infra/main.bicep \
+            --parameters baseline/infra/main.bicepparam \
+            --validation-level ProviderNoRbac \
+            --exclude-change-types Ignore NoChange \
+            > "${RUNNER_TEMP}/baseline-what-if.txt"
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_SQL_CONNECTION_STRING: what-if-placeholder
+          AZURE_CORE_NO_COLOR: 'true'
+
       - name: Comment infrastructure changes on PR
         uses: actions/github-script@v9
         env:
           WHAT_IF_OUTPUT: ${{ runner.temp }}/what-if.txt
+          BASELINE_WHAT_IF_OUTPUT: ${{ runner.temp }}/baseline-what-if.txt
+          BASELINE_OK: ${{ steps.baseline.outcome == 'success' }}
           AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         with:
           script: |
