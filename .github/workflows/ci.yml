@@ -298,6 +298,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [backend, frontend, e2e-tests]
     if: github.ref == 'refs/heads/main'
+    # Shares deploy-backend's group: the Bicep deployment updates the App Service's config and settings, which
+    # restarts the app, so it mustn't run while another run has the API paused.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
     environment: production
     permissions:
       id-token: write
@@ -346,10 +351,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [deploy-infrastructure]
     if: github.ref == 'refs/heads/main'
-    # One deployment at a time, so one run can't resume the API while another is still migrating. Never cancel
-    # a running deployment: stopping it partway through migrations would leave the API paused.
+    # One deployment at a time (shared with deploy-infrastructure), so one run can't resume the API or change its
+    # config while another is still migrating. Never cancel a running deployment: stopping it partway through
+    # migrations would leave the API paused.
     concurrency:
-      group: deploy-backend
+      group: production-deploy
       cancel-in-progress: false
     environment: production
     permissions:
@@ -391,21 +397,23 @@ jobs:
         run: dotnet tool install --global microsoft.sqlpackage
 
       # Pause the API from before the backup until the new version is deployed, so the old API never runs
-      # against the migrated database (and the backup can't miss writes made after it). Denying all public
-      # traffic stops requests reaching the old API while leaving the deployment (SCM) site reachable; the
-      # API has no background work, so without requests it doesn't touch the database.
+      # against the migrated database (and the backup can't miss writes made after it). The pause adds
+      # deploy-pause-* access restriction rules that deny all public traffic at priority 1, ahead of any other
+      # rule, and leave the deployment (SCM) site reachable. The API has no background work, so without requests
+      # it doesn't touch the database. The rules are the pause marker: Resume removes just them, so the site's
+      # own access restrictions are left as they were.
       - name: Pause API
         id: pause
         shell: bash
         run: |
           # An earlier run can leave the API paused after its migrations started (see "Report API left paused").
           # The database may then be ahead of the running API, so this run must not resume it unless it deploys.
-          current="$(az webapp config show \
+          existing="$(az webapp config access-restriction show \
             --resource-group "${AZURE_RESOURCE_GROUP}" \
             --name "${AZURE_BACKEND_APP_NAME}" \
-            --query ipSecurityRestrictionsDefaultAction \
+            --query "length(ipSecurityRestrictions[?name=='deploy-pause-ipv4' || name=='deploy-pause-ipv6'])" \
             --output tsv)"
-          if [ "${current}" = "Deny" ]; then
+          if [ "${existing}" != "0" ]; then
             echo "::warning::The API was already paused by an earlier deployment; it stays paused unless this one deploys"
           else
             echo "was-live=true" >> "$GITHUB_OUTPUT"
@@ -413,11 +421,27 @@ jobs:
           az webapp config access-restriction set \
             --resource-group "${AZURE_RESOURCE_GROUP}" \
             --name "${AZURE_BACKEND_APP_NAME}" \
-            --default-action Deny \
-            --scm-default-action Allow \
             --use-same-restrictions-for-scm-site false \
             --only-show-errors \
             --output none
+          for rule in "deploy-pause-ipv4 0.0.0.0/0" "deploy-pause-ipv6 ::/0"; do
+            set -- ${rule}
+            if [ "$(az webapp config access-restriction show \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --name "${AZURE_BACKEND_APP_NAME}" \
+              --query "length(ipSecurityRestrictions[?name=='$1'])" \
+              --output tsv)" = "0" ]; then
+              az webapp config access-restriction add \
+                --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --name "${AZURE_BACKEND_APP_NAME}" \
+                --rule-name "$1" \
+                --action Deny \
+                --ip-address "$2" \
+                --priority 1 \
+                --only-show-errors \
+                --output none
+            fi
+          done
           # Wait until the restriction is enforced.
           for attempt in $(seq 1 24); do
             status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "${AZURE_BACKEND_URL}/api/checklists" || true)"
@@ -516,19 +540,28 @@ jobs:
           (steps.migrate.outcome == 'skipped' && steps.pause.outputs['was-live'] == 'true'))
         shell: bash
         run: |
-          az webapp config access-restriction set \
-            --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --name "${AZURE_BACKEND_APP_NAME}" \
-            --default-action Allow \
-            --only-show-errors \
-            --output none
+          # Only the rules Pause added; Pause may have stopped before adding both.
+          for rule in deploy-pause-ipv4 deploy-pause-ipv6; do
+            if [ "$(az webapp config access-restriction show \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --name "${AZURE_BACKEND_APP_NAME}" \
+              --query "length(ipSecurityRestrictions[?name=='${rule}'])" \
+              --output tsv)" != "0" ]; then
+              az webapp config access-restriction remove \
+                --resource-group "${AZURE_RESOURCE_GROUP}" \
+                --name "${AZURE_BACKEND_APP_NAME}" \
+                --rule-name "${rule}" \
+                --only-show-errors \
+                --output none
+            fi
+          done
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
 
       - name: Report API left paused
         if: always() && steps.pause.outcome != 'skipped' && steps.resume.outcome != 'success'
-        run: echo "::error::The API is still paused, so it isn't serving users. Either a deployment stopped after its migrations started (this run or an earlier one), or resuming failed. Deploy a fix, or restore the backup and allow public access to the app again."
+        run: echo "::error::The API is still paused, so it isn't serving users. Either a deployment stopped after its migrations started (this run or an earlier one), or resuming failed. Deploy a fix, or restore the backup and remove the app's deploy-pause-* access restriction rules."
 
   deploy-frontend:
     name: Deploy Frontend (React)
