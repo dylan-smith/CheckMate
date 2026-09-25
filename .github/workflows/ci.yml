@@ -205,8 +205,14 @@ jobs:
       group: test-results-comment-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     permissions:
+      contents: read
       pull-requests: write
     steps:
+      # Only the comment script is needed. Check out before downloading, since checkout cleans the workspace.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+
       - name: Download test result summaries
         uses: actions/download-artifact@v8
         with:
@@ -222,39 +228,8 @@ jobs:
           E2E_RESULT: ${{ needs['e2e-tests'].result }}
         with:
           script: |
-            const fs = require('fs');
-            const marker = '<!-- checkmate-test-results -->';
-            const sections = [
-              { title: 'Backend Tests', file: 'backend', result: process.env.BACKEND_RESULT },
-              { title: 'Frontend Unit Tests', file: 'frontend', result: process.env.FRONTEND_RESULT },
-              { title: 'E2E Tests', file: 'e2e', result: process.env.E2E_RESULT },
-            ];
-
-            // Each test job writes its results as JSON via publish-unit-test-result-action (json_file).
-            const body = [marker, '# Test Results'];
-            for (const section of sections) {
-              const path = `test-results/${section.file}-test-results.json`;
-              if (!fs.existsSync(path)) {
-                body.push(`## ⚠️ ${section.title}`, `No test results were produced (job ${section.result}).`);
-                continue;
-              }
-              const results = JSON.parse(fs.readFileSync(path, 'utf8'));
-              const icon = results.conclusion === 'success' ? '✅' : '❌';
-              body.push(`## ${icon} ${section.title}`, results.summary.trim());
-              if (results.conclusion !== 'success') {
-                body.push(`[View failure details](${results.check_url})`);
-              }
-            }
-
-            const { owner, repo } = context.repo;
-            const issue_number = context.issue.number;
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
-            const existing = comments.find((c) => c.user.type === 'Bot' && c.body.startsWith(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: body.join('\n\n') });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body: body.join('\n\n') });
-            }
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/test-results-comment.cjs`);
+            await run({ github, context });
 
   infrastructure-what-if:
     name: Infrastructure What-If (Bicep)
@@ -397,78 +372,10 @@ jobs:
         run: dotnet tool install --global microsoft.sqlpackage
 
       # Pause the API from before the backup until the new version is deployed, so the old API never runs
-      # against the migrated database (and the backup can't miss writes made after it). The pause adds
-      # deploy-pause-* access restriction rules that deny all public traffic at priority 1, ahead of any other
-      # rule, and leave the deployment (SCM) site reachable. The API has no background work, so without requests
-      # it doesn't touch the database. The rules are the pause marker: Resume removes just them, so the site's
-      # own access restrictions are left as they were.
+      # against the migrated database (and the backup can't miss writes made after it).
       - name: Pause API
         id: pause
-        shell: bash
-        run: |
-          # An earlier run can leave the API paused after its migrations started (see "Report API left paused").
-          # The database may then be ahead of the running API, so this run must not resume it unless it deploys.
-          existing="$(az webapp config access-restriction show \
-            --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --name "${AZURE_BACKEND_APP_NAME}" \
-            --query "length(ipSecurityRestrictions[?name=='deploy-pause-ipv4' || name=='deploy-pause-ipv6'])" \
-            --output tsv)"
-          if [ "${existing}" != "0" ]; then
-            echo "::warning::The API was already paused by an earlier deployment; it stays paused unless this one deploys"
-          else
-            echo "was-live=true" >> "$GITHUB_OUTPUT"
-          fi
-          az webapp config access-restriction set \
-            --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --name "${AZURE_BACKEND_APP_NAME}" \
-            --use-same-restrictions-for-scm-site false \
-            --only-show-errors \
-            --output none
-          for rule in "deploy-pause-ipv4 0.0.0.0/0" "deploy-pause-ipv6 ::/0"; do
-            set -- ${rule}
-            if [ "$(az webapp config access-restriction show \
-              --resource-group "${AZURE_RESOURCE_GROUP}" \
-              --name "${AZURE_BACKEND_APP_NAME}" \
-              --query "length(ipSecurityRestrictions[?name=='$1'])" \
-              --output tsv)" = "0" ]; then
-              az webapp config access-restriction add \
-                --resource-group "${AZURE_RESOURCE_GROUP}" \
-                --name "${AZURE_BACKEND_APP_NAME}" \
-                --rule-name "$1" \
-                --action Deny \
-                --ip-address "$2" \
-                --priority 1 \
-                --only-show-errors \
-                --output none
-            fi
-          done
-          # Wait until the restriction is enforced.
-          for attempt in $(seq 1 24); do
-            status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "${AZURE_BACKEND_URL}/api/checklists" || true)"
-            if [ "${status}" = "403" ]; then
-              break
-            fi
-            if [ "${attempt}" -eq 24 ]; then
-              echo "::error::API was still reachable 2 minutes after pausing it"
-              exit 1
-            fi
-            echo "API still answering (HTTP ${status}); checking again in 5 seconds"
-            sleep 5
-          done
-          # Requests the old API had already accepted can keep retrying the database for minutes (see the retry
-          # policy in Program.cs), so restart the app to end them. The restarted API gets no requests.
-          # synchronous=true makes the call wait until the restart has finished.
-          app_id="$(az webapp show \
-            --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --name "${AZURE_BACKEND_APP_NAME}" \
-            --query id \
-            --output tsv)"
-          az rest \
-            --method post \
-            --uri "https://management.azure.com${app_id}/restart?synchronous=true&api-version=2024-11-01" \
-            --only-show-errors \
-            --output none
-          echo "API paused"
+        run: bash .github/scripts/pause-api.sh
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
@@ -477,26 +384,7 @@ jobs:
       # Back up the database before every migration run. The backup goes to the db-backups container, and
       # its lifecycle policy (infra/modules/storage.bicep) deletes old copies. If this fails, migrations don't run.
       - name: Export database (BACPAC)
-        shell: bash
-        # Uses the same connection string as the migrations so the backup is always of the database they change.
-        # Retries cover the serverless database resuming from auto-pause, like DbUpRunner does.
-        run: |
-          BACKUP_FILE="CheckMate-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA::7}.bacpac"
-          for attempt in 1 2 3 4 5; do
-            if sqlpackage /Action:Export \
-              /SourceConnectionString:"${CONNECTION_STRING}" \
-              /TargetFile:"${RUNNER_TEMP}/${BACKUP_FILE}"; then
-              break
-            fi
-            if [ "${attempt}" -eq 5 ]; then
-              echo "::error::Database export failed after ${attempt} attempts"
-              exit 1
-            fi
-            echo "Export attempt ${attempt} failed; retrying in 15 seconds"
-            rm -f "${RUNNER_TEMP}/${BACKUP_FILE}"
-            sleep 15
-          done
-          echo "BACKUP_FILE=${BACKUP_FILE}" >> "$GITHUB_ENV"
+        run: bash .github/scripts/export-database.sh
         env:
           CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
 
@@ -538,23 +426,7 @@ jobs:
         if: >-
           always() && steps.pause.outcome != 'skipped' && (steps.deploy.outcome == 'success' ||
           (steps.migrate.outcome == 'skipped' && steps.pause.outputs['was-live'] == 'true'))
-        shell: bash
-        run: |
-          # Only the rules Pause added; Pause may have stopped before adding both.
-          for rule in deploy-pause-ipv4 deploy-pause-ipv6; do
-            if [ "$(az webapp config access-restriction show \
-              --resource-group "${AZURE_RESOURCE_GROUP}" \
-              --name "${AZURE_BACKEND_APP_NAME}" \
-              --query "length(ipSecurityRestrictions[?name=='${rule}'])" \
-              --output tsv)" != "0" ]; then
-              az webapp config access-restriction remove \
-                --resource-group "${AZURE_RESOURCE_GROUP}" \
-                --name "${AZURE_BACKEND_APP_NAME}" \
-                --rule-name "${rule}" \
-                --only-show-errors \
-                --output none
-            fi
-          done
+        run: bash .github/scripts/resume-api.sh
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
