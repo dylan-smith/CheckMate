@@ -381,6 +381,39 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      # Pause the API from before the backup until the new version is deployed, so the old API never runs
+      # against the migrated database (and the backup can't miss writes made after it). Denying all public
+      # traffic stops requests reaching the old API while leaving the deployment (SCM) site reachable; the
+      # API has no background work, so without requests it doesn't touch the database.
+      - name: Pause API
+        shell: bash
+        run: |
+          az webapp config access-restriction set \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --name "${AZURE_BACKEND_APP_NAME}" \
+            --default-action Deny \
+            --scm-default-action Allow \
+            --use-same-restrictions-for-scm-site false \
+            --only-show-errors \
+            --output none
+          # Wait until the restriction is enforced, then give in-flight requests time to finish.
+          for attempt in $(seq 1 24); do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "${AZURE_BACKEND_URL}/api/checklists" || true)"
+            if [ "${status}" = "403" ]; then
+              echo "API paused"
+              sleep 15
+              exit 0
+            fi
+            echo "API still answering (HTTP ${status}); checking again in 5 seconds"
+            sleep 5
+          done
+          echo "::error::API was still reachable 2 minutes after pausing it"
+          exit 1
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          AZURE_BACKEND_URL: ${{ vars.AZURE_BACKEND_URL }}
+
       # Back up the database before every migration run. The backup goes to the db-backups container, and
       # its lifecycle policy (infra/modules/storage.bicep) deletes old copies. If this fails, migrations don't run.
       - name: Install SqlPackage
@@ -426,6 +459,7 @@ jobs:
           AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}
 
       - name: Run database migrations
+        id: migrate
         run: ./backend/database-publish/CheckMate.Database "$CONNECTION_STRING"
         env:
           CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
@@ -435,6 +469,27 @@ jobs:
         with:
           app-name: ${{ vars.AZURE_BACKEND_APP_NAME }}
           package: ./backend/publish
+
+      # Also resume after a failure, but only if migrations never started: then the database still matches the
+      # old API. Once they've started, the API and database may not match, so it stays paused until a fix is
+      # deployed.
+      - name: Resume API
+        if: success() || (failure() && steps.migrate.outcome == 'skipped')
+        shell: bash
+        run: |
+          az webapp config access-restriction set \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --name "${AZURE_BACKEND_APP_NAME}" \
+            --default-action Allow \
+            --only-show-errors \
+            --output none
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+
+      - name: Report API left paused
+        if: failure() && steps.migrate.outcome != 'skipped'
+        run: echo "::error::The API is still paused because the deployment failed after migrations started. Deploy a fix, or restore the backup and allow public access to the app again."
 
   deploy-frontend:
     name: Deploy Frontend (React)
