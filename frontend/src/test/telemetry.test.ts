@@ -15,6 +15,14 @@ const sdk = vi.hoisted(() => ({
   trackEvent: vi.fn(),
 }))
 
+const config = vi.hoisted(() => ({ apiBaseUrl: 'http://localhost:5269' }))
+
+vi.mock('../config', () => ({
+  get apiBaseUrl() {
+    return config.apiBaseUrl
+  },
+}))
+
 vi.mock('@microsoft/applicationinsights-web', () => ({
   DistributedTracingModes: { W3C: 2 },
   ApplicationInsights: class {
@@ -31,6 +39,7 @@ vi.mock('@microsoft/applicationinsights-web', () => ({
 
 beforeEach(() => {
   resetTelemetry()
+  config.apiBaseUrl = 'http://localhost:5269'
 })
 
 afterEach(() => {
@@ -72,6 +81,21 @@ describe('telemetry', () => {
       expect(sdk.loadAppInsights).toHaveBeenCalledOnce()
       expect(sdk.trackPageView).toHaveBeenCalledOnce()
     })
+
+    it.each(['', '/'])(
+      'correlates with the page origin when the API base URL is %j',
+      (apiBaseUrl) => {
+        config.apiBaseUrl = apiBaseUrl
+
+        initTelemetry()
+
+        expect(sdk.constructor).toHaveBeenCalledWith({
+          config: expect.objectContaining({
+            correlationHeaderDomains: [window.location.host],
+          }),
+        })
+      },
+    )
 
     it('sets the cloud role name on every item', () => {
       initTelemetry()

@@ -22,7 +22,10 @@ export function initTelemetry() {
       // W3C traceparent lets the API's OpenTelemetry pipeline continue the browser's trace.
       distributedTracingMode: DistributedTracingModes.W3C,
       enableCorsCorrelation: true,
-      correlationHeaderDomains: [new URL(apiBaseUrl).host],
+      // Resolve against the page so a relative or empty base URL (same-origin API) still works.
+      correlationHeaderDomains: [
+        new URL(apiBaseUrl, window.location.origin).host,
+      ],
       disableFetchTracking: false,
       enableUnhandledPromiseRejectionTracking: true,
       enableAutoRouteTracking: false,
