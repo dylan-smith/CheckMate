@@ -13,6 +13,7 @@ try
     DbUpRunner.Run(args[0]);
     return 0;
 }
+// codeql[cs/catch-of-all-exceptions] Top-level handler for the migration tool: report any failure and exit non-zero.
 catch (Exception ex)
 {
     Console.ForegroundColor = ConsoleColor.Red;
