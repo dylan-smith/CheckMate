@@ -84,10 +84,29 @@ jobs:
             backend-coverage.xml
           if-no-files-found: warn
 
+      # CodeQL ignores paths-ignore for C# because it traces the real build, so drop the findings in the
+      # OpenAPI source generator's output (reported under obj/) from the SARIF before uploading it.
       - name: Perform CodeQL Analysis
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: github/codeql-action/analyze@v4.38.1
         with:
+          category: "/language:csharp"
+          upload: failure-only
+          output: codeql-results
+
+      - name: Filter generated code from CodeQL results
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: advanced-security/filter-sarif@v1.1
+        with:
+          patterns: "-**/obj/**"
+          input: codeql-results/csharp.sarif
+          output: codeql-results/csharp.sarif
+
+      - name: Upload CodeQL results
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v4.38.1
+        with:
+          sarif_file: codeql-results/csharp.sarif
           category: "/language:csharp"
 
   frontend:
