@@ -16,26 +16,33 @@ export function initTelemetry() {
     return
   }
 
-  appInsights = new ApplicationInsights({
-    config: {
-      connectionString,
-      // W3C traceparent lets the API's OpenTelemetry pipeline continue the browser's trace.
-      distributedTracingMode: DistributedTracingModes.W3C,
-      enableCorsCorrelation: true,
-      // Resolve against the page so a relative or empty base URL (same-origin API) still works.
-      correlationHeaderDomains: [
-        new URL(apiBaseUrl, window.location.origin).host,
-      ],
-      disableFetchTracking: false,
-      enableUnhandledPromiseRejectionTracking: true,
-      enableAutoRouteTracking: false,
-    },
-  })
-  appInsights.addTelemetryInitializer((item) => {
-    item.tags = { ...item.tags, 'ai.cloud.role': 'CheckMate.Web' }
-  })
-  appInsights.loadAppInsights()
-  appInsights.trackPageView()
+  // This runs before the app mounts, so a bad configuration must leave telemetry off rather than stop the
+  // page from rendering.
+  try {
+    const sdk = new ApplicationInsights({
+      config: {
+        connectionString,
+        // W3C traceparent lets the API's OpenTelemetry pipeline continue the browser's trace.
+        distributedTracingMode: DistributedTracingModes.W3C,
+        enableCorsCorrelation: true,
+        // Resolve against the page so a relative or empty base URL (same-origin API) still works.
+        correlationHeaderDomains: [
+          new URL(apiBaseUrl, window.location.origin).host,
+        ],
+        disableFetchTracking: false,
+        enableUnhandledPromiseRejectionTracking: true,
+        enableAutoRouteTracking: false,
+      },
+    })
+    sdk.addTelemetryInitializer((item) => {
+      item.tags = { ...item.tags, 'ai.cloud.role': 'CheckMate.Web' }
+    })
+    sdk.loadAppInsights()
+    sdk.trackPageView()
+    appInsights = sdk
+  } catch (error) {
+    console.error('Telemetry is disabled because it failed to start.', error)
+  }
 }
 
 export function trackException(error: unknown, properties?: Properties) {

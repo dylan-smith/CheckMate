@@ -97,6 +97,20 @@ describe('telemetry', () => {
       },
     )
 
+    it('leaves telemetry off instead of throwing when setup fails', () => {
+      config.apiBaseUrl = 'http://'
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+
+      expect(() => initTelemetry()).not.toThrow()
+      trackEvent('Something')
+
+      expect(consoleError).toHaveBeenCalled()
+      expect(sdk.trackEvent).not.toHaveBeenCalled()
+      consoleError.mockRestore()
+    })
+
     it('sets the cloud role name on every item', () => {
       initTelemetry()
 
