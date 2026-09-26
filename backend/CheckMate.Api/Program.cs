@@ -61,9 +61,12 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
             return;
         }
 
+        // The frontend's telemetry adds a traceparent header, which makes every request preflighted, so let
+        // browsers cache the preflight response.
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .SetPreflightMaxAge(TimeSpan.FromMinutes(10));
     }));
 
 if (useInMemoryDatabase)

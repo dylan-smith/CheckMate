@@ -4,6 +4,10 @@ import { ThemeProvider, createTheme } from '@mui/material/styles'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import ErrorBoundary from './ErrorBoundary.tsx'
+import { initTelemetry, trackException } from './telemetry.ts'
+
+initTelemetry()
 
 const theme = createTheme({
   palette: {
@@ -26,11 +30,25 @@ const theme = createTheme({
   },
 })
 
-createRoot(document.getElementById('root')!).render(
+// Setting these replaces React's default console logging, so keep logging as well as reporting.
+function reportRootError(kind: string) {
+  return (error: unknown) => {
+    console.error(error)
+    trackException(error, { kind })
+  }
+}
+
+createRoot(document.getElementById('root')!, {
+  onUncaughtError: reportRootError('uncaught'),
+  onCaughtError: reportRootError('caught'),
+  onRecoverableError: reportRootError('recoverable'),
+}).render(
   <StrictMode>
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </ThemeProvider>
   </StrictMode>,
 )
