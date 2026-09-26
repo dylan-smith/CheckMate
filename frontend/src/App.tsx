@@ -12,6 +12,8 @@ import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
+import { apiBaseUrl } from './config'
+import { trackEvent, trackException } from './telemetry'
 
 type Checklist = {
   id: number
@@ -21,8 +23,6 @@ type Checklist = {
 type ErrorResponse = {
   message?: string
 }
-
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5269'
 
 // fetch rejects with a TypeError when the API can't be reached at all, including while a deployment has
 // it paused (see the deploy-backend job in ci.yml), so tell the user to retry rather than show a generic error.
@@ -64,6 +64,7 @@ function App() {
       const payload = (await response.json()) as Checklist[]
       setChecklists(payload)
     } catch (error) {
+      trackException(error, { operation: 'load' })
       setErrorMessage(describeFetchError(error, 'Unable to load checklists.'))
     } finally {
       setLoading(false)
@@ -108,10 +109,12 @@ function App() {
         throw new Error('Unable to save checklist.')
       }
 
+      trackEvent(isEditing ? 'ChecklistUpdated' : 'ChecklistCreated')
       setName('')
       setEditingId(null)
       await loadChecklists()
     } catch (error) {
+      trackException(error, { operation: 'save' })
       setErrorMessage(describeFetchError(error, 'Unable to save checklist.'))
     } finally {
       setSubmitting(false)
@@ -142,12 +145,15 @@ function App() {
         throw new Error('Unable to delete checklist.')
       }
 
+      trackEvent('ChecklistDeleted')
+
       if (editingId === id) {
         cancelEdit()
       }
 
       await loadChecklists()
     } catch (error) {
+      trackException(error, { operation: 'delete' })
       setErrorMessage(describeFetchError(error, 'Unable to delete checklist.'))
     }
   }

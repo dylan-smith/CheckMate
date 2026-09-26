@@ -2,6 +2,12 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
+import { trackEvent, trackException } from '../telemetry'
+
+vi.mock('../telemetry', () => ({
+  trackEvent: vi.fn(),
+  trackException: vi.fn(),
+}))
 
 function mockFetch(
   handler: (url: string, init?: RequestInit) => Promise<Response>,
@@ -22,6 +28,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.clearAllMocks()
 })
 
 describe('App', () => {
@@ -79,6 +86,9 @@ describe('App', () => {
             "Can't reach CheckMate right now. It may be updating, so try again in a minute.",
           ),
         ).toBeInTheDocument()
+      })
+      expect(trackException).toHaveBeenCalledWith(expect.any(TypeError), {
+        operation: 'load',
       })
     })
   })
@@ -161,6 +171,7 @@ describe('App', () => {
           body: JSON.stringify({ name: 'New list' }),
         }),
       )
+      expect(trackEvent).toHaveBeenCalledWith('ChecklistCreated')
     })
 
     it('shows error for duplicate name (409 conflict)', async () => {
@@ -258,6 +269,10 @@ describe('App', () => {
           ),
         ).toBeInTheDocument()
       })
+      expect(trackException).toHaveBeenCalledWith(expect.any(TypeError), {
+        operation: 'save',
+      })
+      expect(trackEvent).not.toHaveBeenCalled()
     })
 
     it('trims whitespace from name before submitting', async () => {
@@ -354,6 +369,7 @@ describe('App', () => {
           }),
         )
       })
+      expect(trackEvent).toHaveBeenCalledWith('ChecklistUpdated')
     })
 
     it('cancels editing and resets the form', async () => {
@@ -455,6 +471,7 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1$/),
         expect.objectContaining({ method: 'DELETE' }),
       )
+      expect(trackEvent).toHaveBeenCalledWith('ChecklistDeleted')
     })
 
     it('treats 404 as a successful delete', async () => {
@@ -538,6 +555,9 @@ describe('App', () => {
             "Can't reach CheckMate right now. It may be updating, so try again in a minute.",
           ),
         ).toBeInTheDocument()
+      })
+      expect(trackException).toHaveBeenCalledWith(expect.any(TypeError), {
+        operation: 'delete',
       })
     })
 
