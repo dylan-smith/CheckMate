@@ -28,7 +28,7 @@ cd backend/CheckMate.Api
 dotnet run
 ```
 
-The API starts at `http://localhost:5269` by default. In development mode an in-memory database is used automatically (configured in `appsettings.Development.json`). The OpenAPI document is served at `/openapi/v1.json`, and you can explore the API interactively with Scalar at `http://localhost:5269/scalar`.
+The API starts at `http://localhost:5269` by default. In development mode an in-memory database is used automatically (configured in `appsettings.Development.json`). The OpenAPI document is served at `/openapi/v1.json`, and you can explore the API interactively with Scalar at `/scalar` (e.g. `http://localhost:5269/scalar`). Both are available in every environment, including production.
 
 To use SQL Server for local development instead, set `UseInMemoryDatabase` to `false` and update the connection string in `backend/CheckMate.Api/appsettings.Development.json`.
 
