@@ -7,11 +7,13 @@ set -euo pipefail
 
 # `remove` only matches Deny rules when given --action Deny; without it, it looks for an Allow rule and fails.
 for rule in deploy-pause-ipv4 deploy-pause-ipv6; do
+  echo "Checking for access restriction rule ${rule}"
   if [ "$(az webapp config access-restriction show \
     --resource-group "${AZURE_RESOURCE_GROUP}" \
     --name "${AZURE_BACKEND_APP_NAME}" \
     --query "length(ipSecurityRestrictions[?name=='${rule}'])" \
     --output tsv)" != "0" ]; then
+    echo "Removing access restriction rule ${rule}"
     az webapp config access-restriction remove \
       --resource-group "${AZURE_RESOURCE_GROUP}" \
       --name "${AZURE_BACKEND_APP_NAME}" \
@@ -19,5 +21,8 @@ for rule in deploy-pause-ipv4 deploy-pause-ipv6; do
       --action Deny \
       --only-show-errors \
       --output none
+  else
+    echo "Access restriction rule ${rule} not present"
   fi
 done
+echo "API resumed"
