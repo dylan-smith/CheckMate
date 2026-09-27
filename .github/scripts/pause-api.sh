@@ -11,6 +11,7 @@ set -euo pipefail
 
 # An earlier run can leave the API paused after its migrations started (see "Report API left paused" in ci.yml).
 # The database may then be ahead of the running API, so this run must not resume it unless it deploys.
+echo "Checking whether the API is already paused"
 existing="$(az webapp config access-restriction show \
   --resource-group "${AZURE_RESOURCE_GROUP}" \
   --name "${AZURE_BACKEND_APP_NAME}" \
@@ -22,6 +23,7 @@ else
   echo "was-live=true" >> "$GITHUB_OUTPUT"
 fi
 
+echo "Keeping the deployment (SCM) site reachable"
 az webapp config access-restriction set \
   --resource-group "${AZURE_RESOURCE_GROUP}" \
   --name "${AZURE_BACKEND_APP_NAME}" \
@@ -35,6 +37,7 @@ for rule in "deploy-pause-ipv4 0.0.0.0/0" "deploy-pause-ipv6 ::/0"; do
     --name "${AZURE_BACKEND_APP_NAME}" \
     --query "length(ipSecurityRestrictions[?name=='$1'])" \
     --output tsv)" = "0" ]; then
+    echo "Adding access restriction rule $1 denying $2"
     az webapp config access-restriction add \
       --resource-group "${AZURE_RESOURCE_GROUP}" \
       --name "${AZURE_BACKEND_APP_NAME}" \
@@ -44,13 +47,17 @@ for rule in "deploy-pause-ipv4 0.0.0.0/0" "deploy-pause-ipv6 ::/0"; do
       --priority 1 \
       --only-show-errors \
       --output none
+  else
+    echo "Access restriction rule $1 already exists"
   fi
 done
 
 # Wait until the restriction is enforced.
+echo "Waiting for the access restriction to be enforced"
 for attempt in $(seq 1 24); do
   status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "${AZURE_BACKEND_URL}/api/checklists" || true)"
   if [ "${status}" = "403" ]; then
+    echo "API now refuses requests (HTTP 403)"
     break
   fi
   if [ "${attempt}" -eq 24 ]; then
@@ -64,6 +71,7 @@ done
 # Requests the old API had already accepted can keep retrying the database for minutes (see the retry policy in
 # Program.cs), so restart the app to end them. The restarted API gets no requests.
 # synchronous=true makes the call wait until the restart has finished.
+echo "Restarting the API to end in-flight requests"
 app_id="$(az webapp show \
   --resource-group "${AZURE_RESOURCE_GROUP}" \
   --name "${AZURE_BACKEND_APP_NAME}" \
