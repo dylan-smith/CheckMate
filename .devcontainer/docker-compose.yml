@@ -16,8 +16,10 @@ services:
       - claude-config:/home/vscode/.claude
     # Share the db service's network so SQL Server is reachable at localhost:1433.
     network_mode: service:db
+    # Wait until SQL Server accepts connections, so post-create's DbUp run doesn't fail on a fresh create.
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   db:
     image: mcr.microsoft.com/mssql/server:2022-latest
@@ -26,6 +28,14 @@ services:
       ACCEPT_EULA: 'Y'
       # Local dev container only. Never use this password anywhere else.
       MSSQL_SA_PASSWORD: CheckMate_Dev_P@ssw0rd
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" -b -o /dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
     volumes:
       - mssql-data:/var/opt/mssql
 
