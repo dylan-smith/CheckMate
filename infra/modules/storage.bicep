@@ -75,3 +75,6 @@ resource lifecyclePolicy 'Microsoft.Storage/storageAccounts/managementPolicies@2
 
 @description('Primary web endpoint for the static website.')
 output primaryWebEndpoint string = storageAccount.properties.primaryEndpoints.web
+
+@description('Resource ID of the Storage Account.')
+output storageAccountId string = storageAccount.id

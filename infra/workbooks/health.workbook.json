@@ -1,0 +1,1478 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# CheckMate Health\nAPI, frontend and infrastructure health from Application Insights, App Service and SQL logs, and Azure Monitor platform metrics."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "b6f1d1a4-6c2e-4d59-9a8e-3f1c2b7d9e01",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 86400000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 3600000
+                },
+                {
+                  "durationMs": 14400000
+                },
+                {
+                  "durationMs": 43200000
+                },
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 259200000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 1209600000
+                },
+                {
+                  "durationMs": 2592000000
+                }
+              ],
+              "allowCustom": true
+            }
+          },
+          {
+            "id": "b6f1d1a4-6c2e-4d59-9a8e-3f1c2b7d9e02",
+            "version": "KqlParameterItem/1.0",
+            "name": "selectedTab",
+            "type": 1,
+            "value": "overview",
+            "isHiddenWhenLocked": true
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components"
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 11,
+      "content": {
+        "version": "LinkItem/1.0",
+        "style": "tabs",
+        "links": [
+          {
+            "id": "0d6c9f1e-1a7b-4f0e-8b4a-6f2d8c1e3a01",
+            "cellValue": "selectedTab",
+            "linkTarget": "parameter",
+            "linkLabel": "Overview",
+            "subTarget": "overview",
+            "style": "link"
+          },
+          {
+            "id": "0d6c9f1e-1a7b-4f0e-8b4a-6f2d8c1e3a02",
+            "cellValue": "selectedTab",
+            "linkTarget": "parameter",
+            "linkLabel": "API",
+            "subTarget": "api",
+            "style": "link"
+          },
+          {
+            "id": "0d6c9f1e-1a7b-4f0e-8b4a-6f2d8c1e3a03",
+            "cellValue": "selectedTab",
+            "linkTarget": "parameter",
+            "linkLabel": "Frontend",
+            "subTarget": "frontend",
+            "style": "link"
+          },
+          {
+            "id": "0d6c9f1e-1a7b-4f0e-8b4a-6f2d8c1e3a04",
+            "cellValue": "selectedTab",
+            "linkTarget": "parameter",
+            "linkLabel": "Infrastructure",
+            "subTarget": "infrastructure",
+            "style": "link"
+          }
+        ]
+      },
+      "name": "tabs"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Health at a glance\nAPI and browser telemetry from Application Insights. Failed requests turn orange at 1% and red at 5%; P95 response time at 1 s and 3 s."
+            },
+            "name": "overview-intro"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let r = requests | where timestamp {TimeRange} | where url !endswith '/robots933456.txt';\nlet total = toscalar(r | count);\nlet failedPct = toscalar(r | summarize iff(count() == 0, 0.0, round(100.0 * countif(success == false) / count(), 2)));\nlet p95 = toscalar(r | summarize round(percentile(duration, 95), 0));\nlet apiExceptions = toscalar(exceptions | where timestamp {TimeRange} | where cloud_RoleName != \"CheckMate.Web\" | count);\nlet webExceptions = toscalar(exceptions | where timestamp {TimeRange} | where cloud_RoleName == \"CheckMate.Web\" | count);\nlet pv = pageViews | where timestamp {TimeRange};\nlet viewCount = toscalar(pv | count);\nlet users = toscalar(pv | summarize dcount(user_Id));\nlet sessions = toscalar(pv | summarize dcount(session_Id));\nunion\n    (print Order = 1, Metric = \"API requests\", Value = tostring(total), Health = \"Info\"),\n    (print Order = 2, Metric = \"Failed requests\", Value = strcat(failedPct, \"%\"),\n        Health = case(failedPct >= 5, \"Critical\", failedPct >= 1, \"Warning\", \"Healthy\")),\n    (print Order = 3, Metric = \"P95 response time\", Value = strcat(coalesce(p95, 0.0), \" ms\"),\n        Health = case(isnull(p95), \"Info\", p95 >= 3000, \"Critical\", p95 >= 1000, \"Warning\", \"Healthy\")),\n    (print Order = 4, Metric = \"API exceptions\", Value = tostring(apiExceptions),\n        Health = case(apiExceptions >= 10, \"Critical\", apiExceptions > 0, \"Warning\", \"Healthy\")),\n    (print Order = 5, Metric = \"Browser exceptions\", Value = tostring(webExceptions),\n        Health = case(webExceptions >= 10, \"Critical\", webExceptions > 0, \"Warning\", \"Healthy\")),\n    (print Order = 6, Metric = \"Page views\", Value = tostring(viewCount), Health = \"Info\"),\n    (print Order = 7, Metric = \"Users\", Value = tostring(users), Health = \"Info\"),\n    (print Order = 8, Metric = \"Sessions\", Value = tostring(sessions), Health = \"Info\")\n| order by Order asc\n| project Metric, Value, Health",
+              "size": 0,
+              "title": "",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Metric",
+                  "formatter": 1
+                },
+                "leftContent": {
+                  "columnMatch": "Value",
+                  "formatter": 1
+                },
+                "secondaryContent": {
+                  "columnMatch": "Health",
+                  "formatter": 18,
+                  "formatOptions": {
+                    "thresholdsOptions": "colors",
+                    "thresholdsGrid": [
+                      {
+                        "operator": "==",
+                        "thresholdValue": "Critical",
+                        "representation": "redBright",
+                        "text": "{0}{1}"
+                      },
+                      {
+                        "operator": "==",
+                        "thresholdValue": "Warning",
+                        "representation": "orange",
+                        "text": "{0}{1}"
+                      },
+                      {
+                        "operator": "==",
+                        "thresholdValue": "Healthy",
+                        "representation": "green",
+                        "text": "{0}{1}"
+                      },
+                      {
+                        "operator": "Default",
+                        "representation": "gray",
+                        "text": "{0}{1}"
+                      }
+                    ]
+                  }
+                },
+                "showBorder": true
+              }
+            },
+            "name": "overview-tiles"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize Succeeded = countif(success == true), Failed = countif(success == false) by bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "API requests",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "timechart"
+            },
+            "name": "overview-requests",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize P50 = percentile(duration, 50), P95 = percentile(duration, 95) by bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "API response time (ms)",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "timechart"
+            },
+            "name": "overview-duration",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "exceptions\n| where timestamp {TimeRange}\n| extend Source = iff(cloud_RoleName == \"CheckMate.Web\", \"Browser\", \"API\")\n| summarize Exceptions = count() by Source, bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "Exceptions by source",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "barchart"
+            },
+            "name": "overview-exceptions",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "pageViews\n| where timestamp {TimeRange}\n| summarize Views = count(), Users = dcount(user_Id) by bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "Page views and users",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "timechart"
+            },
+            "name": "overview-pageviews",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "AppServicePlatformLogs\n| where TimeGenerated {TimeRange}\n| project TimeGenerated, Level, Message\n| order by TimeGenerated desc\n| take 100",
+              "size": 0,
+              "title": "App Service platform events (restarts, deployments, container starts)",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "crossComponentResources": [
+                "__WORKSPACE_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "rowLimit": 100
+              }
+            },
+            "name": "overview-platform"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "overview"
+      },
+      "name": "overview"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize Requests = count(), Failed = countif(success == false),\n    [\"P50 (ms)\"] = round(percentile(duration, 50), 0), [\"P95 (ms)\"] = round(percentile(duration, 95), 0)\n    by Operation = name\n| extend [\"Failure %\"] = round(100.0 * Failed / Requests, 2)\n| project Operation, Requests, Failed, [\"Failure %\"], [\"P50 (ms)\"], [\"P95 (ms)\"]\n| order by Requests desc",
+              "size": 0,
+              "title": "Operations",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Requests",
+                    "formatter": 4,
+                    "formatOptions": {
+                      "palette": "blue"
+                    }
+                  },
+                  {
+                    "columnMatch": "Failure %",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": ">=",
+                          "thresholdValue": "5",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": ">=",
+                          "thresholdValue": "1",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "columnMatch": "P95 (ms)",
+                    "formatter": 4,
+                    "formatOptions": {
+                      "palette": "blue"
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "api-operations"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| extend Status = strcat(substring(resultCode, 0, 1), \"xx\")\n| summarize Requests = count() by Status, bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "Responses by status class",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "barchart"
+            },
+            "name": "api-status",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| where success == false\n| summarize Failures = count(), [\"Last seen\"] = max(timestamp) by Operation = name, Status = resultCode\n| order by Failures desc",
+              "size": 0,
+              "title": "Failed requests by operation and status",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "table",
+              "noDataMessage": "No failed requests in this time range."
+            },
+            "name": "api-failures",
+            "customWidth": "50"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Database calls\nSQL dependency calls made by the API. Long spikes usually mean the serverless database was resuming from auto-pause."
+            },
+            "name": "api-sql-intro"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName != \"CheckMate.Web\" and type in~ (\"SQL\", \"mssql\", \"microsoft.sql_server\")\n| summarize Calls = count(), Failed = countif(success == false) by bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "SQL calls",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "timechart"
+            },
+            "name": "api-sql-calls",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName != \"CheckMate.Web\" and type in~ (\"SQL\", \"mssql\", \"microsoft.sql_server\")\n| summarize P50 = percentile(duration, 50), P95 = percentile(duration, 95), Max = max(duration) by bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "SQL call duration (ms)",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "timechart"
+            },
+            "name": "api-sql-duration",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName != \"CheckMate.Web\"\n| summarize Calls = count(), Failed = countif(success == false), [\"P95 (ms)\"] = round(percentile(duration, 95), 0) by Type = type, Target = target\n| extend [\"Failure %\"] = round(100.0 * Failed / Calls, 2)\n| order by Calls desc",
+              "size": 0,
+              "title": "All outgoing dependencies",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Calls",
+                    "formatter": 4,
+                    "formatOptions": {
+                      "palette": "blue"
+                    }
+                  },
+                  {
+                    "columnMatch": "Failure %",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": ">=",
+                          "thresholdValue": "5",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": ">=",
+                          "thresholdValue": "1",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "api-dependencies"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Exceptions and logs"
+            },
+            "name": "api-errors-intro"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "exceptions\n| where timestamp {TimeRange}\n| where cloud_RoleName != \"CheckMate.Web\"\n| summarize Count = count(), [\"Last seen\"] = max(timestamp) by Type = type, Message = outerMessage\n| order by Count desc",
+              "size": 0,
+              "title": "API exceptions",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "table",
+              "noDataMessage": "No API exceptions in this time range."
+            },
+            "name": "api-exceptions",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "traces\n| where timestamp {TimeRange}\n| where cloud_RoleName != \"CheckMate.Web\" and severityLevel >= 2\n| extend Severity = case(severityLevel == 2, \"Warning\", severityLevel == 3, \"Error\", \"Critical\")\n| summarize Count = count() by Severity, bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "Warnings and errors logged",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "barchart"
+            },
+            "name": "api-traces-chart",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "traces\n| where timestamp {TimeRange}\n| where cloud_RoleName != \"CheckMate.Web\" and severityLevel >= 2\n| extend Severity = case(severityLevel == 2, \"Warning\", severityLevel == 3, \"Error\", \"Critical\")\n| project timestamp, Severity, Message = message, Operation = operation_Name\n| order by timestamp desc\n| take 200",
+              "size": 0,
+              "title": "Recent warning and error logs",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "rowLimit": 200
+              },
+              "noDataMessage": "No warnings or errors logged in this time range."
+            },
+            "name": "api-traces"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "api"
+      },
+      "name": "api"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "pageViews\n| where timestamp {TimeRange}\n| summarize Views = count(), Users = dcount(user_Id), Sessions = dcount(session_Id) by bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "Page views, users and sessions",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "timechart"
+            },
+            "name": "web-pageviews",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "browserTimings\n| where timestamp {TimeRange}\n| summarize [\"Total P50\"] = percentile(totalDuration, 50), [\"Total P95\"] = percentile(totalDuration, 95),\n    [\"Network P95\"] = percentile(networkDuration, 95), [\"Processing P95\"] = percentile(processingDuration, 95)\n    by bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "Page load time (ms)",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "timechart"
+            },
+            "name": "web-load-time",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName == \"CheckMate.Web\"\n| summarize Calls = count(), Failed = countif(success == false) by bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "Browser calls to the API",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "timechart"
+            },
+            "name": "web-api-calls",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName == \"CheckMate.Web\"\n| summarize P50 = percentile(duration, 50), P95 = percentile(duration, 95) by bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "Browser-observed API duration (ms)",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "timechart"
+            },
+            "name": "web-api-duration",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName == \"CheckMate.Web\"\n| summarize Calls = count(), Failed = countif(success == false), [\"P95 (ms)\"] = round(percentile(duration, 95), 0) by Call = name\n| extend [\"Failure %\"] = round(100.0 * Failed / Calls, 2)\n| order by Calls desc",
+              "size": 0,
+              "title": "Browser calls by endpoint",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Calls",
+                    "formatter": 4,
+                    "formatOptions": {
+                      "palette": "blue"
+                    }
+                  },
+                  {
+                    "columnMatch": "Failure %",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": ">=",
+                          "thresholdValue": "5",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": ">=",
+                          "thresholdValue": "1",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "web-api-by-call"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "exceptions\n| where timestamp {TimeRange}\n| where cloud_RoleName == \"CheckMate.Web\"\n| extend Kind = tostring(customDimensions.kind), Operation = tostring(customDimensions.operation)\n| summarize Count = count(), Users = dcount(user_Id), [\"Last seen\"] = max(timestamp)\n    by Kind, Operation, Type = type, Message = outerMessage\n| order by Count desc",
+              "size": 0,
+              "title": "Browser exceptions",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "table",
+              "noDataMessage": "No browser exceptions in this time range."
+            },
+            "name": "web-exceptions"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "customEvents\n| where timestamp {TimeRange}\n| where name in (\"ChecklistCreated\", \"ChecklistUpdated\", \"ChecklistDeleted\")\n| summarize Events = count() by name, bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "Checklist activity",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "barchart"
+            },
+            "name": "web-events",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "pageViews\n| where timestamp {TimeRange}\n| summarize Views = count() by Browser = client_Browser\n| order by Views desc",
+              "size": 0,
+              "title": "Browsers",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "piechart"
+            },
+            "name": "web-browsers",
+            "customWidth": "25"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "pageViews\n| where timestamp {TimeRange}\n| summarize Views = count() by OS = client_OS\n| order by Views desc",
+              "size": 0,
+              "title": "Operating systems",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "piechart"
+            },
+            "name": "web-os",
+            "customWidth": "25"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "frontend"
+      },
+      "name": "frontend"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "### App Service (API)"
+            },
+            "name": "infra-app-intro"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.web/sites",
+              "metricScope": 0,
+              "resourceIds": [
+                "__APP_SERVICE_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.web/sites",
+                  "metric": "microsoft.web/sites--Requests",
+                  "aggregation": 1
+                },
+                {
+                  "namespace": "microsoft.web/sites",
+                  "metric": "microsoft.web/sites--Http4xx",
+                  "aggregation": 1
+                },
+                {
+                  "namespace": "microsoft.web/sites",
+                  "metric": "microsoft.web/sites--Http5xx",
+                  "aggregation": 1
+                }
+              ],
+              "title": "HTTP requests and errors",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-app-requests"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.web/sites",
+              "metricScope": 0,
+              "resourceIds": [
+                "__APP_SERVICE_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.web/sites",
+                  "metric": "microsoft.web/sites--HttpResponseTime",
+                  "aggregation": 4
+                }
+              ],
+              "title": "Average response time",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-app-latency"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.web/sites",
+              "metricScope": 0,
+              "resourceIds": [
+                "__APP_SERVICE_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.web/sites",
+                  "metric": "microsoft.web/sites--CpuTime",
+                  "aggregation": 1
+                }
+              ],
+              "title": "CPU time",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-app-cpu"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.web/sites",
+              "metricScope": 0,
+              "resourceIds": [
+                "__APP_SERVICE_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.web/sites",
+                  "metric": "microsoft.web/sites--MemoryWorkingSet",
+                  "aggregation": 4
+                }
+              ],
+              "title": "Memory working set",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-app-memory"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.web/serverfarms",
+              "metricScope": 0,
+              "resourceIds": [
+                "__APP_SERVICE_PLAN_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.web/serverfarms",
+                  "metric": "microsoft.web/serverfarms--CpuPercentage",
+                  "aggregation": 4
+                },
+                {
+                  "namespace": "microsoft.web/serverfarms",
+                  "metric": "microsoft.web/serverfarms--MemoryPercentage",
+                  "aggregation": 4
+                }
+              ],
+              "title": "App Service Plan CPU and memory %",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-plan"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "AppServiceHTTPLogs\n| where TimeGenerated {TimeRange}\n| where CsHost !contains '.scm.' and CsUriStem != '/robots933456.txt'\n| summarize Requests = count() by Status = tostring(ScStatus), bin(TimeGenerated, {TimeRange:grain})",
+              "size": 0,
+              "title": "HTTP log status codes",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "crossComponentResources": [
+                "__WORKSPACE_ID__"
+              ],
+              "visualization": "barchart"
+            },
+            "name": "infra-http-status",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "AppServiceHTTPLogs\n| where TimeGenerated {TimeRange}\n| where CsHost !contains '.scm.' and CsUriStem != '/robots933456.txt'\n| summarize Requests = count(), [\"P95 (ms)\"] = percentile(TimeTaken, 95), [\"Max (ms)\"] = max(TimeTaken) by Method = CsMethod, Url = CsUriStem\n| top 20 by [\"P95 (ms)\"] desc",
+              "size": 0,
+              "title": "Slowest URLs (HTTP logs)",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "crossComponentResources": [
+                "__WORKSPACE_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "P95 (ms)",
+                    "formatter": 4,
+                    "formatOptions": {
+                      "palette": "blue"
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "infra-http-slowest",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "AppServiceConsoleLogs\n| where TimeGenerated {TimeRange}\n| where ResultDescription has \"[Startup]\"\n| project TimeGenerated, Level, Message = ResultDescription\n| order by TimeGenerated desc\n| take 100",
+              "size": 0,
+              "title": "API startup log",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "crossComponentResources": [
+                "__WORKSPACE_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "rowLimit": 100
+              },
+              "noDataMessage": "No API startups in this time range."
+            },
+            "name": "infra-startup"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Azure SQL (serverless)\nCPU drops to zero while the database is auto-paused. \"Free amount remaining\" is the free-offer vCore seconds left this month."
+            },
+            "name": "infra-sql-intro"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.sql/servers/databases",
+              "metricScope": 0,
+              "resourceIds": [
+                "__SQL_DATABASE_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.sql/servers/databases",
+                  "metric": "microsoft.sql/servers/databases--cpu_percent",
+                  "aggregation": 3
+                }
+              ],
+              "title": "CPU %",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-sql-cpu"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.sql/servers/databases",
+              "metricScope": 0,
+              "resourceIds": [
+                "__SQL_DATABASE_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.sql/servers/databases",
+                  "metric": "microsoft.sql/servers/databases--app_cpu_billed",
+                  "aggregation": 1
+                }
+              ],
+              "title": "App CPU billed (vCore seconds)",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-sql-billed"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.sql/servers/databases",
+              "metricScope": 0,
+              "resourceIds": [
+                "__SQL_DATABASE_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.sql/servers/databases",
+                  "metric": "microsoft.sql/servers/databases--connection_successful",
+                  "aggregation": 1
+                },
+                {
+                  "namespace": "microsoft.sql/servers/databases",
+                  "metric": "microsoft.sql/servers/databases--connection_failed",
+                  "aggregation": 1
+                }
+              ],
+              "title": "Connections",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-sql-connections"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.sql/servers/databases",
+              "metricScope": 0,
+              "resourceIds": [
+                "__SQL_DATABASE_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.sql/servers/databases",
+                  "metric": "microsoft.sql/servers/databases--deadlock",
+                  "aggregation": 1
+                }
+              ],
+              "title": "Deadlocks",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-sql-deadlocks"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.sql/servers/databases",
+              "metricScope": 0,
+              "resourceIds": [
+                "__SQL_DATABASE_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.sql/servers/databases",
+                  "metric": "microsoft.sql/servers/databases--storage_percent",
+                  "aggregation": 3
+                }
+              ],
+              "title": "Data space used %",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-sql-storage"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.sql/servers/databases",
+              "metricScope": 0,
+              "resourceIds": [
+                "__SQL_DATABASE_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.sql/servers/databases",
+                  "metric": "microsoft.sql/servers/databases--free_amount_remaining",
+                  "aggregation": 2
+                }
+              ],
+              "title": "Free amount remaining (vCore seconds)",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-sql-free"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "AzureDiagnostics\n| where TimeGenerated {TimeRange}\n| where ResourceProvider == \"MICROSOFT.SQL\" and Category in (\"Errors\", \"Timeouts\", \"Blocks\", \"Deadlocks\")\n| summarize Events = count() by Category, bin(TimeGenerated, {TimeRange:grain})",
+              "size": 0,
+              "title": "Database errors, timeouts, blocks and deadlocks",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "crossComponentResources": [
+                "__WORKSPACE_ID__"
+              ],
+              "visualization": "barchart"
+            },
+            "name": "infra-sql-events",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "AzureDiagnostics\n| where TimeGenerated {TimeRange}\n| where ResourceProvider == \"MICROSOFT.SQL\" and Category == \"Errors\"\n| extend Error = toint(column_ifexists(\"error_number_d\", real(null))),\n    Severity = coalesce(toint(column_ifexists(\"severity_d\", real(null))), toint(column_ifexists(\"Severity\", int(null)))),\n    Message = coalesce(tostring(column_ifexists(\"message_s\", \"\")), tostring(column_ifexists(\"Message\", \"\")))\n| summarize Count = count(), [\"Last seen\"] = max(TimeGenerated) by Error, Severity, Message\n| order by Count desc",
+              "size": 0,
+              "title": "Database errors",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "crossComponentResources": [
+                "__WORKSPACE_ID__"
+              ],
+              "visualization": "table",
+              "noDataMessage": "No database errors in this time range."
+            },
+            "name": "infra-sql-errors",
+            "customWidth": "50"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Storage (frontend static website)"
+            },
+            "name": "infra-storage-intro"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.storage/storageaccounts",
+              "metricScope": 0,
+              "resourceIds": [
+                "__STORAGE_ACCOUNT_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.storage/storageaccounts",
+                  "metric": "microsoft.storage/storageaccounts--Transactions",
+                  "aggregation": 1
+                }
+              ],
+              "title": "Transactions",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-storage-transactions"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.storage/storageaccounts",
+              "metricScope": 0,
+              "resourceIds": [
+                "__STORAGE_ACCOUNT_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.storage/storageaccounts",
+                  "metric": "microsoft.storage/storageaccounts--Availability",
+                  "aggregation": 4
+                }
+              ],
+              "title": "Availability %",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-storage-availability"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.storage/storageaccounts",
+              "metricScope": 0,
+              "resourceIds": [
+                "__STORAGE_ACCOUNT_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.storage/storageaccounts",
+                  "metric": "microsoft.storage/storageaccounts--Egress",
+                  "aggregation": 1
+                }
+              ],
+              "title": "Egress (bytes)",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-storage-egress"
+          },
+          {
+            "type": 10,
+            "content": {
+              "version": "MetricsItem/2.0",
+              "size": 0,
+              "chartType": 2,
+              "resourceType": "microsoft.storage/storageaccounts",
+              "metricScope": 0,
+              "resourceIds": [
+                "__STORAGE_ACCOUNT_ID__"
+              ],
+              "timeContextFromParameter": "TimeRange",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "metrics": [
+                {
+                  "namespace": "microsoft.storage/storageaccounts",
+                  "metric": "microsoft.storage/storageaccounts--SuccessE2ELatency",
+                  "aggregation": 4
+                }
+              ],
+              "title": "Success end-to-end latency (ms)",
+              "gridSettings": {
+                "rowLimit": 10000
+              }
+            },
+            "customWidth": "50",
+            "name": "infra-storage-latency"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "infrastructure"
+      },
+      "name": "infrastructure"
+    }
+  ],
+  "fallbackResourceIds": [
+    "__APP_INSIGHTS_ID__"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

@@ -148,16 +148,21 @@ All Azure resources are defined using [Bicep](https://learn.microsoft.com/en-us/
 infra/
 ├── main.bicep           # Root template — wires all modules together
 ├── main.bicepparam      # Production parameter values (resource names, regions, SKUs)
-└── modules/
-    ├── appservice.bicep # App Service Plan + App Service (Linux/.NET 10) and its app settings
-    ├── monitoring.bicep # Log Analytics Workspace + Application Insights
-    ├── sql.bicep        # Azure SQL Server (Entra-only auth) + serverless Database
-    └── storage.bicep    # Storage Account for the frontend static website
+├── modules/
+│   ├── appservice.bicep # App Service Plan + App Service (Linux/.NET 10) and its app settings
+│   ├── monitoring.bicep # Log Analytics Workspace + Application Insights
+│   ├── sql.bicep        # Azure SQL Server (Entra-only auth) + serverless Database and its diagnostic logs
+│   ├── storage.bicep    # Storage Account for the frontend static website
+│   └── workbook.bicep   # "CheckMate Health" Azure Monitor Workbook
+└── workbooks/
+    └── health.workbook.json # Workbook content, with placeholder tokens for resource IDs
 ```
 
 The `deploy-infrastructure` CI job runs `infra/main.bicep` on every push to `main`, ensuring the Azure environment is always in sync with the declared configuration. All other deployment jobs depend on this job.
 
 The template owns **all** App Service app settings (connection string, CORS origin, Application Insights), so add new settings in `infra/modules/appservice.bicep` rather than in the portal — anything set by hand is removed on the next deployment. The static website (`$web` container, `index.html` documents) is a data-plane setting that ARM can't manage, so CI enables it with `az storage blob service-properties update`.
+
+The **CheckMate Health** workbook (Application Insights → Workbooks, or in the resource group) shows API, frontend and infrastructure health on one page. It combines Application Insights telemetry, App Service and SQL logs from the workspace, and platform metrics for the App Service, SQL database and Storage account. The workbook is also owned by the template, so edits made only in the portal are overwritten on the next deployment. To change it, edit it in the portal, copy the JSON from **Edit → Advanced Editor**, swap the resource IDs back to the `__*_ID__` tokens listed in `infra/modules/workbook.bicep`, and commit it to `infra/workbooks/health.workbook.json`.
 
 #### Deploying Infrastructure Manually
 
@@ -192,7 +197,7 @@ GitHub issues OIDC tokens for this repo with immutable-ID subjects, so federated
 | Backend API | Azure App Service (Linux/.NET 10) | `https://checkmate-heesaxh5agdygvew.westus2-01.azurewebsites.net` |
 | Frontend | Azure Storage Account (static website) | `https://checkmateweb.z22.web.core.windows.net` |
 | Database | Azure SQL serverless database (Entra-only auth) | — |
-| Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs go to the `CheckMate` workspace) | — |
+| Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs and SQL errors, timeouts, blocks, deadlocks and automatic tuning go to the `CheckMate` workspace), plus the **CheckMate Health** workbook | — |
 
 ### Database Backups
 

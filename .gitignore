@@ -211,6 +211,7 @@ PublishScripts/
 # Bicep compiled ARM JSON (build artefacts — Bicep source files are the source of truth)
 infra/**/*.json
 !infra/bicepconfig.json
+!infra/workbooks/*.workbook.json
 
 # NuGet Packages
 *.nupkg

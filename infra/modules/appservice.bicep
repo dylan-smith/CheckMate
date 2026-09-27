@@ -107,3 +107,9 @@ output appServiceUrl string = 'https://${appService.properties.defaultHostName}'
 
 @description('Principal ID of the App Service system-assigned managed identity.')
 output principalId string = appService.identity.principalId
+
+@description('Resource ID of the App Service.')
+output appServiceId string = appService.id
+
+@description('Resource ID of the App Service Plan.')
+output appServicePlanId string = appServicePlan.id
