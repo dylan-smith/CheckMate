@@ -42,6 +42,17 @@ npm run dev
 
 The frontend dev server starts at `http://localhost:5173`. Set the `VITE_API_BASE_URL` environment variable if your backend runs on a different URL.
 
+### Dev Container
+
+The repo includes a dev container (`.devcontainer/`) with everything preinstalled: .NET 10, Node 24, Playwright Chromium, the Azure CLI with Bicep, the GitHub CLI and Claude Code. It also runs a SQL Server 2022 container next to the app. Open the repo in VS Code and choose **Dev Containers: Reopen in Container**, or open it in GitHub Codespaces. Docker is required locally.
+
+When the container is created it restores packages, installs the frontend dependencies and Playwright, and runs the DbUp migrations against the SQL container. Inside the container:
+
+- `dotnet run` for the API uses the SQL container by default (`UseInMemoryDatabase=false` and `ConnectionStrings__CheckMate` are set as container environment variables). Set `UseInMemoryDatabase=true` to use the in-memory database instead.
+- The database lives in a named Docker volume, so data persists across container rebuilds. To apply new migrations, re-run `dotnet run --project backend/CheckMate.Database -- "$ConnectionStrings__CheckMate"`.
+- The E2E tests always run the API in-memory, because they delete existing checklists. Playwright reuses a server that is already running on port 5269, so stop your dev API before running `npm run test:e2e`, or the tests will run against the SQL database.
+- Sign in to `az`, `gh` and `claude` yourself inside the container. Claude Code's config is stored in a named volume, so you only need to sign in once.
+
 ## Common Tasks
 
 ### Running Backend Tests

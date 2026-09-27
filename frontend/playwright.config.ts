@@ -32,6 +32,8 @@ export default defineConfig({
       env: {
         ASPNETCORE_URLS: 'http://localhost:5269',
         ASPNETCORE_ENVIRONMENT: 'Development',
+        // Always in-memory: the tests delete existing checklists, so keep them away from a real database.
+        UseInMemoryDatabase: 'true',
       },
     },
     {
