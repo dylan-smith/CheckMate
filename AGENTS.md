@@ -55,6 +55,8 @@ npm run test:e2e
   uses an in-memory database by default (`UseInMemoryDatabase` in `appsettings.Development.json`).
 - Frontend: `cd frontend && npm run dev` runs at `http://localhost:5173`. Set `VITE_API_BASE_URL`
   if the API is elsewhere.
+- Dev container: `.devcontainer/` runs the app next to a SQL Server container, and the API uses
+  SQL by default there. See the README's "Dev Container" section.
 
 ## Conventions
 

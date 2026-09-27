@@ -1,19 +1,42 @@
 {
   "name": "CheckMate",
-  "image": "mcr.microsoft.com/devcontainers/dotnet:1-10.0",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/CheckMate",
+  "shutdownAction": "stopCompose",
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
-      "version": "20"
-    }
+      "version": "24"
+    },
+    "ghcr.io/devcontainers/features/azure-cli:1": {
+      "installBicep": true
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
+  "containerEnv": {
+    "UseInMemoryDatabase": "false",
+    "ConnectionStrings__CheckMate": "Server=localhost,1433;Database=CheckMate;User Id=sa;Password=CheckMate_Dev_P@ssw0rd;TrustServerCertificate=True",
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "forwardPorts": [5269, 5173, 4173],
+  "portsAttributes": {
+    "5269": { "label": "API" },
+    "5173": { "label": "Frontend (Vite dev)" },
+    "4173": { "label": "Frontend (Vite preview)" }
   },
   "customizations": {
     "vscode": {
       "extensions": [
         "ms-dotnettools.csdevkit",
-        "dbaeumer.vscode-eslint"
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-playwright.playwright",
+        "ms-azuretools.vscode-bicep",
+        "ms-mssql.mssql",
+        "EditorConfig.EditorConfig"
       ]
     }
-  },
-  "postCreateCommand": "dotnet restore && cd frontend && npm ci",
-  "forwardPorts": [5269, 5173]
+  }
 }

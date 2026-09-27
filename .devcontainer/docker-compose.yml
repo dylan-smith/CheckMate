@@ -1,0 +1,51 @@
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/dotnet:2-10.0
+    command: sleep infinity
+    volumes:
+      - ..:/workspaces/CheckMate:cached
+      # Keep build output and node_modules off the host checkout, so container and host builds don't
+      # clobber each other (native binaries and file permissions differ) and to avoid slow bind mounts.
+      - api-bin:/workspaces/CheckMate/backend/CheckMate.Api/bin
+      - api-obj:/workspaces/CheckMate/backend/CheckMate.Api/obj
+      - api-tests-bin:/workspaces/CheckMate/backend/CheckMate.Api.Tests/bin
+      - api-tests-obj:/workspaces/CheckMate/backend/CheckMate.Api.Tests/obj
+      - database-bin:/workspaces/CheckMate/backend/CheckMate.Database/bin
+      - database-obj:/workspaces/CheckMate/backend/CheckMate.Database/obj
+      - node-modules:/workspaces/CheckMate/frontend/node_modules
+      - claude-config:/home/vscode/.claude
+    # Share the db service's network so SQL Server is reachable at localhost:1433.
+    network_mode: service:db
+    # Wait until SQL Server accepts connections, so post-create's DbUp run doesn't fail on a fresh create.
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: 'Y'
+      # Local dev container only. Never use this password anywhere else.
+      MSSQL_SA_PASSWORD: CheckMate_Dev_P@ssw0rd
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" -b -o /dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    volumes:
+      - mssql-data:/var/opt/mssql
+
+volumes:
+  api-bin:
+  api-obj:
+  api-tests-bin:
+  api-tests-obj:
+  database-bin:
+  database-obj:
+  node-modules:
+  claude-config:
+  mssql-data:
