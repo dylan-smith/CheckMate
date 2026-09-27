@@ -1,28 +1,23 @@
 import { test, expect } from '@playwright/test'
 
+// The backend started by playwright.config.ts.
+const checklistsApiUrl = 'http://localhost:5269/api/checklists'
+
 test.describe('Checklist management', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/')
-    await expect(page.getByRole('heading', { name: 'CheckMate' })).toBeVisible()
-
-    // Clean up any existing checklists
-    const deleteButtons = page.getByRole('button', { name: 'Delete' })
-    const initialDeleteCount = await deleteButtons.count()
-
-    for (let deletions = 0; deletions < initialDeleteCount; deletions++) {
-      const countBefore = await deleteButtons.count()
-      if (countBefore === 0) {
-        break
-      }
-
-      await deleteButtons.first().click()
-      // Wait until one fewer delete button remains (list has refreshed)
-      if (countBefore === 1) {
-        await expect(page.getByText('No checklists yet.')).toBeVisible()
-      } else {
-        await expect(deleteButtons).toHaveCount(countBefore - 1)
-      }
+  test.beforeEach(async ({ page, request }) => {
+    // Delete leftover checklists (including ones other spec files created) through the API, since
+    // clicking Delete in the UI races the page's initial load.
+    const response = await request.get(checklistsApiUrl)
+    expect(response.ok()).toBe(true)
+    for (const { id } of (await response.json()) as { id: number }[]) {
+      expect((await request.delete(`${checklistsApiUrl}/${id}`)).ok()).toBe(
+        true,
+      )
     }
+
+    // Wait for the initial load to finish, so its response can't overwrite a list the test changes.
+    await page.goto('/')
+    await expect(page.getByText('No checklists yet.')).toBeVisible()
   })
 
   test.describe('Create checklist', () => {
