@@ -32,6 +32,9 @@ param maxSizeBytes int = 34359738368
 @description('Use the Azure SQL free offer (monthly free vCore-seconds and storage).')
 param useFreeLimit bool = true
 
+@description('Resource ID of the Log Analytics Workspace for database diagnostic logs.')
+param logAnalyticsWorkspaceId string
+
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01' = {
   name: serverName
   location: location
@@ -91,5 +94,30 @@ resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-08-01' = {
   )
 }
 
+// Only the low-volume health categories; Query Store and wait statistics are left off to keep
+// ingestion cost down. Azure SQL writes these to the AzureDiagnostics table.
+resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  scope: sqlDatabase
+  name: 'logs-to-workspace'
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      for category in [
+        'Errors'
+        'Timeouts'
+        'Blocks'
+        'Deadlocks'
+        'AutomaticTuning'
+      ]: {
+        category: category
+        enabled: true
+      }
+    ]
+  }
+}
+
 @description('Fully qualified domain name of the SQL Server.')
 output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
+
+@description('Resource ID of the SQL Database.')
+output sqlDatabaseId string = sqlDatabase.id

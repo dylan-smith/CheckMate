@@ -81,6 +81,7 @@ module sql 'modules/sql.bicep' = {
     entraAdminLogin: sqlEntraAdminLogin
     entraAdminObjectId: sqlEntraAdminObjectId
     entraAdminPrincipalType: sqlEntraAdminPrincipalType
+    logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
   }
 }
 
@@ -98,6 +99,19 @@ module appService 'modules/appservice.bicep' = {
     sqlConnectionString: sqlConnectionString
     // The browser sends the origin without a trailing slash.
     corsAllowedOrigin: replace(storage.outputs.primaryWebEndpoint, '.net/', '.net')
+  }
+}
+
+module workbook 'modules/workbook.bicep' = {
+  name: 'workbook'
+  params: {
+    location: location
+    appInsightsId: monitoring.outputs.appInsightsId
+    workspaceId: monitoring.outputs.workspaceId
+    appServiceId: appService.outputs.appServiceId
+    appServicePlanId: appService.outputs.appServicePlanId
+    sqlDatabaseId: sql.outputs.sqlDatabaseId
+    storageAccountId: storage.outputs.storageAccountId
   }
 }
 
