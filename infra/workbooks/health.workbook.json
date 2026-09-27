@@ -52,6 +52,14 @@
               ],
               "allowCustom": true
             }
+          },
+          {
+            "id": "b6f1d1a4-6c2e-4d59-9a8e-3f1c2b7d9e02",
+            "version": "KqlParameterItem/1.0",
+            "name": "selectedTab",
+            "type": 1,
+            "value": "overview",
+            "isHiddenWhenLocked": true
           }
         ],
         "style": "pills",
@@ -1308,7 +1316,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "AzureDiagnostics\n| where TimeGenerated {TimeRange}\n| where ResourceProvider == \"MICROSOFT.SQL\" and Category == \"Errors\"\n| extend Error = toint(column_ifexists(\"error_number_d\", real(null))),\n    Severity = toint(column_ifexists(\"Severity\", int(null))),\n    Message = tostring(column_ifexists(\"Message\", \"\"))\n| summarize Count = count(), [\"Last seen\"] = max(TimeGenerated) by Error, Severity, Message\n| order by Count desc",
+              "query": "AzureDiagnostics\n| where TimeGenerated {TimeRange}\n| where ResourceProvider == \"MICROSOFT.SQL\" and Category == \"Errors\"\n| extend Error = toint(column_ifexists(\"error_number_d\", real(null))),\n    Severity = coalesce(toint(column_ifexists(\"severity_d\", real(null))), toint(column_ifexists(\"Severity\", int(null)))),\n    Message = coalesce(tostring(column_ifexists(\"message_s\", \"\")), tostring(column_ifexists(\"Message\", \"\")))\n| summarize Count = count(), [\"Last seen\"] = max(TimeGenerated) by Error, Severity, Message\n| order by Count desc",
               "size": 0,
               "title": "Database errors",
               "timeContext": {
