@@ -24,6 +24,8 @@ deadline=$((SECONDS + LOAD_DURATION_MINUTES * 60))
 counts_dir="$(mktemp -d)"
 # One file per checklist created and not yet deleted, holding its id.
 pending_dir="$(mktemp -d)"
+# One file per worker with a create request in flight, which doesn't yet know the id it will get.
+creating_dir="$(mktemp -d)"
 # Created to ask the workers to finish their current cycle and stop.
 stop_file="$(mktemp -u)"
 
@@ -40,14 +42,20 @@ kill_tree() {
 # remain (the API may be paused by a deployment, or the database resuming). Also runs on exit, so a cancelled or
 # failed run still cleans up as far as it can. First asks the workers to stop, giving them a few seconds to finish
 # the cycle they are in (which deletes its checklist), then kills any still running so they don't create more.
-# Worst case the sweep takes about LOAD_WORKERS x 30 seconds per attempt; the job timeout allows for that.
+# A worker with a create request in flight isn't killed until it has recorded the id, or the request has timed
+# out (60 seconds). Worst case the sweep takes about LOAD_WORKERS x 30 seconds per attempt; the job timeout
+# allows for that.
 cleanup() {
   trap - EXIT TERM INT
   touch "${stop_file}"
-  local grace job
+  local grace job waited=0
   for grace in 1 2 3; do
     [ -n "$(jobs -rp)" ] || break
     sleep 1
+  done
+  while [ -n "$(jobs -rp)" ] && [ -n "$(ls -A "${creating_dir}")" ] && [ "${waited}" -lt 65 ]; do
+    sleep 1
+    waited=$((waited + 1))
   done
   for job in $(jobs -rp); do
     kill_tree "${job}"
@@ -103,6 +111,20 @@ request() {
   printf '%s' "${response%$'\n'*}"
 }
 
+# Creates a checklist, records its id in pending_dir and prints it (nothing when the request failed). The marker
+# in creating_dir covers the request and the recording, so the cleanup won't kill this worker in between.
+create_checklist() {
+  local id
+  touch "${creating_dir}/${worker_id}"
+  id="$(request POST /api/checklists --data "$(jq -cn --arg name "$1" '{name: $name}')" \
+    | jq -r '.id // empty' 2> /dev/null || true)"
+  if [ -n "${id}" ]; then
+    echo "${id}" > "${pending_dir}/${id}"
+  fi
+  rm -f "${creating_dir}/${worker_id}"
+  printf '%s' "${id}"
+}
+
 # Deletes a checklist this worker created and forgets it once the API confirms.
 delete_checklist() {
   request DELETE "/api/checklists/$1" > /dev/null
@@ -120,18 +142,14 @@ worker() {
     renamed="${name} renamed"
 
     request GET /api/checklists > /dev/null
-    id="$(request POST /api/checklists --data "$(jq -cn --arg name "${name}" '{name: $name}')" \
-      | jq -r '.id // empty' 2> /dev/null || true)"
+    id="$(create_checklist "${name}")"
     if [ -n "${id}" ]; then
-      echo "${id}" > "${pending_dir}/${id}"
       request GET "/api/checklists/${id}" > /dev/null
       request PUT "/api/checklists/${id}" --data "$(jq -cn --arg name "${renamed}" '{name: $name}')" > /dev/null
       if [ "${last_status}" = "200" ]; then
         # Duplicate name: 409. Should the API accept it anyway, remember and delete that checklist too.
-        extra="$(request POST /api/checklists --data "$(jq -cn --arg name "${renamed}" '{name: $name}')" \
-          | jq -r '.id // empty' 2> /dev/null || true)"
+        extra="$(create_checklist "${renamed}")"
         if [ -n "${extra}" ]; then
-          echo "${extra}" > "${pending_dir}/${extra}"
           delete_checklist "${extra}"
         fi
       fi

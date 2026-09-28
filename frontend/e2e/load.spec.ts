@@ -1,4 +1,10 @@
-import { test, expect, type Browser } from '@playwright/test'
+import {
+  test,
+  expect,
+  type Browser,
+  type Page,
+  type Response,
+} from '@playwright/test'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pendingDir } from './load.global-teardown'
@@ -33,6 +39,26 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// Clicks "Create checklist" and returns the API's response to the POST it sends.
+async function clickCreate(page: Page) {
+  const created = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/api/checklists',
+  )
+  await page.getByRole('button', { name: 'Create checklist' }).click()
+  return created
+}
+
+// Records a created checklist's id in a file of its own under pendingDir, so load.global-teardown.ts can delete
+// the checklist if the visit fails before doing so. Returns the file's path.
+async function recordCreated(response: Response) {
+  const { id } = (await response.json()) as { id: number }
+  const pendingFile = path.join(pendingDir, String(id))
+  writeFileSync(pendingFile, String(id))
+  return pendingFile
+}
+
 // One person's visit: open the app, create a checklist, rename it, try a duplicate name (the API answers
 // 409, which shows up as a failed request), then delete it. The created checklist's id is kept in a file of its
 // own under pendingDir until it's deleted, so load.global-teardown.ts can delete it if the visit fails partway.
@@ -47,15 +73,7 @@ async function visit(browser: Browser, name: string) {
     })
 
     await page.getByLabel('Checklist name').fill(name)
-    const created = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'POST' &&
-        new URL(response.url()).pathname === '/api/checklists',
-    )
-    await page.getByRole('button', { name: 'Create checklist' }).click()
-    const { id } = (await (await created).json()) as { id: number }
-    const pendingFile = path.join(pendingDir, String(id))
-    writeFileSync(pendingFile, String(id))
+    const pendingFile = await recordCreated(await clickCreate(page))
     const item = page
       .getByRole('listitem')
       .filter({ has: page.getByText(name, { exact: true }) })
@@ -74,7 +92,12 @@ async function visit(browser: Browser, name: string) {
     await expect(renamedItem).toBeVisible()
 
     await page.getByLabel('Checklist name').fill(renamed)
-    await page.getByRole('button', { name: 'Create checklist' }).click()
+    const duplicate = await clickCreate(page)
+    if (duplicate.status() === 201) {
+      // The API accepted the duplicate after all; record its id so the teardown deletes it. The assertion below
+      // then fails the visit, which leaves both checklists for the teardown.
+      await recordCreated(duplicate)
+    }
     await expect(page.getByText('already exists')).toBeVisible()
 
     await renamedItem.getByRole('button', { name: 'Delete' }).click()
