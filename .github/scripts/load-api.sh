@@ -166,11 +166,39 @@ worker() {
   echo "Worker ${worker_id} finished after ${cycle} cycles"
 }
 
+# Prints, once a minute, how many requests the workers sent in that minute by status code, so a long run shows
+# what it's doing (for example 403s while a deployment has the API paused). Reads only the lines each worker's
+# counts file gained since the last report.
+report_progress() {
+  local minute=0 file lines new
+  local -A seen=()
+  while sleep 60; do
+    minute=$((minute + 1))
+    new=""
+    for file in "${counts_dir}"/*; do
+      [ -e "${file}" ] || continue
+      lines="$(wc -l < "${file}")"
+      if [ "${lines}" -gt "${seen[${file}]:-0}" ]; then
+        new+="$(sed -n "$((${seen[${file}]:-0} + 1)),${lines}p" "${file}")"$'\n'
+        seen[${file}]="${lines}"
+      fi
+    done
+    echo "Minute ${minute} of ${LOAD_DURATION_MINUTES}: $(echo "${new}" | grep -c . || true) request(s):" \
+      "$(echo "${new}" | grep . | sort | uniq -c | awk '{ printf "%s%s x%s", sep, $2, $1; sep = ", " }' || true)"
+  done
+}
+
 echo "Generating API load against ${AZURE_BACKEND_URL} for ${LOAD_DURATION_MINUTES} minute(s) with ${LOAD_WORKERS} worker(s)"
+worker_pids=()
 for w in $(seq 1 "${LOAD_WORKERS}"); do
   worker "${w}" &
+  worker_pids+=("$!")
 done
-wait
+report_progress &
+reporter_pid="$!"
+wait "${worker_pids[@]}"
+kill_tree "${reporter_pid}"
+wait "${reporter_pid}" 2> /dev/null || true
 cleanup
 
 echo "Requests by status code:"

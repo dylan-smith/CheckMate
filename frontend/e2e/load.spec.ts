@@ -16,7 +16,10 @@ import { pendingDir } from './load.global-teardown'
 
 const users = readSetting('LOAD_USERS', 1, 10)
 const durationMinutes = readSetting('LOAD_DURATION_MINUTES', 1, 240)
-const deadline = Date.now() + durationMinutes * 60_000
+const startedAt = Date.now()
+const deadline = startedAt + durationMinutes * 60_000
+// How often each virtual user prints its progress, so a long run shows what it's doing.
+const PROGRESS_INTERVAL_MS = 60_000
 // The first visit can wait for the serverless database to resume from auto-pause.
 const FIRST_LOAD_TIMEOUT_MS = 180_000
 const checklistPrefix = `Load test web ${process.env.GITHUB_RUN_ID ?? 'local'}`
@@ -113,10 +116,14 @@ async function visit(browser: Browser, name: string) {
 }
 
 for (let user = 1; user <= users; user++) {
-  test(`virtual user ${user}`, async ({ browser }) => {
+  test(`virtual user ${user}`, async ({ browser, baseURL }) => {
     mkdirSync(pendingDir, { recursive: true })
     let succeeded = 0
     let failed = 0
+    let nextProgressAt = startedAt + PROGRESS_INTERVAL_MS
+    console.log(
+      `[load] user ${user}: visiting ${baseURL} for ${durationMinutes} minute(s)`,
+    )
     while (Date.now() < deadline) {
       const name = `${checklistPrefix} u${user} v${succeeded + failed + 1}`
       try {
@@ -128,6 +135,13 @@ for (let user = 1; user <= users; user++) {
         console.log(
           `[load] user ${user}: visit failed: ${error instanceof Error ? error.message : String(error)}`,
         )
+      }
+      if (Date.now() >= nextProgressAt) {
+        const elapsedMinutes = Math.floor((Date.now() - startedAt) / 60_000)
+        console.log(
+          `[load] user ${user}: ${elapsedMinutes} of ${durationMinutes} minute(s), ${succeeded} visit(s) succeeded, ${failed} failed so far`,
+        )
+        nextProgressAt = Date.now() + PROGRESS_INTERVAL_MS
       }
       // Think time between visits, 2-6 seconds.
       await sleep(2_000 + Math.random() * 4_000)
