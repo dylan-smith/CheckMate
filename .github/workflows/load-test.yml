@@ -44,9 +44,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment: production
-    # Time budget: up to 240 minutes of load, a few minutes of setup, the last visit finishing (up to about 7
-    # minutes when the database is resuming) and the cleanup (up to 10 users x 30 seconds x 3 attempts). The
-    # spec and script stop themselves at the requested duration; this only catches a hang.
+    # Time budget: up to 240 minutes of load, a few minutes of setup, the last visit finishing (the load config
+    # gives it at most 10 minutes past the duration) and the cleanup (up to 10 users x 30 seconds x 3 attempts).
+    # The spec and script stop themselves at the requested duration; this only catches a hang.
     timeout-minutes: 300
     permissions:
       id-token: write
