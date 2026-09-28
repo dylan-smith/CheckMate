@@ -1,8 +1,8 @@
 // Deletes any checklists the load run left behind, e.g. when a visit failed between creating and deleting one.
-// load.spec.ts writes the id of each checklist it has in flight to a file per virtual user in pendingDir and
-// removes the file once the checklist is deleted, so only ids this run created are ever deleted. Each deletion
-// is checked, and the sweep is retried while any remain, since the API may be paused by a deployment or
-// waiting for the database to resume.
+// load.spec.ts writes the id of each checklist it creates to a file of its own in pendingDir and removes the
+// file once the checklist is deleted, so only ids this run created are ever deleted. Each deletion is checked,
+// and the sweep is retried while any remain, since the API may be paused by a deployment or waiting for the
+// database to resume.
 
 import { readdirSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'

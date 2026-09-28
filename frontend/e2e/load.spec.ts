@@ -34,9 +34,9 @@ function sleep(ms: number) {
 }
 
 // One person's visit: open the app, create a checklist, rename it, try a duplicate name (the API answers
-// 409, which shows up as a failed request), then delete it. The created checklist's id is kept in pendingFile
-// until it's deleted, so load.global-teardown.ts can delete it if the visit fails partway through.
-async function visit(browser: Browser, name: string, pendingFile: string) {
+// 409, which shows up as a failed request), then delete it. The created checklist's id is kept in a file of its
+// own under pendingDir until it's deleted, so load.global-teardown.ts can delete it if the visit fails partway.
+async function visit(browser: Browser, name: string) {
   const context = await browser.newContext()
   const page = await context.newPage()
   try {
@@ -54,6 +54,7 @@ async function visit(browser: Browser, name: string, pendingFile: string) {
     )
     await page.getByRole('button', { name: 'Create checklist' }).click()
     const { id } = (await (await created).json()) as { id: number }
+    const pendingFile = path.join(pendingDir, String(id))
     writeFileSync(pendingFile, String(id))
     const item = page
       .getByRole('listitem')
@@ -91,13 +92,12 @@ async function visit(browser: Browser, name: string, pendingFile: string) {
 for (let user = 1; user <= users; user++) {
   test(`virtual user ${user}`, async ({ browser }) => {
     mkdirSync(pendingDir, { recursive: true })
-    const pendingFile = path.join(pendingDir, `user-${user}`)
     let succeeded = 0
     let failed = 0
     while (Date.now() < deadline) {
       const name = `${checklistPrefix} u${user} v${succeeded + failed + 1}`
       try {
-        await visit(browser, name, pendingFile)
+        await visit(browser, name)
         succeeded++
       } catch (error) {
         // A failed visit (say, a timeout while the database resumes) is itself useful telemetry; keep going.

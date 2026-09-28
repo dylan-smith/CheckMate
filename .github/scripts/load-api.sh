@@ -3,9 +3,9 @@
 # Health workbook has request, dependency and failure telemetry to show. Each worker keeps running a checklist
 # through its lifecycle (list, create, read, rename, delete), plus a few requests that fail on purpose (a
 # duplicate name, an empty name and a missing id) so the failure charts get data too. Every checklist it creates
-# is deleted again: each worker remembers the id of the checklist it has in flight, and a final cleanup, verified
-# and retried, deletes any still there. Only ids this run created are ever deleted. The cleanup also runs when
-# the script is stopped early (an error, or the runner cancelling it).
+# is deleted again: every id a worker creates is remembered until the API confirms its deletion, and a final
+# cleanup, verified and retried, deletes any still there. Only ids this run created are ever deleted. The
+# cleanup also runs when the script is stopped early (an error, or the runner cancelling it).
 #
 # Requires AZURE_BACKEND_URL, LOAD_DURATION_MINUTES (1-240) and LOAD_WORKERS (1-20). Writes a table of
 # requests by status code to GITHUB_STEP_SUMMARY when set.
@@ -22,7 +22,7 @@ done
 prefix="Load test api ${GITHUB_RUN_ID:-local}"
 deadline=$((SECONDS + LOAD_DURATION_MINUTES * 60))
 counts_dir="$(mktemp -d)"
-# One file per worker holding the id of the checklist it has created and not yet deleted.
+# One file per checklist created and not yet deleted, holding its id.
 pending_dir="$(mktemp -d)"
 # Created to ask the workers to finish their current cycle and stop.
 stop_file="$(mktemp -u)"
@@ -103,9 +103,17 @@ request() {
   printf '%s' "${response%$'\n'*}"
 }
 
+# Deletes a checklist this worker created and forgets it once the API confirms.
+delete_checklist() {
+  request DELETE "/api/checklists/$1" > /dev/null
+  if [ "${last_status}" = "204" ]; then
+    rm -f "${pending_dir}/$1"
+  fi
+}
+
 worker() {
   worker_id="$1"
-  local cycle=0 name renamed id pending="${pending_dir}/${worker_id}"
+  local cycle=0 name renamed id extra
   while [ "${SECONDS}" -lt "${deadline}" ] && [ ! -e "${stop_file}" ]; do
     cycle=$((cycle + 1))
     name="${prefix} w${worker_id} c${cycle}"
@@ -115,15 +123,19 @@ worker() {
     id="$(request POST /api/checklists --data "$(jq -cn --arg name "${name}" '{name: $name}')" \
       | jq -r '.id // empty' 2> /dev/null || true)"
     if [ -n "${id}" ]; then
-      echo "${id}" > "${pending}"
+      echo "${id}" > "${pending_dir}/${id}"
       request GET "/api/checklists/${id}" > /dev/null
       request PUT "/api/checklists/${id}" --data "$(jq -cn --arg name "${renamed}" '{name: $name}')" > /dev/null
-      # Duplicate name: 409
-      request POST /api/checklists --data "$(jq -cn --arg name "${renamed}" '{name: $name}')" > /dev/null
-      request DELETE "/api/checklists/${id}" > /dev/null
-      if [ "${last_status}" = "204" ]; then
-        rm -f "${pending}"
+      if [ "${last_status}" = "200" ]; then
+        # Duplicate name: 409. Should the API accept it anyway, remember and delete that checklist too.
+        extra="$(request POST /api/checklists --data "$(jq -cn --arg name "${renamed}" '{name: $name}')" \
+          | jq -r '.id // empty' 2> /dev/null || true)"
+        if [ -n "${extra}" ]; then
+          echo "${extra}" > "${pending_dir}/${extra}"
+          delete_checklist "${extra}"
+        fi
       fi
+      delete_checklist "${id}"
       # Already deleted: 404
       request GET "/api/checklists/${id}" > /dev/null
     fi
