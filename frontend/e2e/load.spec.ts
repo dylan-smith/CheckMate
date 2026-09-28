@@ -1,5 +1,7 @@
 import { test, expect, type Browser } from '@playwright/test'
-import { checklistPrefix } from './load.global-teardown'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { pendingDir } from './load.global-teardown'
 
 // Uses the deployed frontend the way a few people would at once, for LOAD_DURATION_MINUTES minutes, so the
 // CheckMate Health workbook has page views, browser timings, checklist events and the API calls behind them to
@@ -7,10 +9,11 @@ import { checklistPrefix } from './load.global-teardown'
 // Not part of the E2E or smoke runs: see playwright.load.config.ts and the Generate Load workflow.
 
 const users = readSetting('LOAD_USERS', 1, 10)
-const durationMinutes = readSetting('LOAD_DURATION_MINUTES', 1, 300)
+const durationMinutes = readSetting('LOAD_DURATION_MINUTES', 1, 240)
 const deadline = Date.now() + durationMinutes * 60_000
 // The first visit can wait for the serverless database to resume from auto-pause.
 const FIRST_LOAD_TIMEOUT_MS = 180_000
+const checklistPrefix = `Load test web ${process.env.GITHUB_RUN_ID ?? 'local'}`
 
 function readSetting(name: string, min: number, max: number) {
   const raw = process.env[name]
@@ -31,8 +34,9 @@ function sleep(ms: number) {
 }
 
 // One person's visit: open the app, create a checklist, rename it, try a duplicate name (the API answers
-// 409, which shows up as a failed request), then delete it.
-async function visit(browser: Browser, name: string) {
+// 409, which shows up as a failed request), then delete it. The created checklist's id is kept in pendingFile
+// until it's deleted, so load.global-teardown.ts can delete it if the visit fails partway through.
+async function visit(browser: Browser, name: string, pendingFile: string) {
   const context = await browser.newContext()
   const page = await context.newPage()
   try {
@@ -43,7 +47,14 @@ async function visit(browser: Browser, name: string) {
     })
 
     await page.getByLabel('Checklist name').fill(name)
+    const created = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname === '/api/checklists',
+    )
     await page.getByRole('button', { name: 'Create checklist' }).click()
+    const { id } = (await (await created).json()) as { id: number }
+    writeFileSync(pendingFile, String(id))
     const item = page
       .getByRole('listitem')
       .filter({ has: page.getByText(name, { exact: true }) })
@@ -67,6 +78,7 @@ async function visit(browser: Browser, name: string) {
 
     await renamedItem.getByRole('button', { name: 'Delete' }).click()
     await expect(renamedItem).toBeHidden()
+    rmSync(pendingFile, { force: true })
 
     // Leaving the page makes the Application Insights SDK flush what it has buffered; give the beacon a moment.
     await page.goto('about:blank')
@@ -78,12 +90,14 @@ async function visit(browser: Browser, name: string) {
 
 for (let user = 1; user <= users; user++) {
   test(`virtual user ${user}`, async ({ browser }) => {
+    mkdirSync(pendingDir, { recursive: true })
+    const pendingFile = path.join(pendingDir, `user-${user}`)
     let succeeded = 0
     let failed = 0
     while (Date.now() < deadline) {
       const name = `${checklistPrefix} u${user} v${succeeded + failed + 1}`
       try {
-        await visit(browser, name)
+        await visit(browser, name, pendingFile)
         succeeded++
       } catch (error) {
         // A failed visit (say, a timeout while the database resumes) is itself useful telemetry; keep going.

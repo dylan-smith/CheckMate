@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       duration-minutes:
-        description: How many minutes to generate load for (1-300)
+        description: How many minutes to generate load for (1-240)
         type: number
         required: true
         default: 10
@@ -44,8 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment: production
-    # The scripts stop themselves at the requested duration (at most 300 minutes); this only catches a hang.
-    timeout-minutes: 330
+    # Time budget: up to 240 minutes of load, a few minutes of setup, the last visit finishing (up to about 7
+    # minutes when the database is resuming) and the cleanup (up to 10 users x 30 seconds x 3 attempts). The
+    # spec and script stop themselves at the requested duration; this only catches a hang.
+    timeout-minutes: 300
     permissions:
       id-token: write
       contents: read
@@ -103,7 +105,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment: production
-    timeout-minutes: 330
+    # Same budget as browser-load: 240 minutes of load, the last cycle finishing (up to 8 minutes) and the
+    # cleanup (up to 20 workers x 30 seconds x 3 attempts).
+    timeout-minutes: 300
     permissions:
       contents: read
     steps:
