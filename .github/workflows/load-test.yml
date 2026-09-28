@@ -1,0 +1,112 @@
+name: Generate Load
+
+# Sends realistic traffic to the production site for a while, so the CheckMate Health workbook has telemetry to
+# show. Start it from the Actions tab (Run workflow) and choose how long it should run. Two jobs run side by
+# side: one drives real browsers through the frontend (page views, browser timings, checklist events and the
+# API calls behind them), the other calls the API directly at a steadier rate, including a few requests that
+# fail on purpose so the failure charts get data too. Every checklist the load creates is deleted again.
+#
+# A deployment that runs at the same time pauses the API (see ci.yml), so the load then records 403s until the
+# API resumes. That's harmless, but run this while nothing is deploying if you want clean numbers.
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration-minutes:
+        description: How many minutes to generate load for (1-300)
+        type: number
+        required: true
+        default: 10
+      browser-users:
+        description: Browsers using the frontend at the same time (1-10)
+        type: number
+        required: true
+        default: 2
+      api-workers:
+        description: Workers calling the API directly at the same time (1-20)
+        type: number
+        required: true
+        default: 3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: generate-load
+  cancel-in-progress: false
+
+jobs:
+  browser-load:
+    name: Browser load
+    runs-on: ubuntu-latest
+    environment: production
+    # The scripts stop themselves at the requested duration (at most 300 minutes); this only catches a hang.
+    timeout-minutes: 330
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install chromium --with-deps
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # The browsers must load the real frontend origin: the API only allows that origin through CORS, and the
+      # page's telemetry is what the workbook's frontend sections show.
+      - name: Resolve frontend origin
+        id: resolve-frontend-origin
+        shell: bash
+        run: |
+          FRONTEND_ORIGIN="$(az storage account show \
+            --name "${AZURE_STORAGE_ACCOUNT_NAME}" \
+            --query 'primaryEndpoints.web' \
+            --output tsv)"
+          FRONTEND_ORIGIN="${FRONTEND_ORIGIN%/}"
+          echo "frontend-origin=${FRONTEND_ORIGIN}" >> "$GITHUB_OUTPUT"
+        env:
+          AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}
+
+      - name: Generate browser load
+        env:
+          LOAD_BASE_URL: ${{ steps['resolve-frontend-origin'].outputs['frontend-origin'] }}
+          LOAD_API_URL: ${{ vars.AZURE_BACKEND_URL }}
+          LOAD_DURATION_MINUTES: ${{ inputs.duration-minutes }}
+          LOAD_USERS: ${{ inputs.browser-users }}
+        run: npm run test:load
+
+  api-load:
+    name: API load
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 330
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Generate API load
+        run: .github/scripts/load-api.sh
+        env:
+          AZURE_BACKEND_URL: ${{ vars.AZURE_BACKEND_URL }}
+          LOAD_DURATION_MINUTES: ${{ inputs.duration-minutes }}
+          LOAD_WORKERS: ${{ inputs.api-workers }}
