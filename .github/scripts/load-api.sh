@@ -3,7 +3,8 @@
 # Health workbook has request, dependency and failure telemetry to show. Each worker keeps running a checklist
 # through its lifecycle (list, create, read, rename, delete), plus a few requests that fail on purpose (a
 # duplicate name, an empty name and a missing id) so the failure charts get data too. Every checklist it creates
-# is deleted again, with a final sweep for any that a failed cycle left behind.
+# is deleted again: a final sweep, verified and retried, removes any that a failed cycle left behind, and it also
+# runs when the script is stopped early (an error, or the runner cancelling it).
 #
 # Requires AZURE_BACKEND_URL, LOAD_DURATION_MINUTES (1-300) and LOAD_WORKERS (1-20). Writes a table of
 # requests by status code to GITHUB_STEP_SUMMARY when set.
@@ -20,6 +21,51 @@ done
 prefix="Load test api ${GITHUB_RUN_ID:-local}"
 deadline=$((SECONDS + LOAD_DURATION_MINUTES * 60))
 counts_dir="$(mktemp -d)"
+
+# Deletes the checklists this run created that are still there, checking each deletion and retrying the sweep
+# while any remain (the API may be paused by a deployment, or the database resuming). Also runs on exit, so a
+# cancelled or failed run still cleans up as far as it can. Stops the workers first, so they don't keep
+# creating checklists while the sweep runs.
+cleanup() {
+  trap - EXIT TERM INT
+  jobs -p | xargs -r kill 2> /dev/null || true
+  wait 2> /dev/null || true
+
+  echo "Deleting any checklists left behind"
+  local attempt leftovers id status remaining
+  for attempt in 1 2 3; do
+    remaining=0
+    if leftovers="$(curl --silent --max-time 60 "${AZURE_BACKEND_URL}/api/checklists" \
+      | jq -r --arg prefix "${prefix}" '.[] | select(.name | startswith($prefix)) | .id' 2> /dev/null)"; then
+      for id in ${leftovers}; do
+        status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 60 \
+          --request DELETE "${AZURE_BACKEND_URL}/api/checklists/${id}" || echo 000)"
+        case "${status}" in
+          204 | 404) echo "Deleted leftover checklist ${id}" ;;
+          *)
+            echo "Could not delete leftover checklist ${id} (HTTP ${status})"
+            remaining=$((remaining + 1))
+            ;;
+        esac
+      done
+    else
+      echo "Could not list checklists"
+      remaining=1
+    fi
+    if [ "${remaining}" -eq 0 ]; then
+      echo "No checklists left behind"
+      return
+    fi
+    if [ "${attempt}" -lt 3 ]; then
+      echo "Retrying the cleanup in 10 seconds"
+      sleep 10
+    fi
+  done
+  echo "::warning::Could not delete every checklist named '${prefix}'; delete them by hand once the API is reachable"
+}
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 # Sends one request, records its status code (000 when the request itself failed) and prints the response body.
 # Usage: request METHOD PATH [curl options...], e.g. request POST /api/checklists --data '{"name":"x"}'
@@ -67,15 +113,7 @@ for w in $(seq 1 "${LOAD_WORKERS}"); do
   worker "${w}" &
 done
 wait
-
-# A cycle that failed partway through (say, while the database was resuming) can leave its checklist behind.
-echo "Deleting any checklists left behind"
-leftovers="$(curl --silent --max-time 60 "${AZURE_BACKEND_URL}/api/checklists" \
-  | jq -r --arg prefix "${prefix}" '.[] | select(.name | startswith($prefix)) | .id' 2> /dev/null || true)"
-for id in ${leftovers}; do
-  echo "Deleting leftover checklist ${id}"
-  curl --silent --output /dev/null --max-time 60 --request DELETE "${AZURE_BACKEND_URL}/api/checklists/${id}" || true
-done
+cleanup
 
 echo "Requests by status code:"
 summary="$(cat "${counts_dir}"/* | sort | uniq -c | sort -k2)"

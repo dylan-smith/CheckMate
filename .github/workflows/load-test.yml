@@ -8,6 +8,9 @@ name: Generate Load
 #
 # A deployment that runs at the same time pauses the API (see ci.yml), so the load then records 403s until the
 # API resumes. That's harmless, but run this while nothing is deploying if you want clean numbers.
+#
+# Like the deploy jobs, both jobs run only from main: the production environment allows only main, and the
+# github.ref condition makes a run from another branch skip cleanly instead of failing at the environment.
 
 on:
   workflow_dispatch:
@@ -39,6 +42,7 @@ jobs:
   browser-load:
     name: Browser load
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
     environment: production
     # The scripts stop themselves at the requested duration (at most 300 minutes); this only catches a hang.
     timeout-minutes: 330
@@ -97,6 +101,7 @@ jobs:
   api-load:
     name: API load
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
     environment: production
     timeout-minutes: 330
     permissions:
