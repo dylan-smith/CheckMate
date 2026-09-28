@@ -164,6 +164,8 @@ The template owns **all** App Service app settings (connection string, CORS orig
 
 The **CheckMate Health** workbook (Application Insights → Workbooks, or in the resource group) shows API, frontend and infrastructure health on one page. It combines Application Insights telemetry, App Service and SQL logs from the workspace, and platform metrics for the App Service, SQL database and Storage account. The workbook is also owned by the template, so edits made only in the portal are overwritten on the next deployment. To change it, edit it in the portal, copy the JSON from **Edit → Advanced Editor**, swap the resource IDs back to the `__*_ID__` tokens listed in `infra/modules/workbook.bicep`, and commit it to `infra/workbooks/health.workbook.json`.
 
+To put some data on the workbook, run the **Generate Load** workflow (`.github/workflows/load-test.yml`) from the Actions tab and choose how many minutes it should run. It drives real browsers through the frontend and calls the API directly, including a few requests that fail on purpose, and deletes every checklist it created. It uses the `production` environment, so it can only run from `main`.
+
 #### Deploying Infrastructure Manually
 
 To preview or apply infrastructure changes outside of CI, log in to Azure (`az login`, with MFA), set the runtime connection string, and run:
