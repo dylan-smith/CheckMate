@@ -489,8 +489,27 @@ jobs:
         env:
           CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
 
+      # App Service can finish applying deploy-infrastructure's site update minutes after the Bicep deployment
+      # reports success, and applying it restarts the deployment (SCM) container, which stops a deployment in
+      # progress ("Deployment has been stopped due to SCM container restart"). So a failed deployment is retried
+      # once, after giving the container time to come back.
       - name: Deploy to Azure App Service
         id: deploy
+        continue-on-error: true
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_BACKEND_APP_NAME }}
+          package: ./backend/publish
+
+      - name: Wait before retrying the deployment
+        if: steps.deploy.outcome == 'failure'
+        run: |
+          echo "::warning::Deployment failed; retrying it once in 60 seconds"
+          sleep 60
+
+      - name: Retry deploy to Azure App Service
+        id: redeploy
+        if: steps.deploy.outcome == 'failure'
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ vars.AZURE_BACKEND_APP_NAME }}
@@ -505,6 +524,7 @@ jobs:
         id: resume
         if: >-
           always() && steps.pause.outcome != 'skipped' && (steps.deploy.outcome == 'success' ||
+          steps.redeploy.outcome == 'success' ||
           (steps.migrate.outcome == 'skipped' && steps.pause.outputs['was-live'] == 'true'))
         run: bash .github/scripts/resume-api.sh
         env:
