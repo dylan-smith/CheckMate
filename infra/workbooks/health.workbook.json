@@ -127,7 +127,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Health at a glance\nAPI and browser telemetry from Application Insights. Server errors (5xx) mean something is broken and turn orange at 1% and red at 5%. Client errors (4xx) usually mean a caller sent a bad request, such as a duplicate name or a checklist that no longer exists, so they are shown but never colored. P95 response time turns orange at 1 s and 3 s."
+              "json": "## Health at a glance\nAPI and browser telemetry from Application Insights. Server errors (5xx) mean something is broken and turn orange at 1% and red at 5%. Client errors (4xx) usually mean a caller sent a bad request, such as a duplicate name or a checklist that no longer exists, so they are shown but never colored. P95 response time turns orange at 1 s and red at 3 s."
             },
             "name": "overview-intro"
           },
