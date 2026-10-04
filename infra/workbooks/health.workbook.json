@@ -210,7 +210,8 @@
               "crossComponentResources": [
                 "__APP_INSIGHTS_ID__"
               ],
-              "visualization": "timechart"
+              "visualization": "timechart",
+              "showAnnotations": true
             },
             "name": "overview-requests",
             "customWidth": "50"
@@ -231,7 +232,8 @@
               "crossComponentResources": [
                 "__APP_INSIGHTS_ID__"
               ],
-              "visualization": "timechart"
+              "visualization": "timechart",
+              "showAnnotations": true
             },
             "name": "overview-duration",
             "customWidth": "50"
@@ -273,7 +275,8 @@
               "crossComponentResources": [
                 "__APP_INSIGHTS_ID__"
               ],
-              "visualization": "timechart"
+              "visualization": "timechart",
+              "showAnnotations": true
             },
             "name": "overview-pageviews",
             "customWidth": "50"
@@ -446,7 +449,8 @@
               "crossComponentResources": [
                 "__APP_INSIGHTS_ID__"
               ],
-              "visualization": "timechart"
+              "visualization": "timechart",
+              "showAnnotations": true
             },
             "name": "api-sql-calls",
             "customWidth": "50"
@@ -467,7 +471,8 @@
               "crossComponentResources": [
                 "__APP_INSIGHTS_ID__"
               ],
-              "visualization": "timechart"
+              "visualization": "timechart",
+              "showAnnotations": true
             },
             "name": "api-sql-duration",
             "customWidth": "50"
@@ -634,7 +639,8 @@
               "crossComponentResources": [
                 "__APP_INSIGHTS_ID__"
               ],
-              "visualization": "timechart"
+              "visualization": "timechart",
+              "showAnnotations": true
             },
             "name": "web-pageviews",
             "customWidth": "50"
@@ -655,7 +661,8 @@
               "crossComponentResources": [
                 "__APP_INSIGHTS_ID__"
               ],
-              "visualization": "timechart"
+              "visualization": "timechart",
+              "showAnnotations": true
             },
             "name": "web-load-time",
             "customWidth": "50"
@@ -676,7 +683,8 @@
               "crossComponentResources": [
                 "__APP_INSIGHTS_ID__"
               ],
-              "visualization": "timechart"
+              "visualization": "timechart",
+              "showAnnotations": true
             },
             "name": "web-api-calls",
             "customWidth": "50"
@@ -697,7 +705,8 @@
               "crossComponentResources": [
                 "__APP_INSIGHTS_ID__"
               ],
-              "visualization": "timechart"
+              "visualization": "timechart",
+              "showAnnotations": true
             },
             "name": "web-api-duration",
             "customWidth": "50"

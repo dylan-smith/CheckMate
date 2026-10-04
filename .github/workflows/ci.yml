@@ -656,3 +656,35 @@ jobs:
             frontend/playwright-report/smoke/
             frontend/playwright-report/smoke-results.xml
           retention-days: 30
+
+  # Marks the deployment on the CheckMate Health workbook's time charts, whether it succeeded or not, so a change in
+  # the telemetry can be matched to the release that caused it. Runs once deploy-infrastructure has started, since
+  # from then on production may have changed.
+  annotate-deployment:
+    name: Annotate Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure, deploy-backend, deploy-frontend, smoke-tests]
+    if: always() && github.ref == 'refs/heads/main' && needs.deploy-infrastructure.result != 'skipped'
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # A missing marker isn't worth failing a deployment over.
+      - name: Add release annotation
+        continue-on-error: true
+        run: bash .github/scripts/annotate-deployment.sh
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          DEPLOYMENT_RESULT: >-
+            ${{ contains(needs.*.result, 'cancelled') && 'cancelled' ||
+            (contains(needs.*.result, 'failure') || contains(needs.*.result, 'skipped')) && 'failure' || 'success' }}
