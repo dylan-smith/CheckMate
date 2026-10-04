@@ -32,6 +32,9 @@ export function initTelemetry() {
         disableFetchTracking: false,
         enableUnhandledPromiseRejectionTracking: true,
         enableAutoRouteTracking: false,
+        // Chrome blocks the unload event by default and logs a permissions policy violation when it's hooked.
+        // The SDK still flushes on pagehide, visibilitychange and beforeunload.
+        disablePageUnloadEvents: ['unload'],
       },
     })
     sdk.addTelemetryInitializer((item) => {
