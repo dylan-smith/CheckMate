@@ -106,6 +106,9 @@ async function visit(browser: Browser, name: string) {
     await renamedItem.getByRole('button', { name: 'Delete' }).click()
     await expect(renamedItem).toBeHidden()
     rmSync(pendingFile, { force: true })
+    // The item disappears as soon as the app starts reloading the list, so wait for that reload too. Leaving
+    // while it's in flight aborts it, and the app reports the aborted fetch as a "Failed to fetch" exception.
+    await expect(page.getByLabel('Loading')).toBeHidden()
 
     // Leaving the page makes the Application Insights SDK flush what it has buffered; give the beacon a moment.
     await page.goto('about:blank')
