@@ -19,8 +19,14 @@ param sqlDatabaseId string
 @description('Resource ID of the frontend Storage Account.')
 param storageAccountId string
 
-// The workbook JSON is exported from the portal's Advanced editor with each resource ID swapped
-// for a placeholder token, so it can be edited in the portal and pasted back into the repo.
+@description('Default HTTPS URL of the backend App Service, without a trailing slash.')
+param apiUrl string
+
+@description('Primary web endpoint for the frontend static website.')
+param frontendUrl string
+
+// The workbook JSON is exported from the portal's Advanced editor with each resource ID and site URL
+// swapped for a placeholder token, so it can be edited in the portal and pasted back into the repo.
 var serializedData = reduce(
   items({
     __APP_INSIGHTS_ID__: appInsightsId
@@ -29,6 +35,9 @@ var serializedData = reduce(
     __APP_SERVICE_PLAN_ID__: appServicePlanId
     __SQL_DATABASE_ID__: sqlDatabaseId
     __STORAGE_ACCOUNT_ID__: storageAccountId
+    __RESOURCE_GROUP_ID__: resourceGroup().id
+    __API_URL__: apiUrl
+    __FRONTEND_URL__: frontendUrl
   }),
   loadTextContent('../workbooks/health.workbook.json'),
   (json, token) => replace(json, token.key, token.value)
