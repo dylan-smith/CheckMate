@@ -30,7 +30,7 @@ RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 PROPERTIES="$(jq -n -c \
   --arg label "${LABEL}" \
   --arg description "${LABEL}: ${SHORT_SHA} ($(git log -1 --format=%s "${GITHUB_SHA}"))" \
-  --arg build "${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
+  --arg build "${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
   --arg repo "${GITHUB_REPOSITORY}" \
   --arg branch "${GITHUB_REF}" \
   --arg actor "${GITHUB_ACTOR}" \

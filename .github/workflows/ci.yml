@@ -666,6 +666,8 @@ jobs:
     needs: [deploy-infrastructure, deploy-backend, deploy-frontend, smoke-tests]
     if: always() && github.ref == 'refs/heads/main' && needs.deploy-infrastructure.result != 'skipped'
     environment: production
+    # A missing marker isn't worth failing a deployment over, whichever step fails.
+    continue-on-error: true
     permissions:
       id-token: write
       contents: read
@@ -679,9 +681,7 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # A missing marker isn't worth failing a deployment over.
       - name: Add release annotation
-        continue-on-error: true
         run: bash .github/scripts/annotate-deployment.sh
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
