@@ -107,6 +107,14 @@
             "style": "link"
           },
           {
+            "id": "9c2a7e15-4b8d-4f3a-a6e1-7d0b5c3f8e24",
+            "cellValue": "selectedTab",
+            "linkTarget": "parameter",
+            "linkLabel": "Costs",
+            "subTarget": "costs",
+            "style": "link"
+          },
+          {
             "id": "0d6c9f1e-1a7b-4f0e-8b4a-6f2d8c1e3a05",
             "cellValue": "selectedTab",
             "linkTarget": "parameter",
@@ -1486,6 +1494,170 @@
         "value": "infrastructure"
       },
       "name": "infrastructure"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Costs\nWhat the CheckMate resource group costs, from Azure Cost Management. Every resource that makes up the app is in that group, including ones since deleted.\n\nAmounts are actual costs in the billing currency, before any subscription credits. Cost data usually lags usage by 8 to 24 hours, so the most recent day is incomplete. [Cost analysis](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/costanalysis) has the full breakdown and budgets."
+            },
+            "name": "costs-intro"
+          },
+          {
+            "type": 9,
+            "content": {
+              "version": "KqlParameterItem/1.0",
+              "parameters": [
+                {
+                  "id": "5b8e2f4a-3c1d-4e6f-9a7b-2d4c6e8f0a13",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "CostPeriod",
+                  "label": "Cost period",
+                  "type": 4,
+                  "isRequired": true,
+                  "value": {
+                    "durationMs": 2592000000
+                  },
+                  "typeSettings": {
+                    "selectableValues": [
+                      {
+                        "durationMs": 604800000
+                      },
+                      {
+                        "durationMs": 2592000000
+                      },
+                      {
+                        "durationMs": 7776000000
+                      }
+                    ],
+                    "allowCustom": true
+                  }
+                }
+              ],
+              "style": "pills",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "costs-parameters"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":\"{\\\"type\\\":\\\"ActualCost\\\",\\\"timeframe\\\":\\\"Custom\\\",\\\"timePeriod\\\":{\\\"from\\\":\\\"{CostPeriod:startISO}\\\",\\\"to\\\":\\\"{CostPeriod:endISO}\\\"},\\\"dataset\\\":{\\\"aggregation\\\":{\\\"totalCost\\\":{\\\"name\\\":\\\"Cost\\\",\\\"function\\\":\\\"Sum\\\"}},\\\"sorting\\\":[{\\\"direction\\\":\\\"descending\\\",\\\"name\\\":\\\"Cost\\\"}],\\\"granularity\\\":\\\"None\\\",\\\"grouping\\\":[{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"ServiceName\\\"}]}}\",\"headers\":[],\"method\":\"POST\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.CostManagement/query\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2023-11-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$.properties.rows\",\"columns\":[{\"path\":\"$[0]\",\"columnid\":\"Cost\",\"columnType\":\"number\"},{\"path\":\"$[1]\",\"columnid\":\"Service\"},{\"path\":\"$[2]\",\"columnid\":\"Currency\"}]}}]}",
+              "size": 4,
+              "title": "Cost by service",
+              "noDataMessage": "No costs in this period.",
+              "queryType": 12,
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Service"
+                },
+                "leftContent": {
+                  "columnMatch": "Cost",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "palette": "blue"
+                  },
+                  "numberFormat": {
+                    "unit": 0,
+                    "options": {
+                      "style": "decimal",
+                      "useGrouping": true,
+                      "minimumFractionDigits": 2,
+                      "maximumFractionDigits": 4
+                    }
+                  }
+                },
+                "secondaryContent": {
+                  "columnMatch": "Currency"
+                },
+                "showBorder": true,
+                "sortCriteriaField": "Cost",
+                "sortOrderField": 2
+              }
+            },
+            "name": "costs-by-service"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":\"{\\\"type\\\":\\\"ActualCost\\\",\\\"timeframe\\\":\\\"Custom\\\",\\\"timePeriod\\\":{\\\"from\\\":\\\"{CostPeriod:startISO}\\\",\\\"to\\\":\\\"{CostPeriod:endISO}\\\"},\\\"dataset\\\":{\\\"aggregation\\\":{\\\"totalCost\\\":{\\\"name\\\":\\\"Cost\\\",\\\"function\\\":\\\"Sum\\\"}},\\\"sorting\\\":[{\\\"direction\\\":\\\"descending\\\",\\\"name\\\":\\\"Cost\\\"}],\\\"granularity\\\":\\\"Daily\\\",\\\"grouping\\\":[{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"ServiceName\\\"}]}}\",\"headers\":[],\"method\":\"POST\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.CostManagement/query\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2023-11-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$.properties.rows\",\"columns\":[{\"path\":\"$[0]\",\"columnid\":\"Cost\",\"columnType\":\"number\"},{\"path\":\"$[1]\",\"columnid\":\"Day\",\"columnType\":\"datetime\",\"substringRegexMatch\":\"(\\\\d{4})(\\\\d{2})(\\\\d{2})\",\"substringReplace\":\"$1-$2-$3T00:00:00Z\"},{\"path\":\"$[2]\",\"columnid\":\"Service\"}]}}]}",
+              "size": 0,
+              "title": "Daily cost by service",
+              "noDataMessage": "No costs in this period.",
+              "queryType": 12,
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "Day",
+                "yAxis": [
+                  "Cost"
+                ],
+                "group": "Service",
+                "createOtherGroup": 0,
+                "showLegend": true
+              }
+            },
+            "customWidth": "50",
+            "name": "costs-daily"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":\"{\\\"type\\\":\\\"ActualCost\\\",\\\"timeframe\\\":\\\"Custom\\\",\\\"timePeriod\\\":{\\\"from\\\":\\\"{CostPeriod:startISO}\\\",\\\"to\\\":\\\"{CostPeriod:endISO}\\\"},\\\"dataset\\\":{\\\"aggregation\\\":{\\\"totalCost\\\":{\\\"name\\\":\\\"Cost\\\",\\\"function\\\":\\\"Sum\\\"}},\\\"sorting\\\":[{\\\"direction\\\":\\\"descending\\\",\\\"name\\\":\\\"Cost\\\"}],\\\"granularity\\\":\\\"None\\\",\\\"grouping\\\":[{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"ResourceId\\\"},{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"ServiceName\\\"}]}}\",\"headers\":[],\"method\":\"POST\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.CostManagement/query\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2023-11-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$.properties.rows\",\"columns\":[{\"path\":\"$[1]\",\"columnid\":\"Resource\"},{\"path\":\"$[2]\",\"columnid\":\"Service\"},{\"path\":\"$[0]\",\"columnid\":\"Cost\",\"columnType\":\"number\"},{\"path\":\"$[3]\",\"columnid\":\"Currency\"}]}}]}",
+              "size": 0,
+              "title": "Cost by resource",
+              "noDataMessage": "No costs in this period.",
+              "queryType": 12,
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Resource",
+                    "formatter": 13,
+                    "formatOptions": {
+                      "linkTarget": "Resource",
+                      "showIcon": true
+                    }
+                  },
+                  {
+                    "columnMatch": "Cost",
+                    "formatter": 4,
+                    "formatOptions": {
+                      "palette": "blue"
+                    },
+                    "numberFormat": {
+                      "unit": 0,
+                      "options": {
+                        "style": "decimal",
+                        "useGrouping": true,
+                        "minimumFractionDigits": 2,
+                        "maximumFractionDigits": 4
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "customWidth": "50",
+            "name": "costs-by-resource"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "costs"
+      },
+      "name": "costs"
     },
     {
       "type": 12,
