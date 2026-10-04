@@ -127,7 +127,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Health at a glance\nAPI and browser telemetry from Application Insights. Failed requests turn orange at 1% and red at 5%; P95 response time at 1 s and 3 s."
+              "json": "## Health at a glance\nAPI and browser telemetry from Application Insights. Server errors (5xx) mean something is broken and turn orange at 1% and red at 5%. Client errors (4xx) usually mean a caller sent a bad request, such as a duplicate name or a checklist that no longer exists, so they are shown but never colored. P95 response time turns orange at 1 s and 3 s."
             },
             "name": "overview-intro"
           },
@@ -135,7 +135,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "let r = requests | where timestamp {TimeRange} | where url !endswith '/robots933456.txt';\nlet total = toscalar(r | count);\nlet failedPct = toscalar(r | summarize iff(count() == 0, 0.0, round(100.0 * countif(success == false) / count(), 2)));\nlet p95 = toscalar(r | summarize round(percentile(duration, 95), 0));\nlet apiExceptions = toscalar(exceptions | where timestamp {TimeRange} | where cloud_RoleName != \"CheckMate.Web\" | count);\nlet webExceptions = toscalar(exceptions | where timestamp {TimeRange} | where cloud_RoleName == \"CheckMate.Web\" | count);\nlet pv = pageViews | where timestamp {TimeRange};\nlet viewCount = toscalar(pv | count);\nlet users = toscalar(pv | summarize dcount(user_Id));\nlet sessions = toscalar(pv | summarize dcount(session_Id));\nunion\n    (print Order = 1, Metric = \"API requests\", Value = tostring(total), Health = \"Info\"),\n    (print Order = 2, Metric = \"Failed requests\", Value = strcat(failedPct, \"%\"),\n        Health = case(failedPct >= 5, \"Critical\", failedPct >= 1, \"Warning\", \"Healthy\")),\n    (print Order = 3, Metric = \"P95 response time\", Value = strcat(coalesce(p95, 0.0), \" ms\"),\n        Health = case(isnull(p95), \"Info\", p95 >= 3000, \"Critical\", p95 >= 1000, \"Warning\", \"Healthy\")),\n    (print Order = 4, Metric = \"API exceptions\", Value = tostring(apiExceptions),\n        Health = case(apiExceptions >= 10, \"Critical\", apiExceptions > 0, \"Warning\", \"Healthy\")),\n    (print Order = 5, Metric = \"Browser exceptions\", Value = tostring(webExceptions),\n        Health = case(webExceptions >= 10, \"Critical\", webExceptions > 0, \"Warning\", \"Healthy\")),\n    (print Order = 6, Metric = \"Page views\", Value = tostring(viewCount), Health = \"Info\"),\n    (print Order = 7, Metric = \"Users\", Value = tostring(users), Health = \"Info\"),\n    (print Order = 8, Metric = \"Sessions\", Value = tostring(sessions), Health = \"Info\")\n| order by Order asc\n| project Metric, Value, Health",
+              "query": "let r = requests | where timestamp {TimeRange} | where url !endswith '/robots933456.txt';\nlet total = toscalar(r | count);\nlet serverPct = toscalar(r | summarize iff(count() == 0, 0.0, round(100.0 * countif(toint(resultCode) between (500 .. 599)) / count(), 2)));\nlet clientPct = toscalar(r | summarize iff(count() == 0, 0.0, round(100.0 * countif(toint(resultCode) between (400 .. 499)) / count(), 2)));\nlet p95 = toscalar(r | summarize round(percentile(duration, 95), 0));\nlet apiExceptions = toscalar(exceptions | where timestamp {TimeRange} | where cloud_RoleName != \"CheckMate.Web\" | count);\nlet webExceptions = toscalar(exceptions | where timestamp {TimeRange} | where cloud_RoleName == \"CheckMate.Web\" | count);\nlet pv = pageViews | where timestamp {TimeRange};\nlet viewCount = toscalar(pv | count);\nlet users = toscalar(pv | summarize dcount(user_Id));\nlet sessions = toscalar(pv | summarize dcount(session_Id));\nunion\n    (print Order = 1, Metric = \"API requests\", Value = tostring(total), Health = \"Info\"),\n    (print Order = 2, Metric = \"Server errors (5xx)\", Value = strcat(serverPct, \"%\"),\n        Health = case(serverPct >= 5, \"Critical\", serverPct >= 1, \"Warning\", \"Healthy\")),\n    (print Order = 3, Metric = \"Client errors (4xx)\", Value = strcat(clientPct, \"%\"), Health = \"Info\"),\n    (print Order = 4, Metric = \"P95 response time\", Value = strcat(coalesce(p95, 0.0), \" ms\"),\n        Health = case(isnull(p95), \"Info\", p95 >= 3000, \"Critical\", p95 >= 1000, \"Warning\", \"Healthy\")),\n    (print Order = 5, Metric = \"API exceptions\", Value = tostring(apiExceptions),\n        Health = case(apiExceptions >= 10, \"Critical\", apiExceptions > 0, \"Warning\", \"Healthy\")),\n    (print Order = 6, Metric = \"Browser exceptions\", Value = tostring(webExceptions),\n        Health = case(webExceptions >= 10, \"Critical\", webExceptions > 0, \"Warning\", \"Healthy\")),\n    (print Order = 7, Metric = \"Page views\", Value = tostring(viewCount), Health = \"Info\"),\n    (print Order = 8, Metric = \"Users\", Value = tostring(users), Health = \"Info\"),\n    (print Order = 9, Metric = \"Sessions\", Value = tostring(sessions), Health = \"Info\")\n| order by Order asc\n| project Metric, Value, Health",
               "size": 0,
               "title": "",
               "timeContext": {
@@ -198,7 +198,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize Succeeded = countif(success == true), Failed = countif(success == false) by bin(timestamp, {TimeRange:grain})",
+              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize Succeeded = countif(success == true), [\"Client errors (4xx)\"] = countif(toint(resultCode) between (400 .. 499)),\n    [\"Server errors (5xx)\"] = countif(toint(resultCode) between (500 .. 599)) by bin(timestamp, {TimeRange:grain})",
               "size": 0,
               "title": "API requests",
               "timeContext": {
@@ -320,7 +320,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize Requests = count(), Failed = countif(success == false),\n    [\"P50 (ms)\"] = round(percentile(duration, 50), 0), [\"P95 (ms)\"] = round(percentile(duration, 95), 0)\n    by Operation = name\n| extend [\"Failure %\"] = round(100.0 * Failed / Requests, 2)\n| project Operation, Requests, Failed, [\"Failure %\"], [\"P50 (ms)\"], [\"P95 (ms)\"]\n| order by Requests desc",
+              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize Requests = count(), [\"5xx\"] = countif(toint(resultCode) between (500 .. 599)),\n    [\"4xx\"] = countif(toint(resultCode) between (400 .. 499)),\n    [\"P50 (ms)\"] = round(percentile(duration, 50), 0), [\"P95 (ms)\"] = round(percentile(duration, 95), 0)\n    by Operation = name\n| extend [\"5xx %\"] = round(100.0 * [\"5xx\"] / Requests, 2), [\"4xx %\"] = round(100.0 * [\"4xx\"] / Requests, 2)\n| project Operation, Requests, [\"5xx\"], [\"5xx %\"], [\"4xx\"], [\"4xx %\"], [\"P50 (ms)\"], [\"P95 (ms)\"]\n| order by Requests desc",
               "size": 0,
               "title": "Operations",
               "timeContext": {
@@ -343,7 +343,7 @@
                     }
                   },
                   {
-                    "columnMatch": "Failure %",
+                    "columnMatch": "5xx %",
                     "formatter": 18,
                     "formatOptions": {
                       "thresholdsOptions": "colors",
@@ -405,9 +405,9 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| where success == false\n| summarize Failures = count(), [\"Last seen\"] = max(timestamp) by Operation = name, Status = resultCode\n| order by Failures desc",
+              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| where success == false\n| summarize Failures = count(), [\"Last seen\"] = max(timestamp) by Operation = name, Status = resultCode\n| order by Status desc, Failures desc",
               "size": 0,
-              "title": "Failed requests by operation and status",
+              "title": "Failed requests by operation and status (5xx first)",
               "timeContext": {
                 "durationMs": 86400000
               },
@@ -664,7 +664,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName == \"CheckMate.Web\"\n| summarize Calls = count(), Failed = countif(success == false) by bin(timestamp, {TimeRange:grain})",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName == \"CheckMate.Web\"\n| summarize Calls = count(), [\"Failed (5xx or no response)\"] = countif(success == false and not(toint(resultCode) between (400 .. 499))),\n    [\"Client errors (4xx)\"] = countif(toint(resultCode) between (400 .. 499)) by bin(timestamp, {TimeRange:grain})",
               "size": 0,
               "title": "Browser calls to the API",
               "timeContext": {
@@ -706,7 +706,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName == \"CheckMate.Web\"\n| summarize Calls = count(), Failed = countif(success == false), [\"P95 (ms)\"] = round(percentile(duration, 95), 0) by Call = name\n| extend [\"Failure %\"] = round(100.0 * Failed / Calls, 2)\n| order by Calls desc",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName == \"CheckMate.Web\"\n| summarize Calls = count(), Failed = countif(success == false and not(toint(resultCode) between (400 .. 499))),\n    [\"4xx\"] = countif(toint(resultCode) between (400 .. 499)), [\"P95 (ms)\"] = round(percentile(duration, 95), 0) by Call = name\n| extend [\"Failure %\"] = round(100.0 * Failed / Calls, 2)\n| project Call, Calls, Failed, [\"Failure %\"], [\"4xx\"], [\"P95 (ms)\"]\n| order by Calls desc",
               "size": 0,
               "title": "Browser calls by endpoint",
               "timeContext": {
