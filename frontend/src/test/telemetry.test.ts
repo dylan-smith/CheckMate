@@ -97,6 +97,16 @@ describe('telemetry', () => {
       },
     )
 
+    it('does not hook the unload event', () => {
+      initTelemetry()
+
+      expect(sdk.constructor).toHaveBeenCalledWith({
+        config: expect.objectContaining({
+          disablePageUnloadEvents: ['unload'],
+        }),
+      })
+    })
+
     it('leaves telemetry off instead of throwing when setup fails', () => {
       config.apiBaseUrl = 'http://'
       const consoleError = vi
