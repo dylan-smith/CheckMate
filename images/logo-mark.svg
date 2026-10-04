@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="376 160 501 630" role="img" aria-label="CheckMate">
+  <title>CheckMate</title>
+  <mask id="cm-gap"><rect x="370" y="150" width="520" height="650" fill="#fff"/><rect x="482" y="240" width="289" height="60" fill="#000"/></mask>
+  <path d="M432 295H821A12 12 0 0 1 833 307V736A12 12 0 0 1 821 748H432A12 12 0 0 1 420 736V307A12 12 0 0 1 432 295Z" fill="#fff"/>
+  <path d="M426 251H827A50 50 0 0 1 877 301V740A50 50 0 0 1 827 790H426A50 50 0 0 1 376 740V301A50 50 0 0 1 426 251ZM432 295H821A12 12 0 0 1 833 307V736A12 12 0 0 1 821 748H432A12 12 0 0 1 420 736V307A12 12 0 0 1 432 295Z" fill="#0e2841" fill-rule="evenodd" mask="url(#cm-gap)"/>
+  <path d="M512 221H559.8A67 67 0 1 1 693.2 221H741A14 14 0 0 1 755 235V295A14 14 0 0 1 741 309H512A14 14 0 0 1 498 295V235A14 14 0 0 1 512 221ZM626.5 193.5A26 26 0 0 0 626.5 245.5A26 26 0 0 0 626.5 193.5Z" fill="#0e2841" fill-rule="evenodd"/>
+  <rect x="457" y="350" width="98" height="98" rx="13" fill="#1b9a57"/>
+  <rect x="457" y="477" width="98" height="98" rx="13" fill="#1b9a57"/>
+  <rect x="457" y="604" width="98" height="98" rx="13" fill="#1b9a57"/>
+  <path d="M479.5 399L496 415.5L531 380.5M479.5 526L496 542.5L531 507.5M479.5 653L496 669.5L531 634.5" fill="none" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M593.5 398.5H780.5M593.5 523.5H780.5M593.5 651.5H780.5" stroke="#607287" stroke-width="25" stroke-linecap="round"/>
+</svg>
