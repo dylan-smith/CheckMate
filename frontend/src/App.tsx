@@ -166,10 +166,15 @@ function App() {
           component="img"
           src={logo}
           alt="CheckMate"
-          sx={{ display: 'block', height: 120 }}
+          sx={{ display: 'block', height: 120, mx: 'auto' }}
         />
       </Typography>
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+      <Typography
+        variant="body1"
+        color="text.secondary"
+        align="center"
+        sx={{ mb: 3 }}
+      >
         Create, edit, and delete your custom checklists.
       </Typography>
 
