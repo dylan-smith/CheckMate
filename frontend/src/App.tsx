@@ -12,6 +12,7 @@ import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
+import logo from './assets/logo.svg'
 import { apiBaseUrl } from './config'
 import { trackEvent, trackException } from './telemetry'
 
@@ -161,7 +162,12 @@ function App() {
   return (
     <Container maxWidth="md" component="main" sx={{ py: 4 }}>
       <Typography variant="h3" component="h1" gutterBottom>
-        CheckMate
+        <Box
+          component="img"
+          src={logo}
+          alt="CheckMate"
+          sx={{ display: 'block', height: 120 }}
+        />
       </Typography>
       <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
         Create, edit, and delete your custom checklists.
