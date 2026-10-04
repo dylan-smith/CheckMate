@@ -1,4 +1,4 @@
-# CheckMate
+<h1 align="center"><img src="images/logo.svg" alt="CheckMate" width="240"></h1>
 
 [![CI](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml)
 
