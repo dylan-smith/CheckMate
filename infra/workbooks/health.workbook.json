@@ -105,6 +105,14 @@
             "linkLabel": "Infrastructure",
             "subTarget": "infrastructure",
             "style": "link"
+          },
+          {
+            "id": "0d6c9f1e-1a7b-4f0e-8b4a-6f2d8c1e3a05",
+            "cellValue": "selectedTab",
+            "linkTarget": "parameter",
+            "linkLabel": "Investigate",
+            "subTarget": "investigate",
+            "style": "link"
           }
         ]
       },
@@ -1469,6 +1477,51 @@
         "value": "infrastructure"
       },
       "name": "infrastructure"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Investigate\nWhere to look next when something on this page needs a closer look. Links open the Azure portal or GitHub.\n\n**Live sites:** [Frontend](__FRONTEND_URL__) · [API reference (Scalar)](__API_URL__/scalar) · [OpenAPI document](__API_URL__/openapi/v1.json)"
+            },
+            "name": "investigate-intro"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Start here\n| Question | Where to look |\n|---|---|\n| What is failing right now? | [Live Metrics](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/quickPulse) streams API requests, failures and exceptions as they happen. |\n| Why did a request fail? | [Failures](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/failures): pick an operation or exception, then a sample to see its end-to-end transaction across the browser, API and database. |\n| Where is a specific request or error? | [Transaction search](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/searchV1) by time, type, result code or text. |\n| Why is it slow? | [Performance](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/performance) for API operations and dependencies, and [Query Performance Insight](https://portal.azure.com/#resource__SQL_DATABASE_ID__/queryPerformanceInsight) for the database. |\n| How do the parts connect? | [Application map](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/applicationMap) shows the frontend, API and database with call rates and failures. |\n| Is the API process healthy? | [Log stream](https://portal.azure.com/#resource__APP_SERVICE_ID__/logStream) for live console output, and [Diagnose and solve problems](https://portal.azure.com/#resource__APP_SERVICE_ID__/troubleshoot) for crashes, restarts and availability. |\n| Has an alert fired? | [Alerts](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/alertsV2), including Application Insights smart detection of failure anomalies. |\n| Is it Azure? | Resource health for the [App Service](https://portal.azure.com/#resource__APP_SERVICE_ID__/resourceHealth), [SQL database](https://portal.azure.com/#resource__SQL_DATABASE_ID__/resourceHealth) and [Storage account](https://portal.azure.com/#resource__STORAGE_ACCOUNT_ID__/resourceHealth); [Service Health](https://portal.azure.com/#view/Microsoft_Azure_Health/AzureHealthBrowseBlade/~/serviceIssues) for Azure incidents affecting the subscription; and the public [Azure status](https://azure.status.microsoft/status) page. |\n| Did something change? | [CI runs on main](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml?query=branch%3Amain): every push to main deploys the infrastructure, API and frontend, then runs smoke tests. [Deployments](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/deployments) and the [Activity log](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/eventlogs) show every change made in Azure, including ones made by hand. |"
+            },
+            "customWidth": "50",
+            "name": "investigate-start"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Logs and where they live\nEverything below goes to the **CheckMate** Log Analytics workspace. Query it from [Application Insights Logs](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/logs), where the Application Insights tables have their classic names (`requests`, `dependencies`, `exceptions`, `traces`), or from [workspace Logs](https://portal.azure.com/#resource__WORKSPACE_ID__/logs) using the table names below.\n\n| What | Table | Notes |\n|---|---|---|\n| API requests | `AppRequests` | |\n| API calls to SQL and other dependencies | `AppDependencies` | |\n| API exceptions and log messages | `AppExceptions`, `AppTraces` | |\n| Browser page views, page load timings and checklist events | `AppPageViews`, `AppBrowserTimings`, `AppEvents` | |\n| Browser calls to the API and browser exceptions | `AppDependencies`, `AppExceptions` | `AppRoleName == \"CheckMate.Web\"` |\n| App Service HTTP logs | `AppServiceHTTPLogs` | Every request that reached the App Service, including ones the API never handled. |\n| API console output | `AppServiceConsoleLogs` | stdout and stderr, including startup errors. |\n| App Service application logs | `AppServiceAppLogs` | |\n| Restarts, deployments and container starts | `AppServicePlatformLogs` | |\n| Database errors, timeouts, blocks, deadlocks and automatic tuning | `AzureDiagnostics` | Filter on `Category`. |\n| Changes made in Azure | Not in the workspace | [Activity log](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/eventlogs), kept for 90 days. |\n| Deployments, database backups and migrations | Not in the workspace | Job logs of the [CI runs on main](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml?query=branch%3Amain). The **Deploy Backend** job takes a BACPAC backup into the `db-backups` container of the [storage account](https://portal.azure.com/#resource__STORAGE_ACCOUNT_ID__/containersList) and then runs the DbUp migrations. |"
+            },
+            "customWidth": "50",
+            "name": "investigate-logs"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### More information\n- [README](https://github.com/dylan-smith/CheckMate#readme): architecture, deployment and the Azure resources.\n- [Generate Load workflow](https://github.com/dylan-smith/CheckMate/actions/workflows/load-test.yml): sends realistic traffic to production to put data on this workbook.\n- [Resource group](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/overview): every CheckMate resource in Azure.\n- [Application Insights](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/overview) · [App Service](https://portal.azure.com/#resource__APP_SERVICE_ID__/overview) · [SQL database](https://portal.azure.com/#resource__SQL_DATABASE_ID__/overview) · [Storage account](https://portal.azure.com/#resource__STORAGE_ACCOUNT_ID__/overview) · [Log Analytics workspace](https://portal.azure.com/#resource__WORKSPACE_ID__/overview)"
+            },
+            "name": "investigate-docs"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "investigate"
+      },
+      "name": "investigate"
     }
   ],
   "fallbackResourceIds": [
