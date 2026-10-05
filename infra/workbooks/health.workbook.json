@@ -299,6 +299,7 @@
               "visualization": "timechart",
               "showAnnotations": true,
               "chartSettings": {
+                "showMetrics": false,
                 "ySettings": {
                   "min": 0,
                   "max": 100
@@ -373,7 +374,10 @@
                 "__APP_INSIGHTS_ID__"
               ],
               "visualization": "timechart",
-              "showAnnotations": true
+              "showAnnotations": true,
+              "chartSettings": {
+                "showMetrics": false
+              }
             },
             "name": "overview-duration",
             "customWidth": "50"
@@ -612,7 +616,10 @@
                 "__APP_INSIGHTS_ID__"
               ],
               "visualization": "timechart",
-              "showAnnotations": true
+              "showAnnotations": true,
+              "chartSettings": {
+                "showMetrics": false
+              }
             },
             "name": "api-sql-duration",
             "customWidth": "50"
@@ -802,7 +809,10 @@
                 "__APP_INSIGHTS_ID__"
               ],
               "visualization": "timechart",
-              "showAnnotations": true
+              "showAnnotations": true,
+              "chartSettings": {
+                "showMetrics": false
+              }
             },
             "name": "web-load-time",
             "customWidth": "50"
@@ -846,7 +856,10 @@
                 "__APP_INSIGHTS_ID__"
               ],
               "visualization": "timechart",
-              "showAnnotations": true
+              "showAnnotations": true,
+              "chartSettings": {
+                "showMetrics": false
+              }
             },
             "name": "web-api-duration",
             "customWidth": "50"
