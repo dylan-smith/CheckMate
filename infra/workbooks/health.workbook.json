@@ -1822,7 +1822,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":null,\"headers\":[],\"method\":\"GET\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.CostManagement/alerts\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2023-11-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$.value\",\"columns\":[{\"path\":\"$.properties.creationTime\",\"columnid\":\"Raised\",\"columnType\":\"datetime\"},{\"path\":\"$.properties.costEntityId\",\"columnid\":\"Budget\"},{\"path\":\"$.properties.definition.type\",\"columnid\":\"Type\"},{\"path\":\"$.properties.details.currentSpend\",\"columnid\":\"Spent\",\"columnType\":\"number\"},{\"path\":\"$.properties.details.amount\",\"columnid\":\"Budget amount\",\"columnType\":\"number\"},{\"path\":\"$.properties.details.unit\",\"columnid\":\"Currency\"},{\"path\":\"$.properties.details.threshold\",\"columnid\":\"Alert at\",\"columnType\":\"number\"},{\"path\":\"$.properties.status\",\"columnid\":\"Status\"}]}}]}",
+              "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":null,\"headers\":[],\"method\":\"GET\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.CostManagement/alerts\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2023-11-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$.value\",\"columns\":[{\"path\":\"$.properties.creationTime\",\"columnid\":\"Raised\",\"columnType\":\"datetime\"},{\"path\":\"$.properties.costEntityId\",\"columnid\":\"Budget\"},{\"path\":\"$.properties.definition.criteria\",\"columnid\":\"Type\"},{\"path\":\"$.properties.details.currentSpend\",\"columnid\":\"Spent\",\"columnType\":\"number\"},{\"path\":\"$.properties.details.amount\",\"columnid\":\"Budget amount\",\"columnType\":\"number\"},{\"path\":\"$.properties.details.unit\",\"columnid\":\"Currency\"},{\"path\":\"$.properties.details.threshold\",\"columnid\":\"Alert at\",\"columnType\":\"number\"},{\"path\":\"$.properties.status\",\"columnid\":\"Status\"}]}}]}",
               "size": 0,
               "title": "Budget alerts",
               "noDataMessage": "No budget alerts. The budget alerts at 80% of the monthly budget, or when costs are forecast to pass it.",
@@ -1839,6 +1839,32 @@
                       "options": {
                         "style": "percent"
                       }
+                    }
+                  },
+                  {
+                    "columnMatch": "Type",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "CostThresholdExceeded",
+                          "representation": "orange",
+                          "text": "Actual"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "ForecastCostThresholdExceeded",
+                          "representation": "blue",
+                          "text": "Forecasted"
+                        },
+                        {
+                          "operator": "Default",
+                          "representation": "gray",
+                          "text": "{0}{1}"
+                        }
+                      ]
                     }
                   }
                 ],
