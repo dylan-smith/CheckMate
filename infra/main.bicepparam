@@ -31,3 +31,8 @@ param sqlConnectionString = readEnvironmentVariable('AZURE_SQL_CONNECTION_STRING
 // Monitoring
 param logAnalyticsWorkspaceName = 'CheckMate'
 param appInsightsName = 'CheckMate'
+
+// Alerts (email + Azure mobile app push; Slack when the SLACK_WEBHOOK_URL secret is set)
+param alertEmail = 'Dylan@devopsdylan.com'
+param slackWebhookUrl = readEnvironmentVariable('SLACK_WEBHOOK_URL', '')
+param monthlyBudget = 10

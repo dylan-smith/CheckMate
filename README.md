@@ -149,6 +149,7 @@ infra/
 ├── main.bicep           # Root template — wires all modules together
 ├── main.bicepparam      # Production parameter values (resource names, regions, SKUs)
 ├── modules/
+│   ├── alerts.bicep     # Alert rules, action group, availability test, Slack notifier and budget
 │   ├── appservice.bicep # App Service Plan + App Service (Linux/.NET 10) and its app settings
 │   ├── monitoring.bicep # Log Analytics Workspace + Application Insights
 │   ├── sql.bicep        # Azure SQL Server (Entra-only auth) + serverless Database and its diagnostic logs
@@ -165,6 +166,32 @@ The template owns **all** App Service app settings (connection string, CORS orig
 The **CheckMate Health** workbook (Application Insights → Workbooks, or in the resource group) shows API, frontend and infrastructure health on one page. It combines Application Insights telemetry, App Service and SQL logs from the workspace, and platform metrics for the App Service, SQL database and Storage account. Its **Costs** tab shows what the resource group costs in total, by service, by day and by resource, from Azure Cost Management (viewers need at least Reader on the resource group). Its **Investigate** tab links to the portal tools, logs and deployment history to check when digging into an incident. Its Application Insights time charts mark each backend deployment with the release annotation `azure/webapps-deploy` adds (green for success, red for a failed deployment). The workbook is also owned by the template, so edits made only in the portal are overwritten on the next deployment. To change it, edit it in the portal, copy the JSON from **Edit → Advanced Editor**, swap the resource IDs and site URLs back to the `__*__` tokens listed in `infra/modules/workbook.bicep`, and commit it to `infra/workbooks/health.workbook.json`.
 
 To put some data on the workbook, run the **Generate Load** workflow (`.github/workflows/load-test.yml`) from the Actions tab and choose how many minutes it should run. It drives real browsers through the frontend and calls the API directly, including a few requests that fail on purpose, and deletes every checklist it created. It uses the `production` environment, so it can only run from `main`.
+
+#### Alerts
+
+`infra/modules/alerts.bicep` defines the alerts. They all notify the **CheckMate-Alerts** action group, which sends an email and an Azure mobile app push to `alertEmail` (set in `infra/main.bicepparam`). When the `SLACK_WEBHOOK_URL` secret is set, it also posts to Slack through the **CheckMate-SlackAlerts** Logic App. Metric and log alerts also send a message when they resolve.
+
+| Alert | Fires when | Sev |
+|-------|------------|-----|
+| API down | The availability test on `{api}/health` (one location, every 15 minutes) fails twice in a row | 1 |
+| Resource health | Azure reports the App Service, database or storage account unavailable or degraded | 1 |
+| Service health | Azure reports an incident or planned maintenance for App Service, SQL Database, Storage or Monitor in West US/West US 2 | 2 |
+| API server errors | More than 5 HTTP 5xx responses in 15 minutes | 2 |
+| API dependency failures | More than 10 failed backend dependency calls (mostly SQL) in 15 minutes | 2 |
+| Browser errors | More than 5 frontend exceptions in an hour | 2 |
+| Browser API call failures | More than 5 failed API calls from the frontend in an hour | 2 |
+| CPU quota | More than 45 of the F1 plan's 60 daily CPU minutes used in 24 hours (the app stops when they run out) | 2 |
+| SQL free offer running out | Less than 20% of the month's free vCore-seconds left (the database pauses until next month when they run out) | 2 |
+| Frontend storage availability | Blob storage less than 99% available over an hour | 2 |
+| Slow API | Average response time over 5 seconds for 30 minutes | 3 |
+| Slow page loads | 75th percentile page load over 4 seconds in 6 hours (at least 5 loads) | 3 |
+| SQL storage | Database over 80% of its maximum size | 3 |
+| Failure anomalies | Application Insights smart detection sees an unusual rise in failures | 3 |
+| Monthly budget | Resource group costs pass 80% of `monthlyBudget`, or are forecast to pass 100% | — |
+
+`/health` doesn't check the database, so the availability test doesn't stop the serverless database from auto-pausing.
+
+To set up Slack, create a Slack app with an **Incoming Webhook** for the alerts channel and save the webhook URL as the `SLACK_WEBHOOK_URL` repository secret. The next deployment creates the Logic App. To get push notifications, sign in to the Azure mobile app as `alertEmail`. To check the whole chain, open the action group in the portal and choose **Test**.
 
 #### Deploying Infrastructure Manually
 
@@ -245,6 +272,7 @@ The what-if identity is a user-assigned managed identity with a federated creden
 | Secret | Description |
 |--------|-------------|
 | `AZURE_SQL_CONNECTION_STRING` | SQL Server connection string used at runtime and for migrations (applied to the App Service by the Bicep deployment) |
+| `SLACK_WEBHOOK_URL` | Optional. Slack incoming webhook URL that alerts post to. Without it, alerts only go to email and the Azure mobile app |
 
 ### Environment
 

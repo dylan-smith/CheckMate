@@ -53,6 +53,16 @@ param logAnalyticsWorkspaceName string
 @description('Name of the Application Insights component.')
 param appInsightsName string
 
+@description('Email address that receives alert emails and Azure mobile app push notifications.')
+param alertEmail string
+
+@description('Slack incoming webhook URL for alert messages. Leave empty to skip Slack notifications.')
+@secure()
+param slackWebhookUrl string = ''
+
+@description('Monthly cost budget for the resource group, in the billing currency.')
+param monthlyBudget int = 10
+
 module monitoring 'modules/monitoring.bicep' = {
   name: 'monitoring'
   params: {
@@ -114,6 +124,23 @@ module workbook 'modules/workbook.bicep' = {
     storageAccountId: storage.outputs.storageAccountId
     apiUrl: appService.outputs.appServiceUrl
     frontendUrl: storage.outputs.primaryWebEndpoint
+  }
+}
+
+module alerts 'modules/alerts.bicep' = {
+  name: 'alerts'
+  params: {
+    location: location
+    appInsightsLocation: appInsightsLocation
+    appInsightsId: monitoring.outputs.appInsightsId
+    workspaceId: monitoring.outputs.workspaceId
+    appServiceId: appService.outputs.appServiceId
+    sqlDatabaseId: sql.outputs.sqlDatabaseId
+    storageAccountId: storage.outputs.storageAccountId
+    apiUrl: appService.outputs.appServiceUrl
+    alertEmail: alertEmail
+    slackWebhookUrl: slackWebhookUrl
+    monthlyBudget: monthlyBudget
   }
 }
 
