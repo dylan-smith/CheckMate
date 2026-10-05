@@ -193,6 +193,8 @@ To put some data on the workbook, run the **Generate Load** workflow (`.github/w
 
 To set up Slack, create a Slack app with an **Incoming Webhook** for the alerts channel and save the webhook URL as the `SLACK_WEBHOOK_URL` repository secret. The next deployment creates the Logic App. To get push notifications, sign in to the Azure mobile app as `alertEmail`. To check the whole chain, open the action group in the portal and choose **Test**.
 
+Azure won't move a budget's start date once it exists, so `budgetStartDate` in `infra/main.bicepparam` stays fixed at the month the budget was first deployed. A new environment should set it to the first of the month it's created in.
+
 #### Deploying Infrastructure Manually
 
 To preview or apply infrastructure changes outside of CI, log in to Azure (`az login`, with MFA), set the runtime connection string, and run:

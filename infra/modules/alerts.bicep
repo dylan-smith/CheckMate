@@ -32,8 +32,8 @@ param slackWebhookUrl string = ''
 @description('Monthly cost budget for the resource group, in the billing currency.')
 param monthlyBudget int = 10
 
-@description('First day of the budget period. Budgets can\'t move their start date once created, so keep it fixed.')
-param budgetStartDate string = '2026-10-01'
+@description('First day of the month the budget was created in (YYYY-MM-01). Budgets can\'t move their start date once created.')
+param budgetStartDate string
 
 // Cloud role name the frontend's telemetry initializer sets (frontend/src/telemetry.ts).
 var frontendRoleName = 'CheckMate.Web'
@@ -43,8 +43,21 @@ var sqlFreeVCoreSecondsThreshold = 20000
 
 var slackEnabled = !empty(slackWebhookUrl)
 
-// Azure's alert payload isn't in Slack's format, so this Logic App turns the common alert schema into a
-// Slack message and posts it to the incoming webhook.
+// Azure's alert payloads aren't in Slack's format, so this Logic App turns them into a Slack message and posts it
+// to the incoming webhook. Budgets send their own schema rather than the common alert schema, so they get their
+// own message.
+var commonAlertMessage = '''
+@{if(equals(outputs('Parse_payload')?['data']?['essentials']?['monitorCondition'], 'Resolved'), ':white_check_mark: *Resolved*', ':rotating_light: *Fired*')} @{outputs('Parse_payload')?['data']?['essentials']?['severity']} *@{outputs('Parse_payload')?['data']?['essentials']?['alertRule']}*
+@{coalesce(outputs('Parse_payload')?['data']?['essentials']?['description'], '')}
+Resource: @{last(split(coalesce(first(outputs('Parse_payload')?['data']?['essentials']?['alertTargetIDs']), 'n/a'), '/'))}
+Fired: @{outputs('Parse_payload')?['data']?['essentials']?['firedDateTime']}
+<https://portal.azure.com/#blade/Microsoft_Azure_Monitoring_Alerts/AlertDetailsTemplateBlade/alertId/@{encodeUriComponent(coalesce(outputs('Parse_payload')?['data']?['essentials']?['alertId'], ''))}|Open the alert in the Azure portal>'''
+
+var budgetAlertMessage = '''
+:moneybag: *Budget alert* *@{outputs('Parse_payload')?['data']?['BudgetName']}*
+Spent @{outputs('Parse_payload')?['data']?['SpendingAmount']} @{outputs('Parse_payload')?['data']?['Unit']} of the @{outputs('Parse_payload')?['data']?['Budget']} @{outputs('Parse_payload')?['data']?['Unit']} budget (alert at @{mul(float(coalesce(outputs('Parse_payload')?['data']?['NotificationThresholdAmount'], '0')), 100)}%) since @{outputs('Parse_payload')?['data']?['BudgetStartDate']}.
+<@{parameters('resourceGroupUrl')}|Open the resource group in the Azure portal> (Cost Management > Budgets)'''
+
 resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled) {
   name: 'CheckMate-SlackAlerts'
   location: location
@@ -54,6 +67,9 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
       slackWebhookUrl: {
         value: slackWebhookUrl
       }
+      resourceGroupUrl: {
+        value: 'https://portal.azure.com/#@/resource${resourceGroup().id}'
+      }
     }
     definition: {
       '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#'
@@ -61,6 +77,9 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
       parameters: {
         slackWebhookUrl: {
           type: 'securestring'
+        }
+        resourceGroupUrl: {
+          type: 'string'
         }
       }
       triggers: {
@@ -75,15 +94,56 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
         }
       }
       actions: {
-        Post_to_Slack: {
-          type: 'Http'
+        // Action groups may not send a JSON content type, so parse the body whether it arrives as a string or an
+        // object.
+        Parse_payload: {
+          type: 'Compose'
           runAfter: {}
-          inputs: {
-            method: 'POST'
-            uri: '@parameters(\'slackWebhookUrl\')'
-            body: {
-              // Fields are null-safe so payloads without the common schema (e.g. budgets) still post.
-              text: '@{if(equals(triggerBody()?[\'data\']?[\'essentials\']?[\'monitorCondition\'], \'Resolved\'), \':white_check_mark: *Resolved*\', \':rotating_light: *Fired*\')} @{coalesce(triggerBody()?[\'data\']?[\'essentials\']?[\'severity\'], \'\')} *@{coalesce(triggerBody()?[\'data\']?[\'essentials\']?[\'alertRule\'], \'Azure alert\')}*\n@{coalesce(triggerBody()?[\'data\']?[\'essentials\']?[\'description\'], \'\')}\nResource: @{last(split(coalesce(first(triggerBody()?[\'data\']?[\'essentials\']?[\'alertTargetIDs\']), \'n/a\'), \'/\'))}\nFired: @{coalesce(triggerBody()?[\'data\']?[\'essentials\']?[\'firedDateTime\'], utcNow())}\n<https://portal.azure.com/#blade/Microsoft_Azure_Monitoring_Alerts/AlertDetailsTemplateBlade/alertId/@{encodeUriComponent(coalesce(triggerBody()?[\'data\']?[\'essentials\']?[\'alertId\'], \'\'))}|Open in the Azure portal>'
+          inputs: '@json(string(triggerBody()))'
+        }
+        Is_budget_alert: {
+          type: 'If'
+          runAfter: {
+            Parse_payload: ['Succeeded']
+          }
+          expression: {
+            and: [
+              {
+                not: {
+                  equals: [
+                    '@coalesce(outputs(\'Parse_payload\')?[\'data\']?[\'BudgetName\'], \'\')'
+                    ''
+                  ]
+                }
+              }
+            ]
+          }
+          actions: {
+            Post_budget_alert_to_Slack: {
+              type: 'Http'
+              runAfter: {}
+              inputs: {
+                method: 'POST'
+                uri: '@parameters(\'slackWebhookUrl\')'
+                body: {
+                  text: budgetAlertMessage
+                }
+              }
+            }
+          }
+          else: {
+            actions: {
+              Post_alert_to_Slack: {
+                type: 'Http'
+                runAfter: {}
+                inputs: {
+                  method: 'POST'
+                  uri: '@parameters(\'slackWebhookUrl\')'
+                  body: {
+                    text: commonAlertMessage
+                  }
+                }
+              }
             }
           }
         }

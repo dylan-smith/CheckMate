@@ -63,6 +63,9 @@ param slackWebhookUrl string = ''
 @description('Monthly cost budget for the resource group, in the billing currency.')
 param monthlyBudget int = 10
 
+@description('First day of the month the budget was created in (YYYY-MM-01). It must not be in a later month than the deployment, and can\'t change once the budget exists.')
+param budgetStartDate string
+
 module monitoring 'modules/monitoring.bicep' = {
   name: 'monitoring'
   params: {
@@ -141,6 +144,7 @@ module alerts 'modules/alerts.bicep' = {
     alertEmail: alertEmail
     slackWebhookUrl: slackWebhookUrl
     monthlyBudget: monthlyBudget
+    budgetStartDate: budgetStartDate
   }
 }
 
