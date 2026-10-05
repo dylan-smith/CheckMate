@@ -107,6 +107,14 @@
             "style": "link"
           },
           {
+            "id": "5e3b8c71-2f4d-4a96-b0e8-1c7d9a4f6e52",
+            "cellValue": "selectedTab",
+            "linkTarget": "parameter",
+            "linkLabel": "Alerts",
+            "subTarget": "alerts",
+            "style": "link"
+          },
+          {
             "id": "9c2a7e15-4b8d-4f3a-a6e1-7d0b5c3f8e24",
             "cellValue": "selectedTab",
             "linkTarget": "parameter",
@@ -143,7 +151,76 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "let r = requests | where timestamp {TimeRange} | where url !endswith '/robots933456.txt';\nlet total = toscalar(r | count);\nlet serverPct = toscalar(r | summarize iff(count() == 0, 0.0, round(100.0 * countif(toint(resultCode) between (500 .. 599)) / count(), 2)));\nlet clientPct = toscalar(r | summarize iff(count() == 0, 0.0, round(100.0 * countif(toint(resultCode) between (400 .. 499)) / count(), 2)));\nlet p95 = toscalar(r | summarize round(percentile(duration, 95), 0));\nlet apiExceptions = toscalar(exceptions | where timestamp {TimeRange} | where cloud_RoleName != \"CheckMate.Web\" | count);\nlet webExceptions = toscalar(exceptions | where timestamp {TimeRange} | where cloud_RoleName == \"CheckMate.Web\" | count);\nlet pv = pageViews | where timestamp {TimeRange};\nlet viewCount = toscalar(pv | count);\nlet users = toscalar(pv | summarize dcount(user_Id));\nlet sessions = toscalar(pv | summarize dcount(session_Id));\nunion\n    (print Order = 1, Metric = \"API requests\", Value = tostring(total), Health = \"Info\"),\n    (print Order = 2, Metric = \"Server errors (5xx)\", Value = strcat(serverPct, \"%\"),\n        Health = case(serverPct >= 5, \"Critical\", serverPct >= 1, \"Warning\", \"Healthy\")),\n    (print Order = 3, Metric = \"Client errors (4xx)\", Value = strcat(clientPct, \"%\"), Health = \"Info\"),\n    (print Order = 4, Metric = \"P95 response time\", Value = strcat(coalesce(p95, 0.0), \" ms\"),\n        Health = case(isnull(p95), \"Info\", p95 >= 3000, \"Critical\", p95 >= 1000, \"Warning\", \"Healthy\")),\n    (print Order = 5, Metric = \"API exceptions\", Value = tostring(apiExceptions),\n        Health = case(apiExceptions >= 10, \"Critical\", apiExceptions > 0, \"Warning\", \"Healthy\")),\n    (print Order = 6, Metric = \"Browser exceptions\", Value = tostring(webExceptions),\n        Health = case(webExceptions >= 10, \"Critical\", webExceptions > 0, \"Warning\", \"Healthy\")),\n    (print Order = 7, Metric = \"Page views\", Value = tostring(viewCount), Health = \"Info\"),\n    (print Order = 8, Metric = \"Users\", Value = tostring(users), Health = \"Info\"),\n    (print Order = 9, Metric = \"Sessions\", Value = tostring(sessions), Health = \"Info\")\n| order by Order asc\n| project Metric, Value, Health",
+              "query": "alertsmanagementresources\n| where type =~ 'microsoft.alertsmanagement/alerts'\n| extend e = properties.essentials\n| where tostring(e.alertRule) contains '__RESOURCE_GROUP_ID__/'\n| where tostring(e.monitorCondition) == 'Fired' and tostring(e.alertState) != 'Closed'\n| extend Fired = todatetime(e.startDateTime), Severity = tostring(e.severity), Condition = tostring(e.monitorCondition),\n    Resolved = todatetime(e.monitorConditionResolvedDateTime), Resource = extract('[^/]+$', 0, tostring(e.targetResource)),\n    Details = strcat('https://portal.azure.com/#blade/Microsoft_Azure_Monitoring_Alerts/AlertDetailsTemplateBlade/alertId/', replace_string(id, '/', '%2F'))\n| project Severity, Alert = name, Fired, Resource, Details\n| order by Severity asc, Fired desc",
+              "size": 4,
+              "title": "Active alerts",
+              "noDataMessage": "No active alerts.",
+              "noDataMessageStyle": 3,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "__SUBSCRIPTION_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Severity",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev0",
+                          "representation": "Sev0",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev1",
+                          "representation": "Sev1",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev2",
+                          "representation": "Sev2",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev3",
+                          "representation": "Sev3",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev4",
+                          "representation": "Sev4",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "columnMatch": "Details",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkLabel": "Open"
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "overview-alerts"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let r = requests | where timestamp {TimeRange} | where url !endswith '/robots933456.txt';\nlet total = toscalar(r | count);\nlet serverPct = toscalar(r | summarize iff(count() == 0, 0.0, round(100.0 * countif(toint(resultCode) between (500 .. 599)) / count(), 2)));\nlet clientPct = toscalar(r | summarize iff(count() == 0, 0.0, round(100.0 * countif(toint(resultCode) between (400 .. 499)) / count(), 2)));\nlet p95 = toscalar(r | summarize round(percentile(duration, 95), 0));\nlet apiExceptions = toscalar(exceptions | where timestamp {TimeRange} | where cloud_RoleName != \"CheckMate.Web\" | count);\nlet webExceptions = toscalar(exceptions | where timestamp {TimeRange} | where cloud_RoleName == \"CheckMate.Web\" | count);\nlet uptime = toscalar(availabilityResults | where timestamp {TimeRange} | summarize iff(count() == 0, real(null), round(100.0 * countif(success == 1) / count(), 1)));\nlet pv = pageViews | where timestamp {TimeRange};\nlet viewCount = toscalar(pv | count);\nlet users = toscalar(pv | summarize dcount(user_Id));\nlet sessions = toscalar(pv | summarize dcount(session_Id));\nunion\n    (print Order = 0, Metric = \"Health check uptime\", Value = iff(isnull(uptime), \"No data\", strcat(uptime, \"%\")),\n        Health = case(isnull(uptime), \"Info\", uptime < 95, \"Critical\", uptime < 100, \"Warning\", \"Healthy\")),\n    (print Order = 1, Metric = \"API requests\", Value = tostring(total), Health = \"Info\"),\n    (print Order = 2, Metric = \"Server errors (5xx)\", Value = strcat(serverPct, \"%\"),\n        Health = case(serverPct >= 5, \"Critical\", serverPct >= 1, \"Warning\", \"Healthy\")),\n    (print Order = 3, Metric = \"Client errors (4xx)\", Value = strcat(clientPct, \"%\"), Health = \"Info\"),\n    (print Order = 4, Metric = \"P95 response time\", Value = strcat(coalesce(p95, 0.0), \" ms\"),\n        Health = case(isnull(p95), \"Info\", p95 >= 3000, \"Critical\", p95 >= 1000, \"Warning\", \"Healthy\")),\n    (print Order = 5, Metric = \"API exceptions\", Value = tostring(apiExceptions),\n        Health = case(apiExceptions >= 10, \"Critical\", apiExceptions > 0, \"Warning\", \"Healthy\")),\n    (print Order = 6, Metric = \"Browser exceptions\", Value = tostring(webExceptions),\n        Health = case(webExceptions >= 10, \"Critical\", webExceptions > 0, \"Warning\", \"Healthy\")),\n    (print Order = 7, Metric = \"Page views\", Value = tostring(viewCount), Health = \"Info\"),\n    (print Order = 8, Metric = \"Users\", Value = tostring(users), Health = \"Info\"),\n    (print Order = 9, Metric = \"Sessions\", Value = tostring(sessions), Health = \"Info\")\n| order by Order asc\n| project Metric, Value, Health",
               "size": 0,
               "title": "",
               "timeContext": {
@@ -201,6 +278,61 @@
               }
             },
             "name": "overview-tiles"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "availabilityResults\n| where timestamp {TimeRange}\n| summarize [\"Availability %\"] = round(100.0 * countif(success == 1) / count(), 1) by bin(timestamp, {TimeRange:grain})",
+              "size": 0,
+              "title": "Health check availability (GET /health every 15 minutes)",
+              "noDataMessage": "No health check results in this period.",
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "timechart",
+              "showAnnotations": true,
+              "chartSettings": {
+                "ySettings": {
+                  "min": 0,
+                  "max": 100
+                }
+              }
+            },
+            "name": "overview-availability",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "availabilityResults\n| where timestamp {TimeRange}\n| where success == 0\n| project timestamp, location, message, [\"duration (ms)\"] = round(duration, 0)\n| order by timestamp desc\n| take 50",
+              "size": 0,
+              "title": "Failed health checks",
+              "noDataMessage": "No failed health checks in this period.",
+              "noDataMessageStyle": 3,
+              "timeContext": {
+                "durationMs": 86400000
+              },
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": [
+                "__APP_INSIGHTS_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "rowLimit": 50
+              }
+            },
+            "name": "overview-availability-failures",
+            "customWidth": "50"
           },
           {
             "type": 3,
@@ -1504,6 +1636,266 @@
           {
             "type": 1,
             "content": {
+              "json": "## Alerts\nAlerts fired by the CheckMate alert rules in the selected time range. Azure keeps fired alerts for 30 days, so longer ranges only show the last 30 days. Every rule notifies the [CheckMate-Alerts action group](https://portal.azure.com/#resource__ACTION_GROUP_ID__/overview) (email and Azure mobile app push, plus Slack when the `SLACK_WEBHOOK_URL` secret is set); open it and choose **Test** to check notifications still arrive.\n\nAcknowledge or close alerts, and see or edit the rules, in [Alerts](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/alertsV2). The rules are defined in `infra/modules/alerts.bicep`, and the [README](https://github.com/dylan-smith/CheckMate#alerts) lists each one with its threshold. The **Investigate** tab says where to look when each alert fires.\n\nThe Service Health alert belongs to the subscription rather than the resource group, so it only shows here for viewers with at least Reader on the subscription. Budget notifications come from Cost Management rather than Azure Monitor, so they're listed separately under **Budget alerts**."
+            },
+            "name": "alerts-intro"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "alertsmanagementresources\n| where type =~ 'microsoft.alertsmanagement/alerts'\n| extend e = properties.essentials\n| where tostring(e.alertRule) contains '__RESOURCE_GROUP_ID__/'\n| where todatetime(e.startDateTime) {TimeRange}\n| extend Fired = todatetime(e.startDateTime), Severity = tostring(e.severity), Condition = tostring(e.monitorCondition),\n    Resolved = todatetime(e.monitorConditionResolvedDateTime), Resource = extract('[^/]+$', 0, tostring(e.targetResource)),\n    Details = strcat('https://portal.azure.com/#blade/Microsoft_Azure_Monitoring_Alerts/AlertDetailsTemplateBlade/alertId/', replace_string(id, '/', '%2F'))\n| extend MinutesToResolve = iff(isnull(Resolved), real(null), datetime_diff('minute', Resolved, Fired) * 1.0)\n| summarize [\"Times fired\"] = count(), [\"Still firing\"] = countif(Condition == 'Fired'), [\"Last fired\"] = max(Fired),\n    [\"Average minutes to resolve\"] = round(avg(MinutesToResolve), 0), Severity = min(Severity) by Alert = name\n| extend [\"Average minutes to resolve\"] = iff(isnan([\"Average minutes to resolve\"]), real(null), [\"Average minutes to resolve\"])\n| project Alert, Severity, [\"Times fired\"], [\"Still firing\"], [\"Last fired\"], [\"Average minutes to resolve\"]\n| order by [\"Times fired\"] desc",
+              "size": 0,
+              "title": "Alerts by rule",
+              "noDataMessage": "No alerts fired in this period.",
+              "noDataMessageStyle": 3,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "__SUBSCRIPTION_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Severity",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev0",
+                          "representation": "Sev0",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev1",
+                          "representation": "Sev1",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev2",
+                          "representation": "Sev2",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev3",
+                          "representation": "Sev3",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev4",
+                          "representation": "Sev4",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "columnMatch": "Times fired",
+                    "formatter": 4,
+                    "formatOptions": {
+                      "palette": "orange"
+                    }
+                  },
+                  {
+                    "columnMatch": "Still firing",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": ">",
+                          "thresholdValue": "0",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "alerts-by-rule",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "alertsmanagementresources\n| where type =~ 'microsoft.alertsmanagement/alerts'\n| extend e = properties.essentials\n| where tostring(e.alertRule) contains '__RESOURCE_GROUP_ID__/'\n| where todatetime(e.startDateTime) {TimeRange}\n| summarize Alerts = count() by Fired = bin(todatetime(e.startDateTime), {TimeRange:grain}), Alert = name",
+              "size": 0,
+              "title": "Alerts fired over time",
+              "noDataMessage": "No alerts fired in this period.",
+              "noDataMessageStyle": 3,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "__SUBSCRIPTION_ID__"
+              ],
+              "visualization": "barchart"
+            },
+            "name": "alerts-timeline",
+            "customWidth": "50"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "alertsmanagementresources\n| where type =~ 'microsoft.alertsmanagement/alerts'\n| extend e = properties.essentials\n| where tostring(e.alertRule) contains '__RESOURCE_GROUP_ID__/'\n| where todatetime(e.startDateTime) {TimeRange}\n| extend Fired = todatetime(e.startDateTime), Severity = tostring(e.severity), Condition = tostring(e.monitorCondition),\n    Resolved = todatetime(e.monitorConditionResolvedDateTime), Resource = extract('[^/]+$', 0, tostring(e.targetResource)),\n    Details = strcat('https://portal.azure.com/#blade/Microsoft_Azure_Monitoring_Alerts/AlertDetailsTemplateBlade/alertId/', replace_string(id, '/', '%2F'))\n| extend State = tostring(e.alertState), Duration = iff(isnull(Resolved), 'Still firing', strcat(datetime_diff('minute', Resolved, Fired), ' min'))\n| project Fired, Severity, Alert = name, Condition, Resolved, Duration, State, Resource, Details\n| order by Fired desc\n| take 200",
+              "size": 0,
+              "title": "Alert history",
+              "noDataMessage": "No alerts fired in this period.",
+              "noDataMessageStyle": 3,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "__SUBSCRIPTION_ID__"
+              ],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Severity",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev0",
+                          "representation": "Sev0",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev1",
+                          "representation": "Sev1",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev2",
+                          "representation": "Sev2",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev3",
+                          "representation": "Sev3",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Sev4",
+                          "representation": "Sev4",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "columnMatch": "Details",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkLabel": "Open"
+                    }
+                  }
+                ],
+                "rowLimit": 200
+              }
+            },
+            "name": "alerts-history"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":null,\"headers\":[],\"method\":\"GET\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.CostManagement/alerts\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2023-11-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$.value\",\"columns\":[{\"path\":\"$.properties.creationTime\",\"columnid\":\"Raised\",\"columnType\":\"datetime\"},{\"path\":\"$.properties.costEntityId\",\"columnid\":\"Budget\"},{\"path\":\"$.properties.definition.criteria\",\"columnid\":\"Type\"},{\"path\":\"$.properties.details.currentSpend\",\"columnid\":\"Spent\",\"columnType\":\"number\"},{\"path\":\"$.properties.details.amount\",\"columnid\":\"Budget amount\",\"columnType\":\"number\"},{\"path\":\"$.properties.details.unit\",\"columnid\":\"Currency\"},{\"path\":\"$.properties.details.threshold\",\"columnid\":\"Alert at\",\"columnType\":\"number\"},{\"path\":\"$.properties.status\",\"columnid\":\"Status\"}]}}]}",
+              "size": 0,
+              "title": "Budget alerts",
+              "noDataMessage": "No budget alerts. The budget alerts at 80% of the monthly budget, or when costs are forecast to pass it.",
+              "noDataMessageStyle": 3,
+              "queryType": 12,
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Alert at",
+                    "formatter": 0,
+                    "numberFormat": {
+                      "unit": 0,
+                      "options": {
+                        "style": "percent"
+                      }
+                    }
+                  },
+                  {
+                    "columnMatch": "Type",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "CostThresholdExceeded",
+                          "representation": "orange",
+                          "text": "Actual"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "ForecastCostThresholdExceeded",
+                          "representation": "blue",
+                          "text": "Forecasted"
+                        },
+                        {
+                          "operator": "Default",
+                          "representation": "gray",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "Raised",
+                    "sortOrder": 2
+                  }
+                ]
+              }
+            },
+            "name": "alerts-budget"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "alerts"
+      },
+      "name": "alerts"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 1,
+            "content": {
               "json": "## Costs\nWhat the CheckMate resource group costs, from Azure Cost Management. Every resource that makes up the app is in that group, including ones since deleted.\n\nAmounts are actual costs in the billing currency, before any subscription credits. Cost data usually lags usage by 8 to 24 hours, so the most recent day is incomplete. [Cost analysis](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/costanalysis) has the full breakdown and budgets."
             },
             "name": "costs-intro"
@@ -1712,10 +2104,17 @@
           {
             "type": 1,
             "content": {
-              "json": "### Start here\n| Question | Where to look |\n|---|---|\n| What is failing right now? | [Live Metrics](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/quickPulse) streams API requests, failures and exceptions as they happen. |\n| Why did a request fail? | [Failures](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/failures): pick an operation or exception, then a sample to see its end-to-end transaction across the browser, API and database. |\n| Where is a specific request or error? | [Transaction search](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/searchV1) by time, type, result code or text. |\n| Why is it slow? | [Performance](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/performance) for API operations and dependencies, and [Query Performance Insight](https://portal.azure.com/#resource__SQL_DATABASE_ID__/queryPerformanceInsight) for the database. |\n| How do the parts connect? | [Application map](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/applicationMap) shows the frontend, API and database with call rates and failures. |\n| Is the API process healthy? | [Log stream](https://portal.azure.com/#resource__APP_SERVICE_ID__/logStream) for live console output, and [Diagnose and solve problems](https://portal.azure.com/#resource__APP_SERVICE_ID__/troubleshoot) for crashes, restarts and availability. |\n| Has an alert fired? | [Alerts](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/alertsV2), including Application Insights smart detection of failure anomalies. |\n| Is it Azure? | Resource health for the [App Service](https://portal.azure.com/#resource__APP_SERVICE_ID__/resourceHealth), [SQL database](https://portal.azure.com/#resource__SQL_DATABASE_ID__/resourceHealth) and [Storage account](https://portal.azure.com/#resource__STORAGE_ACCOUNT_ID__/resourceHealth); [Service Health](https://portal.azure.com/#view/Microsoft_Azure_Health/AzureHealthBrowseBlade/~/serviceIssues) for Azure incidents affecting the subscription; and the public [Azure status](https://azure.status.microsoft/status) page. |\n| Did something change? | [CI runs on main](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml?query=branch%3Amain): every push to main deploys the infrastructure, API and frontend, then runs smoke tests. [Deployments](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/deployments) and the [Activity log](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/eventlogs) show every change made in Azure, including ones made by hand. |"
+              "json": "### Start here\n| Question | Where to look |\n|---|---|\n| What is failing right now? | [Live Metrics](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/quickPulse) streams API requests, failures and exceptions as they happen. |\n| Why did a request fail? | [Failures](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/failures): pick an operation or exception, then a sample to see its end-to-end transaction across the browser, API and database. |\n| Where is a specific request or error? | [Transaction search](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/searchV1) by time, type, result code or text. |\n| Why is it slow? | [Performance](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/performance) for API operations and dependencies, and [Query Performance Insight](https://portal.azure.com/#resource__SQL_DATABASE_ID__/queryPerformanceInsight) for the database. |\n| How do the parts connect? | [Application map](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/applicationMap) shows the frontend, API and database with call rates and failures. |\n| Is the API process healthy? | [Log stream](https://portal.azure.com/#resource__APP_SERVICE_ID__/logStream) for live console output, and [Diagnose and solve problems](https://portal.azure.com/#resource__APP_SERVICE_ID__/troubleshoot) for crashes, restarts and availability. |\n| Has an alert fired? | The **Alerts** tab lists active alerts and the last 30 days of alert history; **When an alert fires** below says where to look for each one. Acknowledge or close them in [Alerts](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/alertsV2). |\n| Is it Azure? | Resource health for the [App Service](https://portal.azure.com/#resource__APP_SERVICE_ID__/resourceHealth), [SQL database](https://portal.azure.com/#resource__SQL_DATABASE_ID__/resourceHealth) and [Storage account](https://portal.azure.com/#resource__STORAGE_ACCOUNT_ID__/resourceHealth); [Service Health](https://portal.azure.com/#view/Microsoft_Azure_Health/AzureHealthBrowseBlade/~/serviceIssues) for Azure incidents affecting the subscription; and the public [Azure status](https://azure.status.microsoft/status) page. |\n| Did something change? | [CI runs on main](https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml?query=branch%3Amain): every push to main deploys the infrastructure, API and frontend, then runs smoke tests. [Deployments](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/deployments) and the [Activity log](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/eventlogs) show every change made in Azure, including ones made by hand. |"
             },
             "customWidth": "50",
             "name": "investigate-start"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### When an alert fires\n| Alert | What it means | Where to look |\n|---|---|---|\n| API down | `GET /health` failed twice in a row. | **Overview**: Failed health checks shows the status code or error. A 404 right after a deployment usually means the infrastructure deployed but the API didn't. [Availability](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/availability) has every test result; **Infrastructure**: API startup log, and the [Log stream](https://portal.azure.com/#resource__APP_SERVICE_ID__/logStream). |\n| Resource health | Azure reports a CheckMate resource unavailable or degraded, for reasons on Azure's side. | Resource health for the [App Service](https://portal.azure.com/#resource__APP_SERVICE_ID__/resourceHealth), [SQL database](https://portal.azure.com/#resource__SQL_DATABASE_ID__/resourceHealth) and [Storage account](https://portal.azure.com/#resource__STORAGE_ACCOUNT_ID__/resourceHealth). Usually nothing to do but wait. |\n| Service health | An Azure incident or planned maintenance affects a service or region CheckMate uses. | [Service Health](https://portal.azure.com/#view/Microsoft_Azure_Health/AzureHealthBrowseBlade/~/serviceIssues) has the details and updates. |\n| API server errors | More than 5 HTTP 5xx responses in 15 minutes. | **API**: Failed requests by operation and status, and API exceptions; [Failures](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/failures) for sample transactions. |\n| API dependency failures | More than 10 failed SQL (or other) calls from the API in 15 minutes. A few failures while the database resumes from auto-pause are normal. | **API**: SQL calls and All outgoing dependencies; **Infrastructure**: Database errors and SQL connections. |\n| Browser errors | More than 5 frontend exceptions in an hour. | **Frontend**: Browser exceptions, with the operation (load, save, delete) that failed. |\n| Browser API call failures | More than 5 API calls from the frontend failed in an hour. | **Frontend**: Browser calls to the API. If the **API** tab doesn't show the same failures, they never reached the API: check CORS and network errors. |\n| CPU quota | The API used more than 45 of the F1 plan's 60 daily CPU minutes. | **Infrastructure**: CPU time. The app stops when the quota runs out and starts again when it resets. |\n| SQL free offer running out | Less than 20% of the month's free vCore-seconds are left. | **Infrastructure**: Free amount remaining and App CPU billed. When they run out the database pauses until next month. |\n| Frontend storage availability | Blob storage served less than 99% of requests successfully over an hour. | **Infrastructure**: Storage availability and transactions, and the [Storage account's resource health](https://portal.azure.com/#resource__STORAGE_ACCOUNT_ID__/resourceHealth). |\n| Slow API | The API's average response time was over 5 seconds for 30 minutes. | **API**: Operations and SQL call duration; [Performance](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/performance). Cold starts and database resumes add a few slow requests. |\n| Slow page loads | The 75th percentile page load was over 4 seconds in 6 hours. | **Frontend**: Page load time and Browser-observed API duration. |\n| SQL storage | The database has used more than 80% of its maximum size. | **Infrastructure**: Data space used %. |\n| Failure anomalies | Application Insights smart detection saw an unusual rise in failed requests or dependency calls. | The notification links to the detection; [Failures](https://portal.azure.com/#resource__APP_INSIGHTS_ID__/failures) for details. |\n| Monthly budget | The resource group passed 80% of its monthly budget, or is forecast to pass 100%. | **Alerts**: Budget alerts for the spend and threshold; **Costs**: Cost by service and Daily cost by service. |"
+            },
+            "name": "investigate-alerts"
           },
           {
             "type": 1,
