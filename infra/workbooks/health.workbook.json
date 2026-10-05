@@ -285,6 +285,7 @@
               "version": "KqlItem/1.0",
               "query": "availabilityResults\n| where timestamp {TimeRange}\n| summarize [\"Availability %\"] = round(100.0 * countif(success == 1) / count(), 1) by bin(timestamp, {TimeRange:grain})",
               "size": 0,
+              "aggregation": 3,
               "title": "Health check availability (GET /health every 15 minutes)",
               "noDataMessage": "No health check results in this period.",
               "timeContext": {
@@ -299,7 +300,6 @@
               "visualization": "timechart",
               "showAnnotations": true,
               "chartSettings": {
-                "showMetrics": false,
                 "ySettings": {
                   "min": 0,
                   "max": 100
@@ -363,6 +363,7 @@
               "version": "KqlItem/1.0",
               "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize P50 = percentile(duration, 50), P95 = percentile(duration, 95) by bin(timestamp, {TimeRange:grain})",
               "size": 0,
+              "aggregation": 3,
               "title": "API response time (ms)",
               "timeContext": {
                 "durationMs": 86400000
@@ -374,10 +375,7 @@
                 "__APP_INSIGHTS_ID__"
               ],
               "visualization": "timechart",
-              "showAnnotations": true,
-              "chartSettings": {
-                "showMetrics": false
-              }
+              "showAnnotations": true
             },
             "name": "overview-duration",
             "customWidth": "50"
@@ -605,6 +603,7 @@
               "version": "KqlItem/1.0",
               "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName != \"CheckMate.Web\" and type in~ (\"SQL\", \"mssql\", \"microsoft.sql_server\")\n| summarize P50 = percentile(duration, 50), P95 = percentile(duration, 95), Max = max(duration) by bin(timestamp, {TimeRange:grain})",
               "size": 0,
+              "aggregation": 3,
               "title": "SQL call duration (ms)",
               "timeContext": {
                 "durationMs": 86400000
@@ -616,10 +615,7 @@
                 "__APP_INSIGHTS_ID__"
               ],
               "visualization": "timechart",
-              "showAnnotations": true,
-              "chartSettings": {
-                "showMetrics": false
-              }
+              "showAnnotations": true
             },
             "name": "api-sql-duration",
             "customWidth": "50"
@@ -798,6 +794,7 @@
               "version": "KqlItem/1.0",
               "query": "browserTimings\n| where timestamp {TimeRange}\n| summarize [\"Total P50\"] = percentile(totalDuration, 50), [\"Total P95\"] = percentile(totalDuration, 95),\n    [\"Network P95\"] = percentile(networkDuration, 95), [\"Processing P95\"] = percentile(processingDuration, 95)\n    by bin(timestamp, {TimeRange:grain})",
               "size": 0,
+              "aggregation": 3,
               "title": "Page load time (ms)",
               "timeContext": {
                 "durationMs": 86400000
@@ -809,10 +806,7 @@
                 "__APP_INSIGHTS_ID__"
               ],
               "visualization": "timechart",
-              "showAnnotations": true,
-              "chartSettings": {
-                "showMetrics": false
-              }
+              "showAnnotations": true
             },
             "name": "web-load-time",
             "customWidth": "50"
@@ -845,6 +839,7 @@
               "version": "KqlItem/1.0",
               "query": "dependencies\n| where timestamp {TimeRange}\n| where cloud_RoleName == \"CheckMate.Web\"\n| summarize P50 = percentile(duration, 50), P95 = percentile(duration, 95) by bin(timestamp, {TimeRange:grain})",
               "size": 0,
+              "aggregation": 3,
               "title": "Browser-observed API duration (ms)",
               "timeContext": {
                 "durationMs": 86400000
@@ -856,10 +851,7 @@
                 "__APP_INSIGHTS_ID__"
               ],
               "visualization": "timechart",
-              "showAnnotations": true,
-              "chartSettings": {
-                "showMetrics": false
-              }
+              "showAnnotations": true
             },
             "name": "web-api-duration",
             "customWidth": "50"
