@@ -455,8 +455,10 @@ resource slowPageLoads 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
   }
 }
 
+// Azure creates this rule along with Application Insights and allows only one per component, so use the name it
+// gives it; the template then takes over the existing rule instead of trying to add a second.
 resource failureAnomalies 'Microsoft.AlertsManagement/smartDetectorAlertRules@2021-04-01' = {
-  name: 'CheckMate failure anomalies'
+  name: 'Failure Anomalies - ${last(split(appInsightsId, '/'))}'
   location: 'global'
   properties: {
     description: 'Unusual rise in the rate of failed requests or dependency calls.'
