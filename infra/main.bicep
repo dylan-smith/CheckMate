@@ -125,6 +125,7 @@ module workbook 'modules/workbook.bicep' = {
     appServicePlanId: appService.outputs.appServicePlanId
     sqlDatabaseId: sql.outputs.sqlDatabaseId
     storageAccountId: storage.outputs.storageAccountId
+    actionGroupId: alerts.outputs.actionGroupId
     apiUrl: appService.outputs.appServiceUrl
     frontendUrl: storage.outputs.primaryWebEndpoint
   }

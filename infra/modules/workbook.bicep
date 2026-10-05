@@ -19,6 +19,9 @@ param sqlDatabaseId string
 @description('Resource ID of the frontend Storage Account.')
 param storageAccountId string
 
+@description('Resource ID of the action group the alert rules notify.')
+param actionGroupId string
+
 @description('Default HTTPS URL of the backend App Service, without a trailing slash.')
 param apiUrl string
 
@@ -36,6 +39,8 @@ var serializedData = reduce(
     __SQL_DATABASE_ID__: sqlDatabaseId
     __STORAGE_ACCOUNT_ID__: storageAccountId
     __RESOURCE_GROUP_ID__: resourceGroup().id
+    __SUBSCRIPTION_ID__: subscription().id
+    __ACTION_GROUP_ID__: actionGroupId
     __API_URL__: apiUrl
     __FRONTEND_URL__: frontendUrl
   }),
