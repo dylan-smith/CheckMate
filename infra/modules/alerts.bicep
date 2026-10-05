@@ -51,7 +51,7 @@ var commonAlertMessage = '''
 @{coalesce(outputs('Parse_payload')?['data']?['essentials']?['description'], '')}
 Resource: @{last(split(coalesce(first(outputs('Parse_payload')?['data']?['essentials']?['alertTargetIDs']), 'n/a'), '/'))}
 Fired: @{outputs('Parse_payload')?['data']?['essentials']?['firedDateTime']}
-<https://portal.azure.com/#blade/Microsoft_Azure_Monitoring_Alerts/AlertDetailsTemplateBlade/alertId/@{encodeUriComponent(coalesce(outputs('Parse_payload')?['data']?['essentials']?['alertId'], ''))}|Open the alert in the Azure portal>'''
+<https://portal.azure.com/#view/Microsoft_Azure_Monitoring_Alerts/AlertDetails.ReactView/alertId~/@{encodeUriComponent(coalesce(outputs('Parse_payload')?['data']?['essentials']?['alertId'], ''))}|Open the alert in the Azure portal>'''
 
 var budgetAlertMessage = '''
 :moneybag: *Budget alert* *@{outputs('Parse_payload')?['data']?['BudgetName']}*
