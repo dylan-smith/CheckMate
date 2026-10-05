@@ -31,3 +31,11 @@ param sqlConnectionString = readEnvironmentVariable('AZURE_SQL_CONNECTION_STRING
 // Monitoring
 param logAnalyticsWorkspaceName = 'CheckMate'
 param appInsightsName = 'CheckMate'
+
+// Alerts (email + Azure mobile app push; Slack when the SLACK_WEBHOOK_URL secret is set)
+param alertEmail = 'Dylan@devopsdylan.com'
+param slackWebhookUrl = readEnvironmentVariable('SLACK_WEBHOOK_URL', '')
+param monthlyBudget = 10
+// The month the budget was first deployed. Azure won't change it on an existing budget, so a new environment should
+// use the first of the month it's created in.
+param budgetStartDate = '2026-10-01'

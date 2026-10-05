@@ -44,6 +44,9 @@ if (!string.IsNullOrWhiteSpace(azureMonitorConnectionString))
 }
 
 builder.Services.AddControllers();
+// No database check: the availability test pings /health, and touching SQL would stop the serverless database
+// from auto-pausing.
+builder.Services.AddHealthChecks();
 builder.Services.AddOpenApi();
 var allowedOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")
@@ -137,6 +140,7 @@ else
 app.UseCors();
 app.UseHttpsRedirection();
 app.MapControllers();
+app.MapHealthChecks("/health");
 
 Console.WriteLine("[Startup] Application startup complete. Listening for requests...");
 
