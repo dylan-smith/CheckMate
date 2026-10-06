@@ -169,7 +169,7 @@ To put some data on the workbook, run the **Generate Load** workflow (`.github/w
 
 #### Alerts
 
-`infra/modules/alerts.bicep` defines the alerts. They all notify the **CheckMate-Alerts** action group, which sends an email and an Azure mobile app push to `alertEmail` (set in `infra/main.bicepparam`). When the `SLACK_WEBHOOK_URL` secret is set, it also posts to Slack through the **CheckMate-SlackAlerts** Logic App. Metric and log alerts also send a message when they resolve.
+`infra/modules/alerts.bicep` defines the alerts. They all notify the **CheckMate-Alerts** action group, which sends an email and an Azure mobile app push to `alertEmail` (set in `infra/main.bicepparam`). When the `SLACK_WEBHOOK_URL` secret is set, it also posts to Slack through the **CheckMate-SlackAlerts** Logic App. Metric and log alerts also send a message when they resolve. Each Slack message says what was measured against the threshold (or Azure's own explanation for resource and service health), links to the resource, the alert and the health workbook, and, when it fires, lists numbered **What to do** steps for investigating and fixing it. The steps live next to each rule in `alerts.bicep` (`steps`, or `alertSteps` for rules that aren't metric alerts), so update them when a rule or the workbook changes.
 
 | Alert | Fires when | Sev |
 |-------|------------|-----|
