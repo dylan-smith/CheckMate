@@ -64,6 +64,12 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     setErrorMessage('')
   }
 
+  // Any error was about the edit, so it goes away with the edit field.
+  function cancelEditing() {
+    setEditingId(null)
+    setErrorMessage('')
+  }
+
   async function handleUpdate(
     event: SubmitEvent<HTMLFormElement>,
     stepId: number,
@@ -161,7 +167,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                     <Button
                       type="button"
                       disabled={busy}
-                      onClick={() => setEditingId(null)}
+                      onClick={cancelEditing}
                     >
                       Cancel
                     </Button>

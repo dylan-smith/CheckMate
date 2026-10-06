@@ -830,6 +830,14 @@ describe('App', () => {
         await screen.findByText('Step text is required.'),
       ).toBeInTheDocument()
       expect(fetch).toHaveBeenCalledTimes(1)
+
+      // Canceling the edit clears its error along with the field.
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+      expect(
+        screen.queryByText('Step text is required.'),
+      ).not.toBeInTheDocument()
+      expect(screen.getByText('Make coffee')).toBeInTheDocument()
     })
 
     it('deletes a step', async () => {

@@ -179,9 +179,12 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
             return NotFound();
         }
 
-        // SQL Server cascades the delete to the steps, but the in-memory provider only cascades to
-        // tracked entities, so load them first.
-        await dbContext.ChecklistSteps.Where(step => step.ChecklistId == id).LoadAsync();
+        // SQL Server cascades the delete to the steps through the foreign key, but the in-memory provider
+        // only cascades to tracked entities, so load them first there.
+        if (!dbContext.Database.IsRelational())
+        {
+            await dbContext.ChecklistSteps.Where(step => step.ChecklistId == id).LoadAsync();
+        }
 
         dbContext.Checklists.Remove(checklist);
         await dbContext.SaveChangesAsync();
