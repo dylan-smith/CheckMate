@@ -16,8 +16,9 @@ import {
   getChecklist,
   updateChecklist,
 } from '../api/checklists'
-import type { Checklist } from '../api/checklists'
+import type { ChecklistDetail as ChecklistDetailData } from '../api/checklists'
 import { trackEvent, trackException } from '../telemetry'
+import ChecklistSteps from './ChecklistSteps'
 import NotFoundPage from './NotFoundPage'
 
 // Only positive whole numbers can be checklist ids, so anything else can't match one.
@@ -27,7 +28,7 @@ function parseId(value: string | undefined) {
 
 function ChecklistDetail({ id }: { id: number }) {
   const navigate = useNavigate()
-  const [checklist, setChecklist] = useState<Checklist | null>(null)
+  const [checklist, setChecklist] = useState<ChecklistDetailData | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(true)
@@ -92,7 +93,8 @@ function ChecklistDetail({ id }: { id: number }) {
     try {
       const saved = await updateChecklist(id, trimmedName)
       trackEvent('ChecklistUpdated')
-      setChecklist(saved)
+      // The response has no steps, and the steps section keeps its own, so only take the name.
+      setChecklist((current) => current && { ...current, name: saved.name })
       setName(saved.name)
     } catch (error) {
       // A duplicate name is the user's to fix, not a failure to report.
@@ -136,47 +138,50 @@ function ChecklistDetail({ id }: { id: number }) {
         </Box>
       ) : (
         checklist && (
-          <Paper component="section" elevation={2} sx={{ p: 3 }}>
-            <Typography
-              variant="h5"
-              component="h2"
-              sx={{ mb: 2, overflowWrap: 'anywhere' }}
-            >
-              {checklist.name}
-            </Typography>
-            <Box
-              component="form"
-              onSubmit={(event) => void handleSubmit(event)}
-              sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}
-            >
-              <TextField
-                id="checklist-name"
-                label="Checklist name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                slotProps={{ htmlInput: { maxLength: 200 } }}
-                required
-              />
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                <Button
-                  type="submit"
-                  variant="contained"
-                  disabled={submitting || deleting}
-                >
-                  {submitting ? 'Saving…' : 'Save changes'}
-                </Button>
-                <Button
-                  type="button"
-                  color="error"
-                  variant="outlined"
-                  disabled={submitting || deleting}
-                  onClick={() => void handleDelete()}
-                >
-                  {deleting ? 'Deleting…' : 'Delete'}
-                </Button>
-              </Stack>
-            </Box>
-          </Paper>
+          <>
+            <Paper component="section" elevation={2} sx={{ p: 3 }}>
+              <Typography
+                variant="h5"
+                component="h2"
+                sx={{ mb: 2, overflowWrap: 'anywhere' }}
+              >
+                {checklist.name}
+              </Typography>
+              <Box
+                component="form"
+                onSubmit={(event) => void handleSubmit(event)}
+                sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+              >
+                <TextField
+                  id="checklist-name"
+                  label="Checklist name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  slotProps={{ htmlInput: { maxLength: 200 } }}
+                  required
+                />
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                  <Button
+                    type="submit"
+                    variant="contained"
+                    disabled={submitting || deleting}
+                  >
+                    {submitting ? 'Saving…' : 'Save changes'}
+                  </Button>
+                  <Button
+                    type="button"
+                    color="error"
+                    variant="outlined"
+                    disabled={submitting || deleting}
+                    onClick={() => void handleDelete()}
+                  >
+                    {deleting ? 'Deleting…' : 'Delete'}
+                  </Button>
+                </Stack>
+              </Box>
+            </Paper>
+            <ChecklistSteps checklistId={id} initialSteps={checklist.steps} />
+          </>
         )
       )}
     </Stack>

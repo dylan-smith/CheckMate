@@ -5,6 +5,17 @@ export type Checklist = {
   name: string
 }
 
+export type ChecklistStep = {
+  id: number
+  text: string
+  sortOrder: number
+}
+
+// A single checklist comes back with its steps in order.
+export type ChecklistDetail = Checklist & {
+  steps: ChecklistStep[]
+}
+
 type ErrorResponse = {
   message?: string
 }
@@ -43,7 +54,9 @@ export async function listChecklists(): Promise<Checklist[]> {
 }
 
 // Returns null when there's no checklist with this id.
-export async function getChecklist(id: number): Promise<Checklist | null> {
+export async function getChecklist(
+  id: number,
+): Promise<ChecklistDetail | null> {
   const response = await fetch(`${checklistsUrl}/${id}`)
   if (response.status === 404) {
     return null
@@ -51,7 +64,7 @@ export async function getChecklist(id: number): Promise<Checklist | null> {
   if (!response.ok) {
     throw new Error('Unable to load checklist.')
   }
-  return (await response.json()) as Checklist
+  return (await response.json()) as ChecklistDetail
 }
 
 async function saveChecklist(
@@ -93,5 +106,42 @@ export async function deleteChecklist(id: number) {
   const response = await fetch(`${checklistsUrl}/${id}`, { method: 'DELETE' })
   if (!response.ok && response.status !== 404) {
     throw new Error('Unable to delete checklist.')
+  }
+}
+
+function stepsUrl(checklistId: number) {
+  return `${checklistsUrl}/${checklistId}/steps`
+}
+
+async function saveStep(url: string, method: 'POST' | 'PUT', text: string) {
+  const response = await fetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ text }),
+  })
+
+  if (!response.ok) {
+    throw new Error('Unable to save step.')
+  }
+  return (await response.json()) as ChecklistStep
+}
+
+export function createStep(checklistId: number, text: string) {
+  return saveStep(stepsUrl(checklistId), 'POST', text)
+}
+
+export function updateStep(checklistId: number, stepId: number, text: string) {
+  return saveStep(`${stepsUrl(checklistId)}/${stepId}`, 'PUT', text)
+}
+
+// A 404 means the step is already gone, which is what the caller wanted.
+export async function deleteStep(checklistId: number, stepId: number) {
+  const response = await fetch(`${stepsUrl(checklistId)}/${stepId}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok && response.status !== 404) {
+    throw new Error('Unable to delete step.')
   }
 }

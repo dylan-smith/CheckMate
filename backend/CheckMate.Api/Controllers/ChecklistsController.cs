@@ -30,7 +30,7 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
     }
 
     [HttpGet("{id:int}")]
-    public async Task<ActionResult<Checklist>> GetById(int id)
+    public async Task<ActionResult<ChecklistDetailResponse>> GetById(int id)
     {
         logger.LogInformation("Retrieving checklist {ChecklistId}", id);
 
@@ -41,9 +41,18 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
         if (checklist is null)
         {
             logger.LogWarning("Checklist {ChecklistId} not found", id);
+            return NotFound();
         }
 
-        return checklist is null ? (ActionResult<Checklist>)NotFound() : Ok(checklist);
+        var steps = await dbContext.ChecklistSteps
+            .AsNoTracking()
+            .Where(step => step.ChecklistId == id)
+            .OrderBy(step => step.SortOrder)
+            .ThenBy(step => step.Id)
+            .Select(step => new ChecklistStepResponse(step.Id, step.Text, step.SortOrder))
+            .ToListAsync();
+
+        return Ok(new ChecklistDetailResponse(checklist.Id, checklist.Name, steps));
     }
 
     [HttpPost]
@@ -169,6 +178,10 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
             logger.LogWarning("Checklist {ChecklistId} not found for deletion", id);
             return NotFound();
         }
+
+        // SQL Server cascades the delete to the steps, but the in-memory provider only cascades to
+        // tracked entities, so load them first.
+        await dbContext.ChecklistSteps.Where(step => step.ChecklistId == id).LoadAsync();
 
         dbContext.Checklists.Remove(checklist);
         await dbContext.SaveChangesAsync();

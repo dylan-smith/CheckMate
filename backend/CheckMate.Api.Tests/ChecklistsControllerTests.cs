@@ -100,11 +100,18 @@ public class ChecklistsControllerTests
     }
 
     [Fact]
-    public async Task GetById_ReturnsChecklist_WhenChecklistExists()
+    public async Task GetById_ReturnsChecklistWithStepsInOrder_WhenChecklistExists()
     {
         await using var dbContext = CreateDbContext();
         var checklist = new Checklist { Name = "Daily" };
-        dbContext.Checklists.Add(checklist);
+        var other = new Checklist { Name = "Other" };
+        dbContext.Checklists.AddRange(checklist, other);
+        await dbContext.SaveChangesAsync();
+
+        dbContext.ChecklistSteps.AddRange(
+            new ChecklistStep { ChecklistId = checklist.Id, Text = "Second", SortOrder = 1 },
+            new ChecklistStep { ChecklistId = checklist.Id, Text = "First", SortOrder = 0 },
+            new ChecklistStep { ChecklistId = other.Id, Text = "Elsewhere", SortOrder = 0 });
         await dbContext.SaveChangesAsync();
 
         var controller = new ChecklistsController(dbContext, NullLogger<ChecklistsController>.Instance);
@@ -112,9 +119,12 @@ public class ChecklistsControllerTests
         var result = await controller.GetById(checklist.Id);
 
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        var returnedChecklist = Assert.IsType<Checklist>(okResult.Value);
+        var returnedChecklist = Assert.IsType<ChecklistDetailResponse>(okResult.Value);
         Assert.Equal(checklist.Id, returnedChecklist.Id);
         Assert.Equal("Daily", returnedChecklist.Name);
+        Assert.Collection(returnedChecklist.Steps,
+            step => Assert.Equal("First", step.Text),
+            step => Assert.Equal("Second", step.Text));
     }
 
     [Fact]
@@ -142,6 +152,30 @@ public class ChecklistsControllerTests
 
         Assert.IsType<NoContentResult>(result);
         Assert.False(await dbContext.Checklists.AnyAsync(item => item.Id == checklist.Id));
+    }
+
+    [Fact]
+    public async Task Delete_RemovesChecklistSteps()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = new Checklist { Name = "Daily" };
+        var other = new Checklist { Name = "Other" };
+        dbContext.Checklists.AddRange(checklist, other);
+        await dbContext.SaveChangesAsync();
+
+        dbContext.ChecklistSteps.AddRange(
+            new ChecklistStep { ChecklistId = checklist.Id, Text = "Step", SortOrder = 0 },
+            new ChecklistStep { ChecklistId = other.Id, Text = "Kept", SortOrder = 0 });
+        await dbContext.SaveChangesAsync();
+        dbContext.ChangeTracker.Clear();
+
+        var controller = new ChecklistsController(dbContext, NullLogger<ChecklistsController>.Instance);
+
+        var result = await controller.Delete(checklist.Id);
+
+        Assert.IsType<NoContentResult>(result);
+        var remainingStep = await dbContext.ChecklistSteps.SingleAsync();
+        Assert.Equal("Kept", remainingStep.Text);
     }
 
     [Fact]

@@ -30,8 +30,16 @@ test.describe('Accessibility', () => {
     const { id, name } = (await response.json()) as { id: number; name: string }
 
     try {
+      // Add a step so the steps list gets checked too.
+      const stepResponse = await request.post(
+        `${checklistsApiUrl}/${id}/steps`,
+        { data: { text: 'A11y test step' } },
+      )
+      expect(stepResponse.ok()).toBe(true)
+
       await page.goto(`/checklists/${id}`)
       await expect(page.getByRole('heading', { name })).toBeVisible()
+      await expect(page.getByText('A11y test step')).toBeVisible()
 
       const results = await new AxeBuilder({ page }).analyze()
 

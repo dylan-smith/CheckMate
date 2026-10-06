@@ -165,7 +165,7 @@ describe('App', () => {
       const user = userEvent.setup()
       mockFetch(async (url) =>
         url.endsWith('/api/checklists/1')
-          ? jsonResponse({ id: 1, name: 'Grocery list' })
+          ? jsonResponse({ id: 1, name: 'Grocery list', steps: [] })
           : jsonResponse([{ id: 1, name: 'Grocery list' }]),
       )
 
@@ -189,7 +189,7 @@ describe('App', () => {
       const user = userEvent.setup()
       mockFetch(async (url) =>
         url.endsWith('/api/checklists/1')
-          ? jsonResponse({ id: 1, name: 'Grocery list' })
+          ? jsonResponse({ id: 1, name: 'Grocery list', steps: [] })
           : jsonResponse([{ id: 1, name: 'Grocery list' }]),
       )
 
@@ -408,7 +408,9 @@ describe('App', () => {
 
   describe('checklist detail page', () => {
     it('loads the checklist from a deep link', async () => {
-      mockFetch(async () => jsonResponse({ id: 7, name: 'Packing list' }))
+      mockFetch(async () =>
+        jsonResponse({ id: 7, name: 'Packing list', steps: [] }),
+      )
 
       renderAt('/checklists/7')
 
@@ -486,7 +488,7 @@ describe('App', () => {
         if (init?.method === 'PUT') {
           return jsonResponse({ id: 1, name: 'Updated list' })
         }
-        return jsonResponse({ id: 1, name: 'My list' })
+        return jsonResponse({ id: 1, name: 'My list', steps: [] })
       })
 
       renderAt('/checklists/1')
@@ -521,7 +523,7 @@ describe('App', () => {
             409,
           )
         }
-        return jsonResponse({ id: 1, name: 'My list' })
+        return jsonResponse({ id: 1, name: 'My list', steps: [] })
       })
 
       renderAt('/checklists/1')
@@ -545,7 +547,7 @@ describe('App', () => {
     it('shows error when submitting only whitespace', async () => {
       const user = userEvent.setup()
 
-      mockFetch(async () => jsonResponse({ id: 1, name: 'My list' }))
+      mockFetch(async () => jsonResponse({ id: 1, name: 'My list', steps: [] }))
 
       renderAt('/checklists/1')
 
@@ -572,7 +574,7 @@ describe('App', () => {
           return new Response(null, { status: 204 })
         }
         return url.endsWith('/api/checklists/1')
-          ? jsonResponse({ id: 1, name: 'To delete' })
+          ? jsonResponse({ id: 1, name: 'To delete', steps: [] })
           : jsonResponse([])
       })
 
@@ -596,7 +598,7 @@ describe('App', () => {
           return new Response(null, { status: 404 })
         }
         return url.endsWith('/api/checklists/1')
-          ? jsonResponse({ id: 1, name: 'Already gone' })
+          ? jsonResponse({ id: 1, name: 'Already gone', steps: [] })
           : jsonResponse([])
       })
 
@@ -617,7 +619,7 @@ describe('App', () => {
         if (init?.method === 'DELETE') {
           return new Response(null, { status: 500 })
         }
-        return jsonResponse({ id: 1, name: 'Persistent' })
+        return jsonResponse({ id: 1, name: 'Persistent', steps: [] })
       })
 
       renderAt('/checklists/1')
@@ -640,7 +642,7 @@ describe('App', () => {
         if (init?.method === 'DELETE') {
           throw new TypeError('Failed to fetch')
         }
-        return jsonResponse({ id: 1, name: 'Persistent' })
+        return jsonResponse({ id: 1, name: 'Persistent', steps: [] })
       })
 
       renderAt('/checklists/1')
@@ -651,6 +653,262 @@ describe('App', () => {
       expect(trackException).toHaveBeenCalledWith(expect.any(TypeError), {
         operation: 'delete',
       })
+    })
+  })
+
+  describe('checklist steps', () => {
+    const checklistWithSteps = {
+      id: 1,
+      name: 'Morning',
+      steps: [
+        { id: 10, text: 'Make coffee', sortOrder: 0 },
+        { id: 11, text: 'Read email', sortOrder: 1 },
+      ],
+    }
+
+    it('lists the steps in order', async () => {
+      mockFetch(async () => jsonResponse(checklistWithSteps))
+
+      renderAt('/checklists/1')
+
+      const steps = await screen.findAllByRole('listitem')
+      expect(steps).toHaveLength(2)
+      expect(steps[0]).toHaveTextContent('Make coffee')
+      expect(steps[1]).toHaveTextContent('Read email')
+    })
+
+    it('shows "No steps yet." when there are none', async () => {
+      mockFetch(async () => jsonResponse({ id: 1, name: 'Empty', steps: [] }))
+
+      renderAt('/checklists/1')
+
+      expect(await screen.findByText('No steps yet.')).toBeInTheDocument()
+    })
+
+    it('adds a trimmed step at the end and clears the input', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse({ id: 12, text: 'Walk dog', sortOrder: 2 }, 201)
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      const input = await screen.findByLabelText('New step')
+      await user.type(input, '  Walk dog  ')
+      await user.click(screen.getByRole('button', { name: 'Add step' }))
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('listitem')).toHaveLength(3)
+      })
+      expect(screen.getAllByRole('listitem')[2]).toHaveTextContent('Walk dog')
+      expect(input).toHaveValue('')
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/1\/steps$/),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ text: 'Walk dog' }),
+        }),
+      )
+      expect(trackEvent).toHaveBeenCalledWith('StepAdded')
+    })
+
+    it('shows error when adding only whitespace', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async () => jsonResponse(checklistWithSteps))
+
+      renderAt('/checklists/1')
+
+      await user.type(await screen.findByLabelText('New step'), '   ')
+      await user.click(screen.getByRole('button', { name: 'Add step' }))
+
+      expect(
+        await screen.findByText('Step text is required.'),
+      ).toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows error when adding a step fails', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'POST') {
+          return new Response(null, { status: 500 })
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      await user.type(await screen.findByLabelText('New step'), 'Walk dog')
+      await user.click(screen.getByRole('button', { name: 'Add step' }))
+
+      expect(
+        await screen.findByText('Unable to save step.'),
+      ).toBeInTheDocument()
+      expect(screen.getAllByRole('listitem')).toHaveLength(2)
+      expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
+        operation: 'addStep',
+      })
+    })
+
+    it('edits a step', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return jsonResponse({ id: 10, text: 'Make tea', sortOrder: 0 })
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      await user.click(
+        await screen.findByRole('button', { name: 'Edit step "Make coffee"' }),
+      )
+      const input = screen.getByLabelText('Step text', { exact: false })
+      expect(input).toHaveValue('Make coffee')
+      await user.clear(input)
+      await user.type(input, ' Make tea ')
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(await screen.findByText('Make tea')).toBeInTheDocument()
+      expect(
+        screen.queryByLabelText('Step text', { exact: false }),
+      ).not.toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/1\/steps\/10$/),
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ text: 'Make tea' }),
+        }),
+      )
+      expect(trackEvent).toHaveBeenCalledWith('StepUpdated')
+    })
+
+    it('cancels editing without saving', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async () => jsonResponse(checklistWithSteps))
+
+      renderAt('/checklists/1')
+
+      await user.click(
+        await screen.findByRole('button', { name: 'Edit step "Make coffee"' }),
+      )
+      await user.type(
+        screen.getByLabelText('Step text', { exact: false }),
+        ' later',
+      )
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+      expect(screen.getByText('Make coffee')).toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows error when editing a step to only whitespace', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async () => jsonResponse(checklistWithSteps))
+
+      renderAt('/checklists/1')
+
+      await user.click(
+        await screen.findByRole('button', { name: 'Edit step "Make coffee"' }),
+      )
+      const input = screen.getByLabelText('Step text', { exact: false })
+      await user.clear(input)
+      await user.type(input, '  ')
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(
+        await screen.findByText('Step text is required.'),
+      ).toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('deletes a step', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'DELETE') {
+          return new Response(null, { status: 204 })
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      await user.click(
+        await screen.findByRole('button', {
+          name: 'Delete step "Make coffee"',
+        }),
+      )
+
+      await waitFor(() => {
+        expect(screen.queryByText('Make coffee')).not.toBeInTheDocument()
+      })
+      expect(screen.getByText('Read email')).toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/1\/steps\/10$/),
+        expect.objectContaining({ method: 'DELETE' }),
+      )
+      expect(trackEvent).toHaveBeenCalledWith('StepDeleted')
+    })
+
+    it('shows error when the API is unreachable during step delete', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'DELETE') {
+          throw new TypeError('Failed to fetch')
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      await user.click(
+        await screen.findByRole('button', {
+          name: 'Delete step "Make coffee"',
+        }),
+      )
+
+      expect(await screen.findByText(unreachableMessage)).toBeInTheDocument()
+      expect(screen.getByText('Make coffee')).toBeInTheDocument()
+      expect(trackException).toHaveBeenCalledWith(expect.any(TypeError), {
+        operation: 'deleteStep',
+      })
+    })
+
+    it('keeps the steps after renaming the checklist', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return jsonResponse({ id: 1, name: 'Evening' })
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      const input = await screen.findByLabelText('Checklist name', {
+        exact: false,
+      })
+      await user.clear(input)
+      await user.type(input, 'Evening')
+      await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+      expect(
+        await screen.findByRole('heading', { level: 2, name: 'Evening' }),
+      ).toBeInTheDocument()
+      expect(screen.getByText('Make coffee')).toBeInTheDocument()
     })
   })
 
