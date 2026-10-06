@@ -183,7 +183,7 @@ To put some data on the workbook, run the **Generate Load** workflow (`.github/w
 | CPU quota | More than 45 of the F1 plan's 60 daily CPU minutes used in 24 hours (the app stops when they run out) | 2 |
 | SQL free offer running out | Less than 20% of the month's free vCore-seconds left (the database pauses until next month when they run out) | 2 |
 | Frontend storage availability | Blob storage less than 99% available over an hour | 2 |
-| Slow API | Average response time over 5 seconds for 30 minutes | 3 |
+| Slow API | Average response time over 5 seconds for 30 minutes (at least 10 requests, not counting deployment calls) | 3 |
 | Slow page loads | 75th percentile page load over 4 seconds in 6 hours (at least 5 loads) | 3 |
 | SQL storage | Database over 80% of its maximum size | 3 |
 | Failure anomalies | Application Insights smart detection sees an unusual rise in failures | 3 |
