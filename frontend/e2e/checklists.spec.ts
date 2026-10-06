@@ -159,6 +159,71 @@ test.describe('Checklist management', () => {
     })
   })
 
+  test.describe('Steps', () => {
+    // Adds a step from the detail page and waits for it to appear.
+    async function addStep(page: Page, text: string) {
+      await page.getByLabel('New step').fill(text)
+      await page.getByRole('button', { name: 'Add step' }).click()
+      await expect(
+        page.getByRole('button', { name: `Edit step "${text}"` }),
+      ).toBeVisible()
+    }
+
+    test('adds, edits and deletes steps, and they persist', async ({
+      page,
+    }) => {
+      await createChecklist(page, 'Morning routine')
+      await openChecklist(page, 'Morning routine')
+      await expect(page.getByText('No steps yet.')).toBeVisible()
+
+      await addStep(page, 'Make coffee')
+      await addStep(page, 'Read email')
+      await addStep(page, 'Walk dog')
+      await expect(page.getByLabel('New step')).toHaveValue('')
+
+      await page.getByRole('button', { name: 'Edit step "Read email"' }).click()
+      await page.getByLabel('Step text').fill('Read the news')
+      await page.getByRole('button', { name: 'Save', exact: true }).click()
+      await expect(
+        page.getByRole('button', { name: 'Edit step "Read the news"' }),
+      ).toBeVisible()
+
+      await page
+        .getByRole('button', { name: 'Delete step "Make coffee"' })
+        .click()
+      await expect(page.getByText('Make coffee')).toBeHidden()
+
+      await page.reload()
+
+      const steps = page.getByRole('listitem')
+      await expect(steps).toHaveCount(2)
+      await expect(steps.nth(0)).toContainText('Read the news')
+      await expect(steps.nth(1)).toContainText('Walk dog')
+    })
+
+    test('deleting a checklist deletes its steps', async ({ request }) => {
+      const response = await request.post(checklistsApiUrl, {
+        data: { name: 'Cascade' },
+      })
+      expect(response.ok()).toBe(true)
+      const { id } = (await response.json()) as { id: number }
+      const stepsUrl = `${checklistsApiUrl}/${id}/steps`
+
+      const stepResponse = await request.post(stepsUrl, {
+        data: { text: 'Orphan' },
+      })
+      expect(stepResponse.ok()).toBe(true)
+      const { id: stepId } = (await stepResponse.json()) as { id: number }
+
+      expect((await request.delete(`${checklistsApiUrl}/${id}`)).ok()).toBe(
+        true,
+      )
+
+      expect((await request.get(stepsUrl)).status()).toBe(404)
+      expect((await request.get(`${stepsUrl}/${stepId}`)).status()).toBe(404)
+    })
+  })
+
   test.describe('Error handling', () => {
     test('shows error when creating a checklist with a duplicate name', async ({
       page,
