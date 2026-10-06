@@ -193,6 +193,8 @@ To put some data on the workbook, run the **Generate Load** workflow (`.github/w
 
 To set up Slack, create a Slack app with an **Incoming Webhook** for the alerts channel and save the webhook URL as the `SLACK_WEBHOOK_URL` repository secret. The next deployment creates the Logic App. To get push notifications, sign in to the Azure mobile app as `alertEmail`. To check the whole chain, open the action group in the portal and choose **Test**.
 
+When the `ALERT_INVESTIGATION_TOKEN` secret is set too, Claude investigates every fired alert and posts what it finds in the same Slack channel. See [Alert Investigation](#alert-investigation).
+
 Azure won't move a budget's start date once it exists, so `budgetStartDate` in `infra/main.bicepparam` stays fixed at the month the budget was first deployed. A new environment should set it to the first of the month it's created in.
 
 #### Deploying Infrastructure Manually
@@ -217,6 +219,7 @@ The template doesn't manage identities, role assignments or database users, so a
 |----------|--------|
 | `checkmate-deploy` (user-assigned managed identity, `AZURE_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:environment:production`; **Contributor** on the resource group; **Storage Blob Data Owner** on the frontend storage account (static website setup, `npm run deploy` and database backup uploads use `--auth-mode login`); `db_owner` database user (runs the migrations and pre-migration backups) |
 | `checkmate-pr-whatif` (user-assigned managed identity, `AZURE_WHATIF_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:pull_request`; custom **CheckMate What-If Reader** role (`*/read`, `Microsoft.Resources/deployments/validate/action`, `Microsoft.Resources/deployments/whatIf/action`, `Microsoft.Resources/deployments/write`) on the resource group |
+| `checkmate-alert-investigator` (user-assigned managed identity, `AZURE_ALERT_INVESTIGATOR_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:environment:alert-investigation`; **Reader**, **Monitoring Reader**, **Log Analytics Reader** and **Cost Management Reader** on the resource group; **Monitoring Reader** on the subscription (Service Health events). Read-only, used by the alert investigation workflow |
 | App Service system-assigned identity | `db_datareader` + `db_datawriter` database user (the API's runtime connection) |
 
 GitHub issues OIDC tokens for this repo with immutable-ID subjects, so federated credentials must use the portal's **Other issuer** scenario (issuer `https://token.actions.githubusercontent.com`) rather than the GitHub Actions template. Create the database users as the SQL Entra admin, e.g. `CREATE USER [checkmate-deploy] FROM EXTERNAL PROVIDER; ALTER ROLE db_owner ADD MEMBER [checkmate-deploy];`.
@@ -275,12 +278,27 @@ The what-if identity is a user-assigned managed identity with a federated creden
 |--------|-------------|
 | `AZURE_SQL_CONNECTION_STRING` | SQL Server connection string used at runtime and for migrations (applied to the App Service by the Bicep deployment) |
 | `SLACK_WEBHOOK_URL` | Optional. Slack incoming webhook URL that alerts post to. Without it, alerts only go to email and the Azure mobile app |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (from `claude setup-token`) used by the CI failure investigation workflow |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (from `claude setup-token`) used by the CI failure and alert investigation workflows |
+| `ALERT_INVESTIGATION_TOKEN` | Optional. Fine-grained personal access token for this repository only, with **Actions: Read and write**. The infrastructure deployment gives it to the Slack Logic App, which uses it to start the alert investigation workflow. Without it (or `SLACK_WEBHOOK_URL`), alerts aren't investigated |
 | `AUTOMERGE_TOKEN` | Personal access token with write access to contents and pull requests. The Dependabot workflows use it to comment, and the CI failure investigation workflow uses it to push fix branches and open PRs (so CI runs on them) |
 
 ### CI Failure Investigation
 
 When CI fails on a pull request, `.github/workflows/ci-failure-investigation.yml` runs Claude Code to investigate. If a code change fixes the failure, Claude opens a separate PR from a `claude/ci-fix/` branch, based on the failing PR's branch, and never pushes to the failing branch itself. Either way, it comments on the failing PR with the root cause and what it did. It skips fork PRs, Dependabot PRs and its own `claude/ci-fix/` PRs. CI runs on pull requests into any branch, so the stacked fix PRs are checked too.
+
+### Alert Investigation
+
+When an alert fires (not when it resolves) or a budget alert is sent, the **CheckMate-SlackAlerts** Logic App posts the alert to Slack, adds a note that Claude is investigating, and starts `.github/workflows/alert-investigation.yml` with the alert payload. Claude Code reads the alert rule in `infra/modules/alerts.bicep`, queries Application Insights, Log Analytics, metrics, the activity log, resource health and costs, and checks recent deployments and Generate Load runs. It then posts a follow-up in the same channel with its verdict: for a real problem, the steps to fix it; for a false positive, the change to the rule (threshold, window, filter or query) that would stop it firing falsely. If Claude can't finish, or the Logic App can't start the workflow (for example because the token expired), Slack gets a message saying so.
+
+Claude only has read access: the `checkmate-alert-investigator` identity can't change Azure resources, and its GitHub token can only read the repository. It never sees the Slack webhook either: it uploads its findings as an artifact, and a separate job on a fresh runner posts them. The Logic App hides its HTTP actions' inputs (the webhook URL and GitHub token) from its run history.
+
+To set it up:
+
+1. Create the `checkmate-alert-investigator` identity and its roles (see [Identities & Permissions](#identities--permissions)).
+2. Create a GitHub environment named `alert-investigation`, restrict its deployment branches to `main`, and add the `AZURE_ALERT_INVESTIGATOR_CLIENT_ID` variable to it. The workflow also uses the repository-level `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` and `AZURE_RESOURCE_GROUP` variables.
+3. Save a fine-grained personal access token as the `ALERT_INVESTIGATION_TOKEN` secret (see [Required GitHub Secrets](#required-github-secrets)), and renew it before it expires. The next deployment adds it to the Logic App.
+
+To try it, choose **Test** on the **CheckMate-Alerts** action group, or run **Alert Investigation** from the Actions tab and paste an alert payload, such as the trigger body of a Logic App run.
 
 ### Environment
 
