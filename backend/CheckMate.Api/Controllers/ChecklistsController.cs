@@ -12,19 +12,19 @@ namespace CheckMate.Api.Controllers;
 /// </remarks>
 [ApiController]
 [Route("api/[controller]")]
-public partial class ChecklistsController(ChecklistDbContext dbContext, ILogger<ChecklistsController> logger) : ControllerBase
+public class ChecklistsController(ChecklistDbContext dbContext, ILogger<ChecklistsController> logger) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Checklist>>> GetAll()
     {
-        LogRetrievingAll(logger);
+        logger.LogInformation("Retrieving all checklists");
 
         var checklists = await dbContext.Checklists
             .AsNoTracking()
             .OrderBy(checklist => checklist.Name)
             .ToListAsync();
 
-        LogRetrievedAll(logger, checklists.Count);
+        logger.LogInformation("Retrieved {Count} checklists", checklists.Count);
 
         return Ok(checklists);
     }
@@ -32,7 +32,7 @@ public partial class ChecklistsController(ChecklistDbContext dbContext, ILogger<
     [HttpGet("{id:int}")]
     public async Task<ActionResult<Checklist>> GetById(int id)
     {
-        LogRetrieving(logger, id);
+        logger.LogInformation("Retrieving checklist {ChecklistId}", id);
 
         var checklist = await dbContext.Checklists
             .AsNoTracking()
@@ -40,7 +40,7 @@ public partial class ChecklistsController(ChecklistDbContext dbContext, ILogger<
 
         if (checklist is null)
         {
-            LogNotFound(logger, id);
+            logger.LogWarning("Checklist {ChecklistId} not found", id);
         }
 
         return checklist is null ? (ActionResult<Checklist>)NotFound() : Ok(checklist);
@@ -61,7 +61,7 @@ public partial class ChecklistsController(ChecklistDbContext dbContext, ILogger<
 
         if (duplicateName)
         {
-            LogCreateDuplicateName(logger);
+            logger.LogWarning("Checklist creation failed due to duplicate name");
             return Conflict(new { message = "A checklist with this name already exists." });
         }
 
@@ -81,14 +81,14 @@ public partial class ChecklistsController(ChecklistDbContext dbContext, ILogger<
 
             if (isDuplicateName)
             {
-                LogCreateConcurrentDuplicateName(logger);
+                logger.LogWarning("Checklist creation failed due to concurrent duplicate name");
                 return Conflict(new { message = "A checklist with this name already exists." });
             }
 
             throw;
         }
 
-        LogCreated(logger, checklist.Id);
+        logger.LogInformation("Created checklist {ChecklistId}", checklist.Id);
 
         return CreatedAtAction(nameof(GetById), new { id = checklist.Id }, checklist);
     }
@@ -100,7 +100,7 @@ public partial class ChecklistsController(ChecklistDbContext dbContext, ILogger<
 
         if (checklist is null)
         {
-            LogNotFoundForUpdate(logger, id);
+            logger.LogWarning("Checklist {ChecklistId} not found for update", id);
             return NotFound();
         }
 
@@ -116,7 +116,7 @@ public partial class ChecklistsController(ChecklistDbContext dbContext, ILogger<
 
         if (duplicateName)
         {
-            LogUpdateDuplicateName(logger, id);
+            logger.LogWarning("Checklist {ChecklistId} update failed due to duplicate name", id);
             return Conflict(new { message = "A checklist with this name already exists." });
         }
 
@@ -132,14 +132,14 @@ public partial class ChecklistsController(ChecklistDbContext dbContext, ILogger<
 
             if (isDuplicateName)
             {
-                LogUpdateConcurrentDuplicateName(logger, id);
+                logger.LogWarning("Checklist {ChecklistId} update failed due to concurrent duplicate name", id);
                 return Conflict(new { message = "A checklist with this name already exists." });
             }
 
             throw;
         }
 
-        LogUpdated(logger, id);
+        logger.LogInformation("Updated checklist {ChecklistId}", id);
 
         return Ok(checklist);
     }
@@ -166,54 +166,15 @@ public partial class ChecklistsController(ChecklistDbContext dbContext, ILogger<
 
         if (checklist is null)
         {
-            LogNotFoundForDeletion(logger, id);
+            logger.LogWarning("Checklist {ChecklistId} not found for deletion", id);
             return NotFound();
         }
 
         dbContext.Checklists.Remove(checklist);
         await dbContext.SaveChangesAsync();
 
-        LogDeleted(logger, id);
+        logger.LogInformation("Deleted checklist {ChecklistId}", id);
 
         return NoContent();
     }
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Retrieving all checklists")]
-    private static partial void LogRetrievingAll(ILogger logger);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Retrieved {Count} checklists")]
-    private static partial void LogRetrievedAll(ILogger logger, int count);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Retrieving checklist {ChecklistId}")]
-    private static partial void LogRetrieving(ILogger logger, int checklistId);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Checklist {ChecklistId} not found")]
-    private static partial void LogNotFound(ILogger logger, int checklistId);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Checklist creation failed due to duplicate name")]
-    private static partial void LogCreateDuplicateName(ILogger logger);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Checklist creation failed due to concurrent duplicate name")]
-    private static partial void LogCreateConcurrentDuplicateName(ILogger logger);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Created checklist {ChecklistId}")]
-    private static partial void LogCreated(ILogger logger, int checklistId);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Checklist {ChecklistId} not found for update")]
-    private static partial void LogNotFoundForUpdate(ILogger logger, int checklistId);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Checklist {ChecklistId} update failed due to duplicate name")]
-    private static partial void LogUpdateDuplicateName(ILogger logger, int checklistId);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Checklist {ChecklistId} update failed due to concurrent duplicate name")]
-    private static partial void LogUpdateConcurrentDuplicateName(ILogger logger, int checklistId);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Updated checklist {ChecklistId}")]
-    private static partial void LogUpdated(ILogger logger, int checklistId);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Checklist {ChecklistId} not found for deletion")]
-    private static partial void LogNotFoundForDeletion(ILogger logger, int checklistId);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Deleted checklist {ChecklistId}")]
-    private static partial void LogDeleted(ILogger logger, int checklistId);
 }
