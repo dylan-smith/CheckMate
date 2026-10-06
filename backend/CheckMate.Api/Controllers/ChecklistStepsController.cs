@@ -119,6 +119,42 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         return Ok(ChecklistStepResponse.From(step));
     }
 
+    [HttpPut("order")]
+    public async Task<ActionResult<IEnumerable<ChecklistStepResponse>>> Reorder(int checklistId, [FromBody] ChecklistStepOrderRequest request)
+    {
+        if (!await ChecklistExistsAsync(checklistId))
+        {
+            logger.LogWarning("Checklist {ChecklistId} not found for step reordering", checklistId);
+            return NotFound();
+        }
+
+        var steps = await dbContext.ChecklistSteps
+            .Where(step => step.ChecklistId == checklistId)
+            .ToDictionaryAsync(step => step.Id);
+
+        // The list must name every step exactly once, so a stale list (one that misses a step added since
+        // the caller loaded the checklist, or still has one that was deleted) is rejected rather than guessed at.
+        if (request.StepIds.Count != steps.Count
+            || request.StepIds.Distinct().Count() != steps.Count
+            || !request.StepIds.All(steps.ContainsKey))
+        {
+            logger.LogWarning("Rejected step order for checklist {ChecklistId} that doesn't match its steps", checklistId);
+            ModelState.AddModelError(nameof(request.StepIds), "The step IDs must match the checklist's steps exactly.");
+            return ValidationProblem(ModelState);
+        }
+
+        for (var index = 0; index < request.StepIds.Count; index++)
+        {
+            steps[request.StepIds[index]].SortOrder = index;
+        }
+
+        await dbContext.SaveChangesAsync();
+
+        logger.LogInformation("Reordered {StepCount} steps in checklist {ChecklistId}", steps.Count, checklistId);
+
+        return Ok(request.StepIds.Select(stepId => ChecklistStepResponse.From(steps[stepId])).ToList());
+    }
+
     [HttpDelete("{stepId:int}")]
     public async Task<IActionResult> Delete(int checklistId, int stepId)
     {

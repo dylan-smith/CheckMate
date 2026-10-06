@@ -136,6 +136,29 @@ export function updateStep(checklistId: number, stepId: number, text: string) {
   return saveStep(`${stepsUrl(checklistId)}/${stepId}`, 'PUT', text)
 }
 
+// Takes every step id of the checklist in the new order and returns the steps in that order.
+// A 400 means the list no longer matches the steps, for example because they were changed elsewhere.
+export async function reorderSteps(checklistId: number, stepIds: number[]) {
+  const response = await fetch(`${stepsUrl(checklistId)}/order`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ stepIds }),
+  })
+
+  if (response.status === 400) {
+    throw new ApiError(
+      400,
+      'The steps have changed since this page loaded. Reload the page and try again.',
+    )
+  }
+  if (!response.ok) {
+    throw new Error('Unable to reorder steps.')
+  }
+  return (await response.json()) as ChecklistStep[]
+}
+
 // A 404 means the step is already gone, which is what the caller wanted.
 export async function deleteStep(checklistId: number, stepId: number) {
   const response = await fetch(`${stepsUrl(checklistId)}/${stepId}`, {

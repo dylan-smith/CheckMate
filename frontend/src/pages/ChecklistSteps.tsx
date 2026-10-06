@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { SubmitEvent } from 'react'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
+import IconButton from '@mui/material/IconButton'
 import List from '@mui/material/List'
 import ListItem from '@mui/material/ListItem'
 import ListItemText from '@mui/material/ListItemText'
@@ -11,9 +12,11 @@ import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import {
+  ApiError,
   createStep,
   deleteStep,
   describeFetchError,
+  reorderSteps,
   updateStep,
 } from '../api/checklists'
 import type { ChecklistStep } from '../api/checklists'
@@ -24,6 +27,12 @@ type ChecklistStepsProps = {
   initialSteps: ChecklistStep[]
 }
 
+type MoveDirection = 'up' | 'down'
+
+function moveButtonId(stepId: number, direction: MoveDirection) {
+  return `step-${stepId}-move-${direction}`
+}
+
 function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
   const [steps, setSteps] = useState(initialSteps)
   const [newText, setNewText] = useState('')
@@ -32,6 +41,28 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
   // Only one change runs at a time, so the list can't get out of step with the API.
   const [busy, setBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
+  // Read out by screen readers, since a moved step otherwise changes place silently.
+  const [moveAnnouncement, setMoveAnnouncement] = useState('')
+  // The move buttons are disabled while a move saves, which drops keyboard focus, so it's put back here.
+  const focusAfterMove = useRef<{
+    stepId: number
+    direction: MoveDirection
+  } | null>(null)
+
+  useEffect(() => {
+    if (busy || !focusAfterMove.current) {
+      return
+    }
+    const { stepId, direction } = focusAfterMove.current
+    focusAfterMove.current = null
+    const directions: MoveDirection[] =
+      direction === 'up' ? ['up', 'down'] : ['down', 'up']
+    // A step moved to the top or bottom can't move further that way, so focus goes to its other button.
+    const button = directions
+      .map((item) => document.getElementById(moveButtonId(stepId, item)))
+      .find((item) => item instanceof HTMLButtonElement && !item.disabled)
+    button?.focus()
+  }, [busy])
 
   async function handleAdd(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -119,11 +150,63 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     }
   }
 
+  async function handleMove(index: number, direction: MoveDirection) {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1
+    const reordered = [...steps]
+    ;[reordered[index], reordered[targetIndex]] = [
+      reordered[targetIndex],
+      reordered[index],
+    ]
+    const moved = steps[index]
+
+    setBusy(true)
+    setErrorMessage('')
+    setMoveAnnouncement('')
+
+    try {
+      const saved = await reorderSteps(
+        checklistId,
+        reordered.map((step) => step.id),
+      )
+      trackEvent('StepsReordered')
+      setSteps(saved)
+      setMoveAnnouncement(
+        `Moved step "${moved.text}" to position ${targetIndex + 1} of ${saved.length}.`,
+      )
+    } catch (error) {
+      // Steps changed elsewhere are the user's to reload, not a failure to report.
+      if (!(error instanceof ApiError)) {
+        trackException(error, { operation: 'reorderSteps' })
+      }
+      setErrorMessage(describeFetchError(error, 'Unable to reorder steps.'))
+    } finally {
+      focusAfterMove.current = { stepId: moved.id, direction }
+      setBusy(false)
+    }
+  }
+
   return (
     <Paper component="section" elevation={2} sx={{ p: 3 }}>
       <Typography variant="h6" component="h3" sx={{ mb: 2 }}>
         Steps
       </Typography>
+
+      <Box
+        role="status"
+        sx={{
+          position: 'absolute',
+          width: '1px',
+          height: '1px',
+          m: '-1px',
+          p: 0,
+          border: 0,
+          overflow: 'hidden',
+          clip: 'rect(0 0 0 0)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {moveAnnouncement}
+      </Box>
 
       {errorMessage && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -137,7 +220,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
         </Typography>
       ) : (
         <List disablePadding sx={{ mb: 2 }}>
-          {steps.map((step) => (
+          {steps.map((step, index) => (
             <ListItem key={step.id} divider disableGutters>
               {editingId === step.id ? (
                 <Box
@@ -187,6 +270,28 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                     sx={{ overflowWrap: 'anywhere' }}
                   />
                   <Stack direction="row" spacing={1}>
+                    <IconButton
+                      id={moveButtonId(step.id, 'up')}
+                      size="small"
+                      color="primary"
+                      sx={{ fontWeight: 'bold' }}
+                      disabled={busy || index === 0}
+                      aria-label={`Move step "${step.text}" up`}
+                      onClick={() => void handleMove(index, 'up')}
+                    >
+                      <span aria-hidden="true">↑</span>
+                    </IconButton>
+                    <IconButton
+                      id={moveButtonId(step.id, 'down')}
+                      size="small"
+                      color="primary"
+                      sx={{ fontWeight: 'bold' }}
+                      disabled={busy || index === steps.length - 1}
+                      aria-label={`Move step "${step.text}" down`}
+                      onClick={() => void handleMove(index, 'down')}
+                    >
+                      <span aria-hidden="true">↓</span>
+                    </IconButton>
                     <Button
                       type="button"
                       size="small"

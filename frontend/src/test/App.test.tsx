@@ -894,6 +894,133 @@ describe('App', () => {
       })
     })
 
+    it("can't move the first step up or the last step down", async () => {
+      mockFetch(async () => jsonResponse(checklistWithSteps))
+
+      renderAt('/checklists/1')
+
+      expect(
+        await screen.findByRole('button', {
+          name: 'Move step "Make coffee" up',
+        }),
+      ).toBeDisabled()
+      expect(
+        screen.getByRole('button', { name: 'Move step "Make coffee" down' }),
+      ).toBeEnabled()
+      expect(
+        screen.getByRole('button', { name: 'Move step "Read email" up' }),
+      ).toBeEnabled()
+      expect(
+        screen.getByRole('button', { name: 'Move step "Read email" down' }),
+      ).toBeDisabled()
+    })
+
+    it('moves a step with the keyboard and keeps focus on it', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return jsonResponse([
+            { id: 11, text: 'Read email', sortOrder: 0 },
+            { id: 10, text: 'Make coffee', sortOrder: 1 },
+          ])
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      const moveDown = await screen.findByRole('button', {
+        name: 'Move step "Make coffee" down',
+      })
+      moveDown.focus()
+      await user.keyboard('{Enter}')
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
+          'Read email',
+        )
+      })
+      expect(screen.getAllByRole('listitem')[1]).toHaveTextContent(
+        'Make coffee',
+      )
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/1\/steps\/order$/),
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ stepIds: [11, 10] }),
+        }),
+      )
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Moved step "Make coffee" to position 2 of 2.',
+      )
+      // The step is now last, so focus moves to its other button.
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', { name: 'Move step "Make coffee" up' }),
+        ).toHaveFocus()
+      })
+      expect(trackEvent).toHaveBeenCalledWith('StepsReordered')
+    })
+
+    it('asks to reload without reporting it when the steps changed elsewhere', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return new Response(null, { status: 400 })
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      await user.click(
+        await screen.findByRole('button', {
+          name: 'Move step "Read email" up',
+        }),
+      )
+
+      expect(
+        await screen.findByText(
+          'The steps have changed since this page loaded. Reload the page and try again.',
+        ),
+      ).toBeInTheDocument()
+      expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
+        'Make coffee',
+      )
+      expect(trackException).not.toHaveBeenCalled()
+    })
+
+    it('shows error when reordering steps fails', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return new Response(null, { status: 500 })
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      await user.click(
+        await screen.findByRole('button', {
+          name: 'Move step "Read email" up',
+        }),
+      )
+
+      expect(
+        await screen.findByText('Unable to reorder steps.'),
+      ).toBeInTheDocument()
+      expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
+        'Make coffee',
+      )
+      expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
+        operation: 'reorderSteps',
+      })
+    })
+
     it('keeps the steps after renaming the checklist', async () => {
       const user = userEvent.setup()
 
