@@ -1901,7 +1901,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Costs\nWhat the CheckMate resource group costs, from Azure Cost Management. Every resource that makes up the app is in that group, including ones since deleted.\n\nAmounts are actual costs in the billing currency, before any subscription credits. Cost data usually lags usage by 8 to 24 hours, so the most recent day is incomplete.\n\nThe **Spent this month**, **Forecast for this month** and **Monthly budget** tiles come from the `CheckMate-Monthly` budget (`monthlyBudget` in `infra/main.bicepparam`). The forecast is Cost Management's estimate for the whole calendar month, and the budget alerts when it passes 100%. These tiles and the forecast chart always cover the current month, whatever the cost period. The chart shows the actual cost of each day so far and the forecast for the rest of the month. Cost Management needs a few days of usage before it forecasts. [Cost analysis](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/costanalysis) has the full breakdown and budgets."
+              "json": "## Costs\nWhat the CheckMate resource group costs, from Azure Cost Management. Every resource that makes up the app is in that group, including ones since deleted.\n\nAmounts are actual costs in the billing currency, before any subscription credits. Cost data usually lags usage by 8 to 24 hours, so the most recent day is incomplete.\n\nThe **Spent this month**, **Budget forecast for this month** and **Monthly budget** tiles come from the `CheckMate-Monthly` budget (`monthlyBudget` in `infra/main.bicepparam`). The budget forecast is Cost Management's estimate for the whole calendar month, and the budget alerts when it passes 100%. The chart shows the actual cost of each day so far and Cost Management's daily forecast for the rest of the month; its legend totals both. The budget forecast is calculated separately from the daily forecast, so the two totals can differ. These tiles and the chart always cover the current month, whatever the cost period. Cost Management needs a few days of usage before it forecasts. [Cost analysis](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/costanalysis) has the full breakdown and budgets."
             },
             "name": "costs-intro"
           },
@@ -1987,7 +1987,7 @@
               "version": "KqlItem/1.0",
               "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":null,\"headers\":[],\"method\":\"GET\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.Consumption/budgets/CheckMate-Monthly\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2024-08-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$\",\"columns\":[{\"path\":\"$.properties.forecastSpend.amount\",\"columnid\":\"Cost\",\"columnType\":\"number\"},{\"path\":\"$.properties.currentSpend.unit\",\"columnid\":\"Currency\"}]}}]}",
               "size": 4,
-              "title": "Forecast for this month",
+              "title": "Budget forecast for this month",
               "noDataMessage": "No budget data yet.",
               "queryType": 12,
               "visualization": "tiles",
