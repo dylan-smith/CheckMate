@@ -3,11 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
-import { trackEvent, trackException } from '../telemetry'
+import { trackEvent, trackException, trackPageView } from '../telemetry'
 
 vi.mock('../telemetry', () => ({
   trackEvent: vi.fn(),
   trackException: vi.fn(),
+  trackPageView: vi.fn(),
 }))
 
 const unreachableMessage =
@@ -180,6 +181,33 @@ describe('App', () => {
       expect(
         screen.getByLabelText('Checklist name', { exact: false }),
       ).toHaveValue('Grocery list')
+    })
+  })
+
+  describe('page views', () => {
+    it('tracks one for the first load and one for each route change', async () => {
+      const user = userEvent.setup()
+      mockFetch(async (url) =>
+        url.endsWith('/api/checklists/1')
+          ? jsonResponse({ id: 1, name: 'Grocery list' })
+          : jsonResponse([{ id: 1, name: 'Grocery list' }]),
+      )
+
+      renderAt('/')
+
+      expect(trackPageView).toHaveBeenCalledTimes(1)
+
+      await user.click(
+        await screen.findByRole('link', { name: 'Grocery list' }),
+      )
+      await user.click(
+        await screen.findByRole('link', { name: /Back to checklists/ }),
+      )
+
+      expect(trackPageView).toHaveBeenCalledTimes(3)
+      await waitFor(() => {
+        expect(screen.queryByLabelText('Loading')).not.toBeInTheDocument()
+      })
     })
   })
 

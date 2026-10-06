@@ -1,13 +1,22 @@
+import { useEffect } from 'react'
 import Box from '@mui/material/Box'
 import Container from '@mui/material/Container'
 import Typography from '@mui/material/Typography'
-import { Link, Route, Routes } from 'react-router'
+import { Link, Route, Routes, useLocation } from 'react-router'
 import logo from './assets/logo.svg'
 import ChecklistDetailPage from './pages/ChecklistDetailPage'
 import ChecklistsPage from './pages/ChecklistsPage'
 import NotFoundPage from './pages/NotFoundPage'
+import { trackPageView } from './telemetry'
 
 function App() {
+  const { pathname } = useLocation()
+
+  // One page view for the first load and one for each route change after it, including back and forward.
+  useEffect(() => {
+    trackPageView()
+  }, [pathname])
+
   return (
     <Container maxWidth="md" component="main" sx={{ py: 4 }}>
       <Typography variant="h3" component="h1" gutterBottom>
