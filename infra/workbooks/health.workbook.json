@@ -1901,9 +1901,189 @@
           {
             "type": 1,
             "content": {
-              "json": "## Costs\nWhat the CheckMate resource group costs, from Azure Cost Management. Every resource that makes up the app is in that group, including ones since deleted.\n\nAmounts are actual costs in the billing currency, before any subscription credits. Cost data usually lags usage by 8 to 24 hours, so the most recent day is incomplete. [Cost analysis](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/costanalysis) has the full breakdown and budgets."
+              "json": "## Costs\nWhat the CheckMate resource group costs, from Azure Cost Management. Every resource that makes up the app is in that group, including ones since deleted.\n\nAmounts are actual costs in the billing currency, before any subscription credits. Cost data usually lags usage by 8 to 24 hours, so the most recent day is incomplete.\n\nThe **Spent this month**, **Forecast for this month** and **Monthly budget** tiles come from the `CheckMate-Monthly` budget (`monthlyBudget` in `infra/main.bicepparam`). The forecast is Cost Management's estimate for the whole calendar month, and the budget alerts when it passes 100%. These tiles and the forecast chart always cover the current month, whatever the cost period. The chart shows the actual cost of each day so far and the forecast for the rest of the month. Cost Management needs a few days of usage before it forecasts. [Cost analysis](https://portal.azure.com/#resource__RESOURCE_GROUP_ID__/costanalysis) has the full breakdown and budgets."
             },
             "name": "costs-intro"
+          },
+          {
+            "type": 9,
+            "content": {
+              "version": "KqlParameterItem/1.0",
+              "parameters": [
+                {
+                  "id": "8c4d2e6f-1a3b-4c5d-8e9f-0a1b2c3d4e51",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "MonthStart",
+                  "label": "Month start",
+                  "type": 1,
+                  "query": "print Value = strcat(format_datetime(startofmonth(now()), 'yyyy-MM-dd'), 'T00:00:00Z')",
+                  "isHiddenWhenLocked": true,
+                  "queryType": 0,
+                  "resourceType": "microsoft.operationalinsights/workspaces",
+                  "crossComponentResources": [
+                    "__WORKSPACE_ID__"
+                  ]
+                },
+                {
+                  "id": "8c4d2e6f-1a3b-4c5d-8e9f-0a1b2c3d4e52",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "MonthEnd",
+                  "label": "Month end",
+                  "type": 1,
+                  "query": "print Value = strcat(format_datetime(endofmonth(now()), 'yyyy-MM-dd'), 'T23:59:59Z')",
+                  "isHiddenWhenLocked": true,
+                  "queryType": 0,
+                  "resourceType": "microsoft.operationalinsights/workspaces",
+                  "crossComponentResources": [
+                    "__WORKSPACE_ID__"
+                  ]
+                }
+              ],
+              "style": "pills",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "costs-month-parameters"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":null,\"headers\":[],\"method\":\"GET\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.Consumption/budgets/CheckMate-Monthly\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2024-08-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$\",\"columns\":[{\"path\":\"$.properties.currentSpend.amount\",\"columnid\":\"Cost\",\"columnType\":\"number\"},{\"path\":\"$.properties.currentSpend.unit\",\"columnid\":\"Currency\"}]}}]}",
+              "size": 4,
+              "title": "Spent this month",
+              "noDataMessage": "No budget data yet.",
+              "queryType": 12,
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Currency"
+                },
+                "leftContent": {
+                  "columnMatch": "Cost",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "palette": "blue"
+                  },
+                  "numberFormat": {
+                    "unit": 0,
+                    "options": {
+                      "style": "decimal",
+                      "useGrouping": true,
+                      "minimumFractionDigits": 2,
+                      "maximumFractionDigits": 2
+                    }
+                  }
+                },
+                "showBorder": true
+              }
+            },
+            "customWidth": "33",
+            "name": "costs-month-spent"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":null,\"headers\":[],\"method\":\"GET\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.Consumption/budgets/CheckMate-Monthly\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2024-08-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$\",\"columns\":[{\"path\":\"$.properties.forecastSpend.amount\",\"columnid\":\"Cost\",\"columnType\":\"number\"},{\"path\":\"$.properties.currentSpend.unit\",\"columnid\":\"Currency\"}]}}]}",
+              "size": 4,
+              "title": "Forecast for this month",
+              "noDataMessage": "No budget data yet.",
+              "queryType": 12,
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Currency"
+                },
+                "leftContent": {
+                  "columnMatch": "Cost",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "palette": "blue"
+                  },
+                  "numberFormat": {
+                    "unit": 0,
+                    "options": {
+                      "style": "decimal",
+                      "useGrouping": true,
+                      "minimumFractionDigits": 2,
+                      "maximumFractionDigits": 2
+                    }
+                  }
+                },
+                "showBorder": true
+              }
+            },
+            "customWidth": "33",
+            "name": "costs-month-forecast"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":null,\"headers\":[],\"method\":\"GET\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.Consumption/budgets/CheckMate-Monthly\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2024-08-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$\",\"columns\":[{\"path\":\"$.properties.amount\",\"columnid\":\"Cost\",\"columnType\":\"number\"},{\"path\":\"$.properties.currentSpend.unit\",\"columnid\":\"Currency\"}]}}]}",
+              "size": 4,
+              "title": "Monthly budget",
+              "noDataMessage": "No budget data yet.",
+              "queryType": 12,
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Currency"
+                },
+                "leftContent": {
+                  "columnMatch": "Cost",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "palette": "blue"
+                  },
+                  "numberFormat": {
+                    "unit": 0,
+                    "options": {
+                      "style": "decimal",
+                      "useGrouping": true,
+                      "minimumFractionDigits": 2,
+                      "maximumFractionDigits": 2
+                    }
+                  }
+                },
+                "showBorder": true
+              }
+            },
+            "customWidth": "33",
+            "name": "costs-month-budget"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":\"{\\\"type\\\":\\\"ActualCost\\\",\\\"timeframe\\\":\\\"Custom\\\",\\\"timePeriod\\\":{\\\"from\\\":\\\"{MonthStart}\\\",\\\"to\\\":\\\"{MonthEnd}\\\"},\\\"dataset\\\":{\\\"granularity\\\":\\\"Daily\\\",\\\"aggregation\\\":{\\\"totalCost\\\":{\\\"name\\\":\\\"Cost\\\",\\\"function\\\":\\\"Sum\\\"}}},\\\"includeActualCost\\\":true,\\\"includeFreshPartialCost\\\":false}\",\"headers\":[],\"method\":\"POST\",\"path\":\"__RESOURCE_GROUP_ID__/providers/Microsoft.CostManagement/forecast\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2023-11-01\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$.properties.rows\",\"columns\":[{\"path\":\"$[0]\",\"columnid\":\"Cost\",\"columnType\":\"number\"},{\"path\":\"$[1]\",\"columnid\":\"Day\",\"columnType\":\"datetime\",\"substringRegexMatch\":\"(\\\\d{4})(\\\\d{2})(\\\\d{2})\",\"substringReplace\":\"$1-$2-$3T00:00:00Z\"},{\"path\":\"$[2]\",\"columnid\":\"Status\"}]}}]}",
+              "size": 0,
+              "title": "Daily cost and forecast this month",
+              "noDataMessage": "No cost forecast yet. Cost Management needs a few days of usage before it forecasts.",
+              "queryType": 12,
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "Day",
+                "yAxis": [
+                  "Cost"
+                ],
+                "group": "Status",
+                "createOtherGroup": 0,
+                "showLegend": true,
+                "seriesLabelSettings": [
+                  {
+                    "seriesName": "Actual",
+                    "color": "blue"
+                  },
+                  {
+                    "seriesName": "Forecast",
+                    "color": "gray"
+                  }
+                ]
+              }
+            },
+            "name": "costs-month-forecast-daily"
           },
           {
             "type": 9,
