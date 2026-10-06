@@ -60,6 +60,13 @@ param alertEmail string
 @secure()
 param slackWebhookUrl string = ''
 
+@description('GitHub token that can start the alert investigation workflow (Actions: read and write). Leave empty to skip Claude alert investigations.')
+@secure()
+param alertInvestigationToken string = ''
+
+@description('GitHub repository (owner/name) that runs the alert investigation workflow.')
+param githubRepository string
+
 @description('Monthly cost budget for the resource group, in the billing currency.')
 param monthlyBudget int = 10
 
@@ -144,6 +151,8 @@ module alerts 'modules/alerts.bicep' = {
     apiUrl: appService.outputs.appServiceUrl
     alertEmail: alertEmail
     slackWebhookUrl: slackWebhookUrl
+    alertInvestigationToken: alertInvestigationToken
+    githubRepository: githubRepository
     monthlyBudget: monthlyBudget
     budgetStartDate: budgetStartDate
   }

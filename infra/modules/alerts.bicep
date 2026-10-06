@@ -29,6 +29,13 @@ param alertEmail string
 @secure()
 param slackWebhookUrl string = ''
 
+@description('GitHub token that can start the alert investigation workflow (Actions: read and write). Leave empty to skip Claude alert investigations.')
+@secure()
+param alertInvestigationToken string = ''
+
+@description('GitHub repository (owner/name) that runs the alert investigation workflow.')
+param githubRepository string
+
 @description('Monthly cost budget for the resource group, in the billing currency.')
 param monthlyBudget int = 10
 
@@ -42,6 +49,9 @@ var frontendRoleName = 'CheckMate.Web'
 var sqlFreeVCoreSecondsThreshold = 20000
 
 var slackEnabled = !empty(slackWebhookUrl)
+
+// Claude's findings go to the same Slack channel, so investigations need Slack too.
+var investigationEnabled = slackEnabled && !empty(alertInvestigationToken)
 
 // Rule names the Slack messages look up "What to do" steps by. Azure names the Failure Anomalies rule itself.
 var slowPageLoadsName = 'CheckMate slow page loads'
@@ -123,12 +133,109 @@ Spent @{outputs('Parse_payload')?['data']?['SpendingAmount']} @{outputs('Parse_p
 2. A jump in Application Insights or Log Analytics usually means a lot of telemetry (for example a long Generate Load run). A jump in App Service or SQL Database usually means a plan or SKU changed, so check the resource group's Deployments and Activity log.
 3. Fix the cause, or raise `monthlyBudget` in `infra/main.bicepparam` if the new spend is expected.'''
 
+// Hides each HTTP action's inputs (the Slack webhook URL and GitHub token) from the Logic App's run history, which
+// anyone with Reader on the resource group can see, including the alert investigation identity.
+var secureInputs = {
+  secureData: {
+    properties: ['inputs']
+  }
+}
+
+var investigatingLine =':mag: Claude is investigating and will post what it finds here.'
+var commonAlertText = investigationEnabled
+  ? '${commonAlertMessage}@{if(equals(outputs(\'Essentials\')?[\'monitorCondition\'], \'Resolved\'), \'\', concat(decodeUriComponent(\'%0A\'), \'${investigatingLine}\'))}'
+  : commonAlertMessage
+var budgetAlertText = investigationEnabled ? '${budgetAlertMessage}\n${investigatingLine}' : budgetAlertMessage
+
+// The Logic App parameters and actions below are only added when investigations are enabled.
+var investigationParameterValues = {
+  githubToken: {
+    value: alertInvestigationToken
+  }
+  githubRepository: {
+    value: githubRepository
+  }
+}
+var investigationParameterTypes = {
+  githubToken: {
+    type: 'securestring'
+  }
+  githubRepository: {
+    type: 'string'
+  }
+}
+
+// Starts .github/workflows/alert-investigation.yml for fired alerts and budget alerts (not resolved ones). It runs
+// alongside the Slack branch, so a GitHub problem never holds up the alert message, and posts to Slack if it fails.
+var investigationActions = {
+  Should_investigate: {
+    type: 'If'
+    runAfter: {
+      Parse_payload: ['Succeeded']
+    }
+    expression: {
+      or: [
+        {
+          not: {
+            equals: [
+              '@coalesce(outputs(\'Parse_payload\')?[\'data\']?[\'BudgetName\'], \'\')'
+              ''
+            ]
+          }
+        }
+        {
+          equals: [
+            '@outputs(\'Parse_payload\')?[\'data\']?[\'essentials\']?[\'monitorCondition\']'
+            'Fired'
+          ]
+        }
+      ]
+    }
+    actions: {
+      Start_Claude_investigation: {
+        type: 'Http'
+        runAfter: {}
+        runtimeConfiguration: secureInputs
+        inputs: {
+          method: 'POST'
+          uri: 'https://api.github.com/repos/@{parameters(\'githubRepository\')}/actions/workflows/alert-investigation.yml/dispatches'
+          headers: {
+            Accept: 'application/vnd.github+json'
+            Authorization: 'Bearer @{parameters(\'githubToken\')}'
+            'X-GitHub-Api-Version': '2022-11-28'
+          }
+          body: {
+            ref: 'main'
+            inputs: {
+              alert: '@{string(outputs(\'Parse_payload\'))}'
+            }
+          }
+        }
+      }
+      Post_investigation_failure_to_Slack: {
+        type: 'Http'
+        runAfter: {
+          Start_Claude_investigation: ['Failed', 'TimedOut']
+        }
+        runtimeConfiguration: secureInputs
+        inputs: {
+          method: 'POST'
+          uri: '@parameters(\'slackWebhookUrl\')'
+          body: {
+            text: ':warning: Claude couldn\'t start investigating this alert: GitHub returned @{outputs(\'Start_Claude_investigation\')?[\'statusCode\']}. Check that the `ALERT_INVESTIGATION_TOKEN` secret hasn\'t expired (see Alert Investigation in the README).'
+          }
+        }
+      }
+    }
+  }
+}
+
 resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled) {
   name: 'CheckMate-SlackAlerts'
   location: location
   properties: {
     state: 'Enabled'
-    parameters: {
+    parameters: union(investigationEnabled ? investigationParameterValues : {}, {
       slackWebhookUrl: {
         value: slackWebhookUrl
       }
@@ -154,11 +261,11 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
           Equals: '='
         }
       }
-    }
+    })
     definition: {
       '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#'
       contentVersion: '1.0.0.0'
-      parameters: {
+      parameters: union(investigationEnabled ? investigationParameterTypes : {}, {
         slackWebhookUrl: {
           type: 'securestring'
         }
@@ -174,7 +281,7 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
         operators: {
           type: 'object'
         }
-      }
+      })
       triggers: {
         manual: {
           type: 'Request'
@@ -186,7 +293,7 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
           }
         }
       }
-      actions: {
+      actions: union(investigationEnabled ? investigationActions : {}, {
         // Action groups may not send a JSON content type, so parse the body whether it arrives as a string or an
         // object.
         Parse_payload: {
@@ -215,11 +322,12 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
             Post_budget_alert_to_Slack: {
               type: 'Http'
               runAfter: {}
+              runtimeConfiguration: secureInputs
               inputs: {
                 method: 'POST'
                 uri: '@parameters(\'slackWebhookUrl\')'
                 body: {
-                  text: budgetAlertMessage
+                  text: budgetAlertText
                 }
               }
             }
@@ -266,18 +374,19 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
                 runAfter: {
                   Azure_says_line: ['Succeeded']
                 }
+                runtimeConfiguration: secureInputs
                 inputs: {
                   method: 'POST'
                   uri: '@parameters(\'slackWebhookUrl\')'
                   body: {
-                    text: commonAlertMessage
+                    text: commonAlertText
                   }
                 }
               }
             }
           }
         }
-      }
+      })
     }
   }
 }
