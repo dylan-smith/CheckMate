@@ -40,5 +40,5 @@ test('smoke: can create, open, and delete a checklist', async ({ page }) => {
   await expect(
     page.getByRole('heading', { name: 'Create checklist' }),
   ).toBeVisible()
-  await expect(checklistLink).not.toBeVisible()
+  await expect(checklistLink).toBeHidden()
 })

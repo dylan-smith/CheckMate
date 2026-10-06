@@ -1,0 +1,14 @@
+<Project>
+
+  <!-- Applies to every backend project. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- The .NET analyzers' recommended rule set for the latest SDK, on top of the default rules. -->
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- Keep the build warning-free: compiler, nullable and analyzer warnings all fail it. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

@@ -143,7 +143,7 @@ test.describe('Checklist management', () => {
       ).toBeVisible()
       await expect(
         page.getByRole('link', { name: 'Original', exact: true }),
-      ).not.toBeVisible()
+      ).toBeHidden()
     })
   })
 

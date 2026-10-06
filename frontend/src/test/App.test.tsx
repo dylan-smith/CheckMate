@@ -20,7 +20,7 @@ function mockFetch(
   return vi
     .spyOn(globalThis, 'fetch')
     .mockImplementation((input: string | URL | Request, init?: RequestInit) =>
-      handler(String(input), init),
+      handler(input instanceof Request ? input.url : input.toString(), init),
     )
 }
 

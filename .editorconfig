@@ -172,3 +172,10 @@ csharp_space_between_square_brackets = false
 # Wrapping preferences
 csharp_preserve_single_line_statements = true
 csharp_preserve_single_line_blocks = true
+
+#### Analyzer rules ####
+
+# CA1848/CA1873: [LoggerMessage] methods save a little allocation per log call, which doesn't matter at this
+# app's traffic and isn't worth moving every message away from where it's logged. Plain logger calls are fine.
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1873.severity = none

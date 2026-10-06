@@ -7,9 +7,12 @@ import {
   trackPageView,
 } from '../telemetry'
 
+type TelemetryItem = { tags?: Record<string, string> }
+
 const sdk = vi.hoisted(() => ({
-  constructor: vi.fn(),
-  addTelemetryInitializer: vi.fn(),
+  constructor: vi.fn<(options: { config: Record<string, unknown> }) => void>(),
+  addTelemetryInitializer:
+    vi.fn<(initializer: (item: TelemetryItem) => void) => void>(),
   loadAppInsights: vi.fn(),
   trackPageView: vi.fn(),
   trackException: vi.fn(),
@@ -27,7 +30,7 @@ vi.mock('../config', () => ({
 vi.mock('@microsoft/applicationinsights-web', () => ({
   DistributedTracingModes: { W3C: 2 },
   ApplicationInsights: class {
-    constructor(options: unknown) {
+    constructor(options: { config: Record<string, unknown> }) {
       sdk.constructor(options)
     }
     addTelemetryInitializer = sdk.addTelemetryInitializer
@@ -37,6 +40,11 @@ vi.mock('@microsoft/applicationinsights-web', () => ({
     trackEvent = sdk.trackEvent
   },
 }))
+
+// The config the SDK was created with.
+function sdkConfig() {
+  return sdk.constructor.mock.calls[0][0].config
+}
 
 beforeEach(() => {
   resetTelemetry()
@@ -73,13 +81,11 @@ describe('telemetry', () => {
     it('uses W3C tracing and only correlates requests to the API', () => {
       initTelemetry()
 
-      expect(sdk.constructor).toHaveBeenCalledWith({
-        config: expect.objectContaining({
-          connectionString: 'InstrumentationKey=abc',
-          distributedTracingMode: 2,
-          enableCorsCorrelation: true,
-          correlationHeaderDomains: ['localhost:5269'],
-        }),
+      expect(sdkConfig()).toMatchObject({
+        connectionString: 'InstrumentationKey=abc',
+        distributedTracingMode: 2,
+        enableCorsCorrelation: true,
+        correlationHeaderDomains: ['localhost:5269'],
       })
       expect(sdk.loadAppInsights).toHaveBeenCalledOnce()
     })
@@ -87,9 +93,7 @@ describe('telemetry', () => {
     it('leaves page views to the router instead of tracking routes itself', () => {
       initTelemetry()
 
-      expect(sdk.constructor).toHaveBeenCalledWith({
-        config: expect.objectContaining({ enableAutoRouteTracking: false }),
-      })
+      expect(sdkConfig()).toMatchObject({ enableAutoRouteTracking: false })
       expect(sdk.trackPageView).not.toHaveBeenCalled()
     })
 
@@ -112,10 +116,8 @@ describe('telemetry', () => {
 
         initTelemetry()
 
-        expect(sdk.constructor).toHaveBeenCalledWith({
-          config: expect.objectContaining({
-            correlationHeaderDomains: [window.location.host],
-          }),
+        expect(sdkConfig()).toMatchObject({
+          correlationHeaderDomains: [window.location.host],
         })
       },
     )
@@ -123,10 +125,8 @@ describe('telemetry', () => {
     it('does not hook the unload event', () => {
       initTelemetry()
 
-      expect(sdk.constructor).toHaveBeenCalledWith({
-        config: expect.objectContaining({
-          disablePageUnloadEvents: ['unload'],
-        }),
+      expect(sdkConfig()).toMatchObject({
+        disablePageUnloadEvents: ['unload'],
       })
     })
 
