@@ -175,7 +175,8 @@ function App() {
         align="center"
         sx={{ mb: 3 }}
       >
-        Create, edit, and delete your custom checklists.
+        Build a checklist once, run it every time, and keep a record of every
+        run.
       </Typography>
 
       <Stack spacing={2}>

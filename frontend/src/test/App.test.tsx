@@ -103,7 +103,9 @@ describe('App', () => {
         screen.getByRole('heading', { level: 1, name: 'CheckMate' }),
       ).toBeInTheDocument()
       expect(
-        screen.getByText('Create, edit, and delete your custom checklists.'),
+        screen.getByText(
+          'Build a checklist once, run it every time, and keep a record of every run.',
+        ),
       ).toBeInTheDocument()
 
       await waitFor(() => {

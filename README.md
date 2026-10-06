@@ -169,7 +169,7 @@ To put some data on the workbook, run the **Generate Load** workflow (`.github/w
 
 #### Alerts
 
-`infra/modules/alerts.bicep` defines the alerts. They all notify the **CheckMate-Alerts** action group, which sends an email and an Azure mobile app push to `alertEmail` (set in `infra/main.bicepparam`). When the `SLACK_WEBHOOK_URL` secret is set, it also posts to Slack through the **CheckMate-SlackAlerts** Logic App. Metric and log alerts also send a message when they resolve.
+`infra/modules/alerts.bicep` defines the alerts. They all notify the **CheckMate-Alerts** action group, which sends an email and an Azure mobile app push to `alertEmail` (set in `infra/main.bicepparam`). When the `SLACK_WEBHOOK_URL` secret is set, it also posts to Slack through the **CheckMate-SlackAlerts** Logic App. Metric and log alerts also send a message when they resolve. Each Slack message says what was measured against the threshold (or Azure's own explanation for resource and service health), links to the resource, the alert and the health workbook, and, when it fires, lists numbered **What to do** steps for investigating and fixing it. The steps live next to each rule in `alerts.bicep` (`steps`, or `alertSteps` for rules that aren't metric alerts), so update them when a rule or the workbook changes.
 
 | Alert | Fires when | Sev |
 |-------|------------|-----|
@@ -275,6 +275,12 @@ The what-if identity is a user-assigned managed identity with a federated creden
 |--------|-------------|
 | `AZURE_SQL_CONNECTION_STRING` | SQL Server connection string used at runtime and for migrations (applied to the App Service by the Bicep deployment) |
 | `SLACK_WEBHOOK_URL` | Optional. Slack incoming webhook URL that alerts post to. Without it, alerts only go to email and the Azure mobile app |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (from `claude setup-token`) used by the CI failure investigation workflow |
+| `AUTOMERGE_TOKEN` | Personal access token with write access to contents and pull requests. The Dependabot workflows use it to comment, and the CI failure investigation workflow uses it to push fix branches and open PRs (so CI runs on them) |
+
+### CI Failure Investigation
+
+When CI fails on a pull request, `.github/workflows/ci-failure-investigation.yml` runs Claude Code to investigate. If a code change fixes the failure, Claude opens a separate PR from a `claude/ci-fix/` branch, based on the failing PR's branch, and never pushes to the failing branch itself. Either way, it comments on the failing PR with the root cause and what it did. It skips fork PRs, Dependabot PRs and its own `claude/ci-fix/` PRs. CI runs on pull requests into any branch, so the stacked fix PRs are checked too.
 
 ### Environment
 
