@@ -43,20 +43,85 @@ var sqlFreeVCoreSecondsThreshold = 20000
 
 var slackEnabled = !empty(slackWebhookUrl)
 
+// Rule names the Slack messages look up "What to do" steps by. Azure names the Failure Anomalies rule itself.
+var slowPageLoadsName = 'CheckMate slow page loads'
+var failureAnomaliesName = 'Failure Anomalies - ${last(split(appInsightsId, '/'))}'
+var resourceHealthName = 'CheckMate resource health'
+var serviceHealthName = 'CheckMate service health'
+
+// Slack-formatted links for the "What to do" steps.
+var portalResource = 'https://portal.azure.com/#resource'
+// workbook.bicep depends on this module's action group, so build its deterministic ID here instead of passing it in.
+var workbookUrl = '${portalResource}${resourceGroup().id}/providers/Microsoft.Insights/workbooks/${guid(resourceGroup().id, 'checkmate-health-workbook')}/workbook'
+var workbookLink = '<${workbookUrl}|CheckMate Health workbook>'
+var ciRunsLink = '<https://github.com/dylan-smith/CheckMate/actions/workflows/ci.yml?query=branch%3Amain|CI runs on main>'
+var loadTestRunsLink = '<https://github.com/dylan-smith/CheckMate/actions/workflows/load-test.yml|Generate Load runs>'
+var failuresLink = '<${portalResource}${appInsightsId}/failures|Failures>'
+var performanceLink = '<${portalResource}${appInsightsId}/performance|Performance>'
+var availabilityLink = '<${portalResource}${appInsightsId}/availability|Availability>'
+var logStreamLink = '<${portalResource}${appServiceId}/logStream|Log stream>'
+var troubleshootLink = '<${portalResource}${appServiceId}/troubleshoot|Diagnose and solve problems>'
+var appServiceLink = '<${portalResource}${appServiceId}/overview|App Service>'
+var queryPerformanceLink = '<${portalResource}${sqlDatabaseId}/queryPerformanceInsight|Query Performance Insight>'
+var resourceHealthLinks = 'resource health for the <${portalResource}${appServiceId}/resourceHealth|App Service>, <${portalResource}${sqlDatabaseId}/resourceHealth|SQL database> and <${portalResource}${storageAccountId}/resourceHealth|Storage account>'
+var serviceHealthLink = '<https://portal.azure.com/#view/Microsoft_Azure_Health/AzureHealthBrowseBlade/~/serviceIssues|Service Health>'
+var azureStatusLink = '<https://azure.status.microsoft/status|Azure status>'
+var healthEndpointLink = '<${apiUrl}/health|/health>'
+
+var apiServerErrorSteps = [
+  'On the *API* tab of the ${workbookLink}, check *Failed requests* for the operations and status codes that are failing, and *API exceptions* for the errors behind them.'
+  'Open ${failuresLink}, pick the failing operation, then a sample to see the exception and its end-to-end transaction.'
+  'Check whether it started with a deployment (the workbook\'s charts mark each one, or see the ${ciRunsLink}). If it did, revert the change on `main`.'
+  'If the exceptions are SQL errors, follow the steps for *CheckMate API dependency failures*.'
+]
+
+// The numbered steps posted with each fired alert, keyed by alert rule name.
+var alertSteps = union(
+  toObject(metricAlerts, alert => alert.name, alert => alert.steps),
+  {
+    '${slowPageLoadsName}': [
+      'On the *Frontend* tab of the ${workbookLink}, check *Page load time* for the slow pages, and *Browser-observed API duration*.'
+      'If the API calls are slow, follow the steps for *CheckMate slow API*. Otherwise check whether a recent frontend deployment (${ciRunsLink}) made the bundle bigger or added work on load.'
+    ]
+    '${failureAnomaliesName}': apiServerErrorSteps
+    '${resourceHealthName}': [
+      'Azure caused this, so there\'s usually nothing to fix on our side. Check ${resourceHealthLinks} to see which one and Azure\'s explanation.'
+      'Check the *Overview* tab of the ${workbookLink} to see whether users are affected, and ${azureStatusLink} for a wider outage.'
+      'Wait for the resolved message. If the resource stays unavailable for a long time, open a support request from its resource health page.'
+    ]
+    '${serviceHealthName}': [
+      'Read the incident or maintenance notice, and its updates, in ${serviceHealthLink}.'
+      'Check the *Overview* tab of the ${workbookLink} to see whether CheckMate is actually affected. Often it isn\'t.'
+      'There\'s nothing to fix on our side; follow the notice until Azure resolves it.'
+    ]
+  }
+)
+
 // Azure's alert payloads aren't in Slack's format, so this Logic App turns them into a Slack message and posts it
 // to the incoming webhook. Budgets send their own schema rather than the common alert schema, so they get their
-// own message.
+// own message. Values used in only one branch of an if() still get a fallback, in case the unused branch is evaluated.
+var measuredLine = '''
+@{if(equals(outputs('Criterion')?['metricValue'], null), '', concat('*Measured:* ', coalesce(outputs('Criterion')?['metricName'], 'query results'), ' (', coalesce(outputs('Criterion')?['timeAggregation'], 'Count'), ' over ', replace(replace(replace(replace(replace(coalesce(outputs('Parse_payload')?['data']?['alertContext']?['condition']?['windowSize'], ''), 'PT', ''), 'P', ''), 'D', ' day'), 'H', ' h'), 'M', ' min'), ') was *', formatNumber(float(string(coalesce(outputs('Criterion')?['metricValue'], 0))), '0.##'), '*; the alert fires when it is ', coalesce(parameters('operators')?[coalesce(outputs('Criterion')?['operator'], '')], outputs('Criterion')?['operator'], ''), ' ', formatNumber(float(string(coalesce(outputs('Criterion')?['threshold'], 0))), '0.##'), '.', decodeUriComponent('%0A')))}'''
+
+var azureSaysLine = '''
+@{if(empty(coalesce(outputs('Parse_payload')?['data']?['alertContext']?['properties']?['title'], '')), '', concat('*Azure says:* ', outputs('Parse_payload')?['data']?['alertContext']?['properties']?['title'], if(empty(coalesce(outputs('Parse_payload')?['data']?['alertContext']?['properties']?['currentHealthStatus'], '')), '', concat(' (', outputs('Parse_payload')?['data']?['alertContext']?['properties']?['currentHealthStatus'], ')')), decodeUriComponent('%0A')))}'''
+
+// Slack shows <!date^...> in each reader's own time zone.
 var commonAlertMessage = '''
-@{if(equals(outputs('Parse_payload')?['data']?['essentials']?['monitorCondition'], 'Resolved'), ':white_check_mark: *Resolved*', ':rotating_light: *Fired*')} @{outputs('Parse_payload')?['data']?['essentials']?['severity']} *@{outputs('Parse_payload')?['data']?['essentials']?['alertRule']}*
-@{coalesce(outputs('Parse_payload')?['data']?['essentials']?['description'], '')}
-Resource: @{last(split(coalesce(first(outputs('Parse_payload')?['data']?['essentials']?['alertTargetIDs']), 'n/a'), '/'))}
-Fired: @{outputs('Parse_payload')?['data']?['essentials']?['firedDateTime']}
-<https://portal.azure.com/#view/Microsoft_Azure_Monitoring_Alerts/AlertDetails.ReactView/alertId~/@{encodeUriComponent(coalesce(outputs('Parse_payload')?['data']?['essentials']?['alertId'], ''))}|Open the alert in the Azure portal>'''
+@{if(equals(outputs('Essentials')?['monitorCondition'], 'Resolved'), ':white_check_mark: *Resolved*', ':rotating_light: *Fired*')} @{outputs('Essentials')?['severity']} *@{outputs('Essentials')?['alertRule']}*
+@{coalesce(outputs('Essentials')?['description'], '')}
+@{outputs('Measured_line')}@{outputs('Azure_says_line')}*Resource:* <https://portal.azure.com/#resource@{coalesce(first(outputs('Essentials')?['alertTargetIDs']), '')}/overview|@{last(split(coalesce(first(outputs('Essentials')?['alertTargetIDs']), 'n/a'), '/'))}>
+*@{if(equals(outputs('Essentials')?['monitorCondition'], 'Resolved'), 'Resolved', 'Fired')}:* <!date^@{div(sub(ticks(outputs('Event_time')), ticks('1970-01-01T00:00:00Z')), 10000000)}^{date_short_pretty} at {time}|@{outputs('Event_time')}>
+<https://portal.azure.com/#view/Microsoft_Azure_Monitoring_Alerts/AlertDetails.ReactView/alertId~/@{encodeUriComponent(coalesce(outputs('Essentials')?['alertId'], ''))}|Open the alert in the Azure portal> | <@{parameters('workbookUrl')}|CheckMate Health workbook>@{if(empty(coalesce(outputs('Criterion')?['linkToFilteredSearchResultsUI'], '')), '', concat(' | <', outputs('Criterion')?['linkToFilteredSearchResultsUI'], '|Query results>'))}@{if(or(equals(outputs('Essentials')?['monitorCondition'], 'Resolved'), empty(coalesce(parameters('alertSteps')?[coalesce(outputs('Essentials')?['alertRule'], '')], ''))), '', concat(decodeUriComponent('%0A'), '*What to do:*', decodeUriComponent('%0A'), parameters('alertSteps')?[coalesce(outputs('Essentials')?['alertRule'], '')]))}'''
 
 var budgetAlertMessage = '''
 :moneybag: *Budget alert* *@{outputs('Parse_payload')?['data']?['BudgetName']}*
 Spent @{outputs('Parse_payload')?['data']?['SpendingAmount']} @{outputs('Parse_payload')?['data']?['Unit']} of the @{outputs('Parse_payload')?['data']?['Budget']} @{outputs('Parse_payload')?['data']?['Unit']} budget (alert at @{mul(float(coalesce(outputs('Parse_payload')?['data']?['NotificationThresholdAmount'], '0')), 100)}%) since @{outputs('Parse_payload')?['data']?['BudgetStartDate']}.
-<@{parameters('resourceGroupUrl')}|Open the resource group in the Azure portal> (Cost Management > Budgets)'''
+<@{parameters('resourceGroupUrl')}|Open the resource group in the Azure portal> (Cost Management > Budgets)
+*What to do:*
+1. On the *Costs* tab of the <@{parameters('workbookUrl')}|CheckMate Health workbook>, check *Cost by service* and *Daily cost by service* for what the money went on and when it started.
+2. A jump in Application Insights or Log Analytics usually means a lot of telemetry (for example a long Generate Load run). A jump in App Service or SQL Database usually means a plan or SKU changed, so check the resource group's Deployments and Activity log.
+3. Fix the cause, or raise `monthlyBudget` in `infra/main.bicepparam` if the new spend is expected.'''
 
 resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled) {
   name: 'CheckMate-SlackAlerts'
@@ -70,6 +135,25 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
       resourceGroupUrl: {
         value: 'https://portal.azure.com/#@/resource${resourceGroup().id}'
       }
+      workbookUrl: {
+        value: workbookUrl
+      }
+      alertSteps: {
+        value: toObject(
+          items(alertSteps),
+          rule => rule.key,
+          rule => join(map(rule.value, (step, i) => '${i + 1}. ${step}'), '\n')
+        )
+      }
+      operators: {
+        value: {
+          GreaterThan: '>'
+          GreaterThanOrEqual: '>='
+          LessThan: '<'
+          LessThanOrEqual: '<='
+          Equals: '='
+        }
+      }
     }
     definition: {
       '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#'
@@ -80,6 +164,15 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
         }
         resourceGroupUrl: {
           type: 'string'
+        }
+        workbookUrl: {
+          type: 'string'
+        }
+        alertSteps: {
+          type: 'object'
+        }
+        operators: {
+          type: 'object'
         }
       }
       triggers: {
@@ -133,9 +226,46 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
           }
           else: {
             actions: {
+              Essentials: {
+                type: 'Compose'
+                runAfter: {}
+                inputs: '@coalesce(outputs(\'Parse_payload\')?[\'data\']?[\'essentials\'], json(\'{}\'))'
+              }
+              Event_time: {
+                type: 'Compose'
+                runAfter: {
+                  Essentials: ['Succeeded']
+                }
+                inputs: '@if(equals(outputs(\'Essentials\')?[\'monitorCondition\'], \'Resolved\'), coalesce(outputs(\'Essentials\')?[\'resolvedDateTime\'], outputs(\'Essentials\')?[\'firedDateTime\']), outputs(\'Essentials\')?[\'firedDateTime\'])'
+              }
+              // The first condition of a metric or log alert, with the measured value and threshold.
+              Criterion: {
+                type: 'Compose'
+                runAfter: {
+                  Event_time: ['Succeeded']
+                }
+                inputs: '@coalesce(outputs(\'Parse_payload\')?[\'data\']?[\'alertContext\']?[\'condition\']?[\'allOf\']?[0], json(\'{}\'))'
+              }
+              Measured_line: {
+                type: 'Compose'
+                runAfter: {
+                  Criterion: ['Succeeded']
+                }
+                inputs: measuredLine
+              }
+              // Resource Health and Service Health alerts carry Azure's own description of the problem.
+              Azure_says_line: {
+                type: 'Compose'
+                runAfter: {
+                  Measured_line: ['Succeeded']
+                }
+                inputs: azureSaysLine
+              }
               Post_alert_to_Slack: {
                 type: 'Http'
-                runAfter: {}
+                runAfter: {
+                  Azure_says_line: ['Succeeded']
+                }
                 inputs: {
                   method: 'POST'
                   uri: '@parameters(\'slackWebhookUrl\')'
@@ -233,6 +363,13 @@ var metricAlerts = [
   {
     name: 'CheckMate API down'
     description: 'The API health availability test failed twice in a row.'
+    steps: [
+      'On the *Overview* tab of the ${workbookLink}, *Failed health checks* shows the status code or error. ${availabilityLink} has every test result.'
+      'Open ${healthEndpointLink} yourself to see whether the API is still down.'
+      'A 404 or 503 right after a deployment usually means the infrastructure deployed but the API didn\'t: check the latest of the ${ciRunsLink}.'
+      'Check the ${logStreamLink} and the *API startup log* on the *Infrastructure* tab for a crash on start, and ${troubleshootLink} for restarts. If the F1 plan\'s daily CPU quota ran out, the app stays stopped until it resets.'
+      'If the app is stuck, restart it from the ${appServiceLink} overview.'
+    ]
     severity: 1
     scope: appInsightsId
     namespace: 'microsoft.insights/components'
@@ -253,6 +390,7 @@ var metricAlerts = [
   {
     name: 'CheckMate API server errors'
     description: 'The API returned more than 5 HTTP 5xx responses in 15 minutes.'
+    steps: apiServerErrorSteps
     severity: 2
     scope: appServiceId
     namespace: 'Microsoft.Web/sites'
@@ -267,6 +405,12 @@ var metricAlerts = [
   {
     name: 'CheckMate API dependency failures'
     description: 'The API had more than 10 failed dependency calls (mostly SQL) in 15 minutes, more than auto-pause resume retries explain.'
+    steps: [
+      'On the *API* tab of the ${workbookLink}, check *SQL calls* and *All outgoing dependencies* for what\'s failing, and *Database errors* and the database *Connections* chart on the *Infrastructure* tab.'
+      'A few failures while the database resumes from auto-pause are normal, and the API retries them. If they keep failing, check the ${resourceHealthLinks}.'
+      'If the month\'s free SQL vCore-seconds ran out, the database stays paused until next month (see *Free amount remaining* on the *Infrastructure* tab).'
+      'Login or permission errors mean the App Service identity lost its database user; see Identities & Permissions in the README.'
+    ]
     severity: 2
     scope: appInsightsId
     namespace: 'microsoft.insights/components'
@@ -287,6 +431,11 @@ var metricAlerts = [
   {
     name: 'CheckMate browser errors'
     description: 'The frontend reported more than 5 exceptions in an hour.'
+    steps: [
+      'On the *Frontend* tab of the ${workbookLink}, check *Browser exceptions* for the operation (load, save, delete) that failed and its *Status*.'
+      'This alert counts every exception, including expected ones, so check whether one of the ${loadTestRunsLink} was running. If it was and the *Status* column says they\'re expected, close the alert.'
+      'Open ${failuresLink} and switch to *Browser* for the stack traces. If it started with a frontend deployment (${ciRunsLink}), revert the change on `main`.'
+    ]
     severity: 2
     scope: appInsightsId
     namespace: 'microsoft.insights/components'
@@ -301,6 +450,11 @@ var metricAlerts = [
   {
     name: 'CheckMate browser API call failures'
     description: 'More than 5 API calls from the frontend failed in an hour (network, CORS or server errors).'
+    steps: [
+      'On the *Frontend* tab of the ${workbookLink}, check *Browser calls to the API* for the calls and result codes that failed.'
+      'If the *API* tab shows the same failures, follow the steps for *CheckMate API server errors*.'
+      'If it doesn\'t, the calls never reached the API: look for CORS errors (the allowed origin is set in `infra/modules/appservice.bicep`), network errors, or the API being down or cold-starting.'
+    ]
     severity: 2
     scope: appInsightsId
     namespace: 'microsoft.insights/components'
@@ -321,6 +475,11 @@ var metricAlerts = [
   {
     name: 'CheckMate CPU quota'
     description: 'The API used more than 75% of the F1 plan\'s 60 CPU-minute daily quota in the last 24 hours. The app stops when the quota runs out.'
+    steps: [
+      'On the *Infrastructure* tab of the ${workbookLink}, check *CPU time* for when the CPU was used.'
+      'Find what used it: ${performanceLink} shows the busiest operations, and ${loadTestRunsLink} and unusual traffic both add up quickly.'
+      'When the quota runs out the app stops until the daily quota resets. If it has to stay up, change `appServicePlanSku` in `infra/main.bicepparam` to a paid plan such as B1 for now.'
+    ]
     severity: 2
     scope: appServiceId
     namespace: 'Microsoft.Web/sites'
@@ -335,6 +494,11 @@ var metricAlerts = [
   {
     name: 'CheckMate SQL free offer running out'
     description: 'Less than 20% of this month\'s free SQL vCore-seconds remain. When they run out the database pauses until next month.'
+    steps: [
+      'On the *Infrastructure* tab of the ${workbookLink}, check *Free amount remaining* and *App CPU billed* for when the database was busy.'
+      'Look for what keeps it awake: anything calling the API regularly (bots, ${loadTestRunsLink}) stops it auto-pausing. ${performanceLink} shows which operations are called most.'
+      'When the free vCore-seconds run out the database pauses until the 1st of next month, and every API call that needs the database fails until then.'
+    ]
     severity: 2
     scope: sqlDatabaseId
     namespace: 'Microsoft.Sql/servers/databases'
@@ -349,6 +513,11 @@ var metricAlerts = [
   {
     name: 'CheckMate frontend storage availability'
     description: 'Blob storage, which serves the frontend, was less than 99% available over an hour.'
+    steps: [
+      'Open the frontend to see whether it still loads, and check the ${resourceHealthLinks}.'
+      'On the *Infrastructure* tab of the ${workbookLink}, check the storage *Availability %* and *Transactions* charts for which requests failed.'
+      'Storage outages are usually on Azure\'s side: check ${azureStatusLink} and wait for the resolved message.'
+    ]
     severity: 2
     scope: '${storageAccountId}/blobServices/default'
     namespace: 'Microsoft.Storage/storageAccounts/blobServices'
@@ -363,6 +532,11 @@ var metricAlerts = [
   {
     name: 'CheckMate slow API'
     description: 'The API\'s average response time was over 5 seconds for 30 minutes.'
+    steps: [
+      'On the *API* tab of the ${workbookLink}, check *Operations* and *SQL call duration* for what\'s slow. ${performanceLink} breaks it down further.'
+      'Cold starts and database resumes make a few requests slow; if that\'s all it is, close the alert.'
+      'If SQL is slow, check ${queryPerformanceLink}. If everything is slow, check whether the CPU quota is nearly used up.'
+    ]
     severity: 3
     scope: appServiceId
     namespace: 'Microsoft.Web/sites'
@@ -377,6 +551,11 @@ var metricAlerts = [
   {
     name: 'CheckMate SQL storage'
     description: 'The database has used more than 80% of its maximum size.'
+    steps: [
+      'On the *Infrastructure* tab of the ${workbookLink}, check *Data space used %* for how fast it\'s growing.'
+      'Find the biggest tables, and whether something is creating far more data than expected (for example checklists left behind by tests).'
+      'Clean up the data. `maxSizeBytes` in `infra/modules/sql.bicep` is already at the free offer\'s 32 GB limit.'
+    ]
     severity: 3
     scope: sqlDatabaseId
     namespace: 'Microsoft.Sql/servers/databases'
@@ -424,10 +603,10 @@ resource metricAlertRules 'Microsoft.Insights/metricAlerts@2018-03-01' = [
 
 // Needs at least 5 page loads so one slow phone on bad wifi doesn't alert.
 resource slowPageLoads 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
-  name: 'CheckMate slow page loads'
+  name: slowPageLoadsName
   location: location
   properties: {
-    displayName: 'CheckMate slow page loads'
+    displayName: slowPageLoadsName
     description: 'The 75th percentile frontend page load time was over 4 seconds in the last 6 hours.'
     severity: 3
     enabled: true
@@ -458,7 +637,7 @@ resource slowPageLoads 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
 // Azure creates this rule along with Application Insights and allows only one per component, so use the name it
 // gives it; the template then takes over the existing rule instead of trying to add a second.
 resource failureAnomalies 'Microsoft.AlertsManagement/smartDetectorAlertRules@2021-04-01' = {
-  name: 'Failure Anomalies - ${last(split(appInsightsId, '/'))}'
+  name: failureAnomaliesName
   location: 'global'
   properties: {
     description: 'Unusual rise in the rate of failed requests or dependency calls.'
@@ -477,7 +656,7 @@ resource failureAnomalies 'Microsoft.AlertsManagement/smartDetectorAlertRules@20
 
 // Only outages Azure causes; restarts and deployments we start ourselves are left out.
 resource resourceHealth 'Microsoft.Insights/activityLogAlerts@2020-10-01' = {
-  name: 'CheckMate resource health'
+  name: resourceHealthName
   location: 'global'
   properties: {
     description: 'A CheckMate resource became unavailable or degraded because of an Azure platform issue.'
@@ -519,7 +698,7 @@ resource resourceHealth 'Microsoft.Insights/activityLogAlerts@2020-10-01' = {
 
 // Service Health events are subscription-wide, so filter to the services and regions CheckMate uses.
 resource serviceHealth 'Microsoft.Insights/activityLogAlerts@2020-10-01' = {
-  name: 'CheckMate service health'
+  name: serviceHealthName
   location: 'global'
   properties: {
     description: 'Azure reported an incident or planned maintenance affecting a service or region CheckMate uses.'
