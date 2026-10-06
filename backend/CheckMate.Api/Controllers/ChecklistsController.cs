@@ -21,7 +21,7 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
 
         var checklists = await dbContext.Checklists
             .AsNoTracking()
-            .OrderByDescending(checklist => checklist.Name)
+            .OrderBy(checklist => checklist.Name)
             .ToListAsync();
 
         logger.LogInformation("Retrieved {Count} checklists", checklists.Count);
