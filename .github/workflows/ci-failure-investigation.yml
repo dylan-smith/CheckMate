@@ -1,0 +1,116 @@
+name: CI Failure Investigation
+
+# When CI fails on a pull request, Claude investigates the failure. If a code change fixes it,
+# Claude opens a separate PR stacked on the failing PR's branch (never pushing to that branch
+# itself), then comments on the failing PR with what it found.
+#
+# Claude runs with every tool and no permission prompts (--dangerously-skip-permissions), so it
+# can read logs, build, test, push and open PRs. That's only safe because this runs for PRs from
+# branches in this repository: fork PRs have no pull_requests entry and are skipped, and
+# Dependabot PRs are handled by dependabot-auto-merge.yml and dependabot-rebase.yml instead.
+# Fix PRs use the claude/ci-fix/ branch prefix and are skipped too, so a failing fix doesn't
+# start another investigation.
+#
+# Requires these Actions secrets (Settings > Secrets > Actions):
+# - CLAUDE_CODE_OAUTH_TOKEN: from `claude setup-token`.
+# - AUTOMERGE_TOKEN: the PAT also used by the Dependabot workflows. Pushes and PRs made with
+#   GITHUB_TOKEN don't trigger workflows, so the fix PR needs it to get a CI run.
+#
+# workflow_run always uses this file from main, so changes to it only take effect once merged.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  investigate:
+    name: Investigate CI failure
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.pull_requests[0] &&
+      github.event.workflow_run.actor.login != 'dependabot[bot]' &&
+      !startsWith(github.event.workflow_run.head_branch, 'claude/ci-fix/')
+    # A newer failure on the same branch makes an older investigation stale.
+    concurrency:
+      group: ci-failure-investigation-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: true
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+      checks: read
+      id-token: write
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          token: ${{ secrets.AUTOMERGE_TOKEN }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Set git identity
+        run: |
+          git config --global user.name "claude[bot]"
+          git config --global user.email "claude[bot]@users.noreply.github.com"
+
+      - name: Investigate with Claude
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.AUTOMERGE_TOKEN }}
+          additional_permissions: |
+            actions: read
+          claude_args: --dangerously-skip-permissions --max-turns 100
+          prompt: |
+            The CI workflow failed on a pull request in ${{ github.repository }}. Investigate why, fix it
+            if a code change is needed, and report back on the pull request.
+
+            - Failed run: ${{ github.event.workflow_run.html_url }} (run ID ${{ github.event.workflow_run.id }}, attempt ${{ github.event.workflow_run.run_attempt }})
+            - Pull request: #${{ github.event.workflow_run.pull_requests[0].number }}
+            - PR branch: ${{ github.event.workflow_run.head_branch }}
+            - Commit: ${{ github.event.workflow_run.head_sha }} (checked out in the working directory)
+
+            Follow AGENTS.md. The `gh` CLI is authenticated for this repository.
+
+            1. Find out what failed. Start with `gh run view ${{ github.event.workflow_run.id }} --log-failed`,
+               then look at the test result artifacts (`gh run download`), the PR (`gh pr view`, `gh pr diff`)
+               and the code as needed. Reproduce the failure locally with the AGENTS.md validation commands
+               where you can.
+            2. Decide what kind of failure it is: a bug or check failure caused by the PR's changes, a
+               problem that already exists on main, a flaky test, or an infrastructure or external issue
+               (runner, network, Azure). Don't change code for a flaky test or an external issue; explain it
+               instead.
+            3. If a code change fixes it:
+               - Create a branch named `claude/ci-fix/<PR branch>-${{ github.run_id }}` from the checked-out
+                 commit. Never push to the PR branch itself.
+               - Make the smallest change that fixes the failure, and add or update tests if behaviour changes.
+               - Run the AGENTS.md validation commands for every area you changed and make sure they pass.
+               - Commit, push, and open a PR with `gh pr create --base ${{ github.event.workflow_run.head_branch }}`.
+                 Fill in .github/PULL_REQUEST_TEMPLATE.md and link to #${{ github.event.workflow_run.pull_requests[0].number }}.
+               - Don't change `infra/` or the deploy jobs in `.github/workflows/ci.yml`. If the fix belongs
+                 there, describe it in your comment instead.
+            4. Always finish by commenting on #${{ github.event.workflow_run.pull_requests[0].number }} with
+               `gh pr comment`, even if you couldn't find the cause. Start the comment with
+               `<!-- claude-ci-investigation -->` on its own line, then a `## CI failure investigation` heading,
+               and cover: which jobs and steps failed, the root cause, the kind of failure, what you changed
+               (with a link to the fix PR) or why you didn't change anything, and anything the author should
+               do next. Keep it short, and link to the failed run.
