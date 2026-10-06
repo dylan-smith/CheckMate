@@ -324,7 +324,7 @@
                 {
                   "type": 1,
                   "content": {
-                    "json": "The health check is expected to fail during a deployment, because the API restarts while the new version starts up. A dip that lines up with a deployment marker is normal. A dip with no deployment nearby means the API was down."
+                    "json": "The health check is expected to fail during a deployment, because the deployment pauses the API (blocking all traffic) while it backs up and migrates the database, then restarts it on the new version. A dip that lines up with a deployment marker is normal. A dip with no deployment nearby means the API was down."
                   },
                   "name": "overview-availability-description"
                 }
@@ -367,7 +367,7 @@
                 {
                   "type": 1,
                   "content": {
-                    "json": "Each failed check with the error it got, newest first. Compare the times with the deployment markers on the availability chart: failures during a deployment are expected."
+                    "json": "Each failed check with the error it got, newest first. **403 - Ip Forbidden** means a deployment had paused the API, which is expected. Compare other failures with the deployment markers on the availability chart."
                   },
                   "name": "overview-availability-failures-description"
                 }
