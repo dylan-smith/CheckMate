@@ -1,0 +1,11 @@
+<Project>
+
+  <!-- Applies to every backend project. -->
+  <PropertyGroup>
+    <!-- The .NET analyzers' recommended rule set for the latest SDK, on top of the default rules. -->
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- Keep the build warning-free: compiler, nullable and analyzer warnings all fail it. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

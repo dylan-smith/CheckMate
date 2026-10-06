@@ -65,6 +65,11 @@ npm run test:e2e
 - Avoid new dependencies unless they're needed.
 - Formatting is enforced: `.editorconfig` + `dotnet format` for C#, Prettier + ESLint for the
   frontend. Line endings are LF.
+- Warnings fail the build. The backend uses `AnalysisLevel` `latest-recommended` with
+  `TreatWarningsAsErrors` (`backend/Directory.Build.props`), so log through `[LoggerMessage]`
+  methods, not `logger.LogInformation(...)`. Frontend ESLint uses type-checked typescript-eslint
+  rules plus the jsx-a11y, Vitest, Testing Library and Playwright plugins, with
+  `--max-warnings 0`.
 - Add or update tests for new or changed behavior.
 
 ### Database
