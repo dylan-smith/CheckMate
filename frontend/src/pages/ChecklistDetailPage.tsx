@@ -38,8 +38,10 @@ function ChecklistDetail({ id }: { id: number }) {
   useEffect(() => {
     // Ignore a response that arrives after the user has left the page.
     let current = true
-    getChecklist(id)
-      .then((loaded) => {
+
+    async function loadChecklist() {
+      try {
+        const loaded = await getChecklist(id)
         if (!current) {
           return
         }
@@ -49,19 +51,20 @@ function ChecklistDetail({ id }: { id: number }) {
           setChecklist(loaded)
           setName(loaded.name)
         }
-      })
-      .catch((error: unknown) => {
+      } catch (error) {
         if (!current) {
           return
         }
         trackException(error, { operation: 'load' })
         setErrorMessage(describeFetchError(error, 'Unable to load checklist.'))
-      })
-      .finally(() => {
+      } finally {
         if (current) {
           setLoading(false)
         }
-      })
+      }
+    }
+
+    void loadChecklist()
 
     return () => {
       current = false
