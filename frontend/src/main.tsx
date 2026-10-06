@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import CssBaseline from '@mui/material/CssBaseline'
 import { ThemeProvider, createTheme } from '@mui/material/styles'
 import { createRoot } from 'react-dom/client'
+import { BrowserRouter } from 'react-router'
 import './index.css'
 import App from './App.tsx'
 import ErrorBoundary from './ErrorBoundary.tsx'
@@ -47,7 +48,9 @@ createRoot(document.getElementById('root')!, {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <ErrorBoundary>
-        <App />
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
       </ErrorBoundary>
     </ThemeProvider>
   </StrictMode>,

@@ -1,12 +1,26 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 
 // The backend started by playwright.config.ts.
 const checklistsApiUrl = 'http://localhost:5269/api/checklists'
 
+// Creates a checklist from the list page and waits for it to appear.
+async function createChecklist(page: Page, name: string) {
+  await page.getByLabel('Checklist name').fill(name)
+  await page.getByRole('button', { name: 'Create checklist' }).click()
+  await expect(page.getByRole('link', { name, exact: true })).toBeVisible()
+}
+
+// Opens a checklist from the list page and waits for its detail page to load.
+async function openChecklist(page: Page, name: string) {
+  await page.getByRole('link', { name, exact: true }).click()
+  await expect(page).toHaveURL(/\/checklists\/\d+$/)
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+}
+
 test.describe('Checklist management', () => {
   test.beforeEach(async ({ page, request }) => {
     // Delete leftover checklists (including ones other spec files created) through the API, since
-    // clicking Delete in the UI races the page's initial load.
+    // deleting them in the UI races the page's initial load.
     const response = await request.get(checklistsApiUrl)
     expect(response.ok()).toBe(true)
     for (const { id } of (await response.json()) as { id: number }[]) {
@@ -22,35 +36,26 @@ test.describe('Checklist management', () => {
 
   test.describe('Create checklist', () => {
     test('creates a new checklist', async ({ page }) => {
-      await page.getByLabel('Checklist name').fill('Daily chores')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-
-      await expect(page.getByText('Daily chores')).toBeVisible()
+      await createChecklist(page, 'Daily chores')
     })
 
     test('trims whitespace from checklist name', async ({ page }) => {
       await page.getByLabel('Checklist name').fill('  Trimmed name  ')
       await page.getByRole('button', { name: 'Create checklist' }).click()
 
-      await expect(page.getByRole('listitem')).toContainText('Trimmed name')
+      await expect(
+        page.getByRole('link', { name: 'Trimmed name', exact: true }),
+      ).toBeVisible()
     })
 
     test('clears the input after creating a checklist', async ({ page }) => {
-      await page.getByLabel('Checklist name').fill('My list')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-
-      await expect(page.getByText('My list')).toBeVisible()
+      await createChecklist(page, 'My list')
       await expect(page.getByLabel('Checklist name')).toHaveValue('')
     })
 
     test('displays checklists in alphabetical order', async ({ page }) => {
-      await page.getByLabel('Checklist name').fill('Zulu')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-      await expect(page.getByText('Zulu')).toBeVisible()
-
-      await page.getByLabel('Checklist name').fill('Alpha')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-      await expect(page.getByText('Alpha')).toBeVisible()
+      await createChecklist(page, 'Zulu')
+      await createChecklist(page, 'Alpha')
 
       const items = page.getByRole('listitem')
       await expect(items).toHaveCount(2)
@@ -59,91 +64,98 @@ test.describe('Checklist management', () => {
     })
   })
 
-  test.describe('Edit checklist', () => {
-    test('edits an existing checklist', async ({ page }) => {
-      // Create a checklist first
-      await page.getByLabel('Checklist name').fill('Original')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-      await expect(page.getByText('Original')).toBeVisible()
+  test.describe('Navigation', () => {
+    test('opens a checklist and goes back to the list', async ({ page }) => {
+      await createChecklist(page, 'Groceries')
+      await openChecklist(page, 'Groceries')
 
-      // Click edit
-      await page.getByRole('button', { name: 'Edit' }).click()
+      await page.getByRole('link', { name: 'Back to checklists' }).click()
 
-      // Form should switch to edit mode
+      await expect(page).toHaveURL(/\/$/)
       await expect(
-        page.getByRole('heading', { name: 'Edit checklist' }),
+        page.getByRole('link', { name: 'Groceries', exact: true }),
       ).toBeVisible()
-      await expect(page.getByLabel('Checklist name')).toHaveValue('Original')
-
-      // Update the name
-      await page.getByLabel('Checklist name').clear()
-      await page.getByLabel('Checklist name').fill('Updated')
-      await page.getByRole('button', { name: 'Save changes' }).click()
-
-      // Verify the update
-      await expect(page.getByRole('listitem')).toContainText('Updated')
-      await expect(page.getByText('Original')).not.toBeVisible()
     })
 
-    test('cancels editing and restores create mode', async ({ page }) => {
-      // Create a checklist
-      await page.getByLabel('Checklist name').fill('Test item')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-      await expect(page.getByText('Test item')).toBeVisible()
+    test('supports browser back and forward', async ({ page }) => {
+      await createChecklist(page, 'Groceries')
+      await openChecklist(page, 'Groceries')
 
-      // Start editing
-      await page.getByRole('button', { name: 'Edit' }).click()
-      await expect(
-        page.getByRole('heading', { name: 'Edit checklist' }),
-      ).toBeVisible()
-
-      // Cancel
-      await page.getByRole('button', { name: 'Cancel' }).click()
-
-      // Should restore create mode
+      await page.goBack()
       await expect(
         page.getByRole('heading', { name: 'Create checklist' }),
       ).toBeVisible()
-      await expect(page.getByLabel('Checklist name')).toHaveValue('')
+
+      await page.goForward()
+      await expect(
+        page.getByRole('heading', { name: 'Groceries', exact: true }),
+      ).toBeVisible()
+    })
+
+    test('loads a checklist from a deep link', async ({ page }) => {
+      await createChecklist(page, 'Deep link')
+      await openChecklist(page, 'Deep link')
+
+      await page.reload()
+
+      await expect(
+        page.getByRole('heading', { name: 'Deep link', exact: true }),
+      ).toBeVisible()
+      await expect(page.getByLabel('Checklist name')).toHaveValue('Deep link')
+    })
+
+    test('shows not found for a checklist that does not exist', async ({
+      page,
+    }) => {
+      await page.goto('/checklists/999999')
+
+      await expect(
+        page.getByRole('heading', { name: 'Page not found' }),
+      ).toBeVisible()
+      await page.getByRole('link', { name: 'Go to checklists' }).click()
+      await expect(page.getByText('No checklists yet.')).toBeVisible()
+    })
+
+    test('shows not found for an unknown route', async ({ page }) => {
+      await page.goto('/no/such/page')
+
+      await expect(
+        page.getByRole('heading', { name: 'Page not found' }),
+      ).toBeVisible()
+    })
+  })
+
+  test.describe('Rename checklist', () => {
+    test('renames a checklist from its page', async ({ page }) => {
+      await createChecklist(page, 'Original')
+      await openChecklist(page, 'Original')
+
+      await page.getByLabel('Checklist name').fill('Updated')
+      await page.getByRole('button', { name: 'Save changes' }).click()
+
+      await expect(
+        page.getByRole('heading', { name: 'Updated', exact: true }),
+      ).toBeVisible()
+
+      await page.getByRole('link', { name: 'Back to checklists' }).click()
+      await expect(
+        page.getByRole('link', { name: 'Updated', exact: true }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('link', { name: 'Original', exact: true }),
+      ).not.toBeVisible()
     })
   })
 
   test.describe('Delete checklist', () => {
-    test('deletes a checklist', async ({ page }) => {
-      // Create a checklist
-      await page.getByLabel('Checklist name').fill('To delete')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-      await expect(page.getByText('To delete')).toBeVisible()
+    test('deletes a checklist and goes back to the list', async ({ page }) => {
+      await createChecklist(page, 'To delete')
+      await openChecklist(page, 'To delete')
 
-      // Delete it
       await page.getByRole('button', { name: 'Delete' }).click()
 
-      // Should show empty state
+      await expect(page).toHaveURL(/\/$/)
       await expect(page.getByText('No checklists yet.')).toBeVisible()
-    })
-
-    test('cancels edit mode when the edited checklist is deleted', async ({
-      page,
-    }) => {
-      // Create a checklist
-      await page.getByLabel('Checklist name').fill('Edit then delete')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-      await expect(page.getByText('Edit then delete')).toBeVisible()
-
-      // Start editing
-      await page.getByRole('button', { name: 'Edit' }).click()
-      await expect(
-        page.getByRole('heading', { name: 'Edit checklist' }),
-      ).toBeVisible()
-
-      // Delete the item being edited
-      await page.getByRole('button', { name: 'Delete' }).click()
-
-      // Should return to create mode
-      await expect(
-        page.getByRole('heading', { name: 'Create checklist' }),
-      ).toBeVisible()
-      await expect(page.getByLabel('Checklist name')).toHaveValue('')
     })
   })
 
@@ -151,46 +163,31 @@ test.describe('Checklist management', () => {
     test('shows error when creating a checklist with a duplicate name', async ({
       page,
     }) => {
-      // Create a checklist
-      await page.getByLabel('Checklist name').fill('Unique name')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-      await expect(page.getByText('Unique name')).toBeVisible()
+      await createChecklist(page, 'Unique name')
 
-      // Try to create another with the same name
       await page.getByLabel('Checklist name').fill('Unique name')
       await page.getByRole('button', { name: 'Create checklist' }).click()
 
-      // Should show duplicate error
       await expect(
         page.getByText('A checklist with this name already exists.'),
       ).toBeVisible()
     })
 
-    test('shows error when editing a checklist to a duplicate name', async ({
+    test('shows error when renaming a checklist to a duplicate name', async ({
       page,
     }) => {
-      // Create two checklists
-      await page.getByLabel('Checklist name').fill('First')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-      await expect(page.getByText('First')).toBeVisible()
+      await createChecklist(page, 'First')
+      await createChecklist(page, 'Second')
+      await openChecklist(page, 'Second')
 
-      await page.getByLabel('Checklist name').fill('Second')
-      await page.getByRole('button', { name: 'Create checklist' }).click()
-      await expect(page.getByText('Second')).toBeVisible()
-
-      // Edit Second to have the same name as First
-      const items = page.getByRole('listitem')
-      await items
-        .filter({ hasText: 'Second' })
-        .getByRole('button', { name: 'Edit' })
-        .click()
-      await page.getByLabel('Checklist name').clear()
       await page.getByLabel('Checklist name').fill('First')
       await page.getByRole('button', { name: 'Save changes' }).click()
 
-      // Should show duplicate error
       await expect(
         page.getByText('A checklist with this name already exists.'),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('heading', { name: 'Second', exact: true }),
       ).toBeVisible()
     })
   })

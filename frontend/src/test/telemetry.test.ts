@@ -4,6 +4,7 @@ import {
   resetTelemetry,
   trackEvent,
   trackException,
+  trackPageView,
 } from '../telemetry'
 
 const sdk = vi.hoisted(() => ({
@@ -55,10 +56,12 @@ describe('telemetry', () => {
       initTelemetry()
       trackEvent('Something')
       trackException(new Error('boom'))
+      trackPageView()
 
       expect(sdk.constructor).not.toHaveBeenCalled()
       expect(sdk.trackEvent).not.toHaveBeenCalled()
       expect(sdk.trackException).not.toHaveBeenCalled()
+      expect(sdk.trackPageView).not.toHaveBeenCalled()
     })
   })
 
@@ -79,7 +82,27 @@ describe('telemetry', () => {
         }),
       })
       expect(sdk.loadAppInsights).toHaveBeenCalledOnce()
-      expect(sdk.trackPageView).toHaveBeenCalledOnce()
+    })
+
+    it('leaves page views to the router instead of tracking routes itself', () => {
+      initTelemetry()
+
+      expect(sdk.constructor).toHaveBeenCalledWith({
+        config: expect.objectContaining({ enableAutoRouteTracking: false }),
+      })
+      expect(sdk.trackPageView).not.toHaveBeenCalled()
+    })
+
+    it('tracks a page view for the current URL', () => {
+      initTelemetry()
+      window.history.pushState({}, '', '/checklists/7')
+
+      trackPageView()
+
+      expect(sdk.trackPageView).toHaveBeenCalledWith({
+        uri: `${window.location.origin}/checklists/7`,
+      })
+      window.history.pushState({}, '', '/')
     })
 
     it.each(['', '/'])(

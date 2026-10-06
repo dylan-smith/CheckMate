@@ -31,6 +31,7 @@ export function initTelemetry() {
         ],
         disableFetchTracking: false,
         enableUnhandledPromiseRejectionTracking: true,
+        // App.tsx tracks a page view for each route the router renders, so the SDK doesn't watch history itself.
         enableAutoRouteTracking: false,
         // Chrome blocks the unload event by default and logs a permissions policy violation when it's hooked.
         // The SDK still flushes on pagehide, visibilitychange and beforeunload.
@@ -41,7 +42,6 @@ export function initTelemetry() {
       item.tags = { ...item.tags, 'ai.cloud.role': 'CheckMate.Web' }
     })
     sdk.loadAppInsights()
-    sdk.trackPageView()
     appInsights = sdk
   } catch (error) {
     console.error('Telemetry is disabled because it failed to start.', error)
@@ -57,6 +57,10 @@ export function trackException(error: unknown, properties?: Properties) {
 
 export function trackEvent(name: string, properties?: Properties) {
   appInsights?.trackEvent({ name, properties })
+}
+
+export function trackPageView() {
+  appInsights?.trackPageView({ uri: window.location.href })
 }
 
 // Only for tests, so each one starts with telemetry uninitialized.
