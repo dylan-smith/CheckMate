@@ -275,6 +275,12 @@ The what-if identity is a user-assigned managed identity with a federated creden
 |--------|-------------|
 | `AZURE_SQL_CONNECTION_STRING` | SQL Server connection string used at runtime and for migrations (applied to the App Service by the Bicep deployment) |
 | `SLACK_WEBHOOK_URL` | Optional. Slack incoming webhook URL that alerts post to. Without it, alerts only go to email and the Azure mobile app |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (from `claude setup-token`) used by the CI failure investigation workflow |
+| `AUTOMERGE_TOKEN` | Personal access token with write access to contents and pull requests. The Dependabot workflows use it to comment, and the CI failure investigation workflow uses it to push fix branches and open PRs (so CI runs on them) |
+
+### CI Failure Investigation
+
+When CI fails on a pull request, `.github/workflows/ci-failure-investigation.yml` runs Claude Code to investigate. If a code change fixes the failure, Claude opens a separate PR from a `claude/ci-fix/` branch, based on the failing PR's branch, and never pushes to the failing branch itself. Either way, it comments on the failing PR with the root cause and what it did. It skips fork PRs, Dependabot PRs and its own `claude/ci-fix/` PRs. CI runs on pull requests into any branch, so the stacked fix PRs are checked too.
 
 ### Environment
 
