@@ -62,9 +62,10 @@ async function recordCreated(response: Response) {
   return pendingFile
 }
 
-// One person's visit: open the app, create a checklist, rename it, try a duplicate name (the API answers
-// 409, which shows up as a failed request), then delete it. The created checklist's id is kept in a file of its
-// own under pendingDir until it's deleted, so load.global-teardown.ts can delete it if the visit fails partway.
+// One person's visit: open the app, create a checklist, open and rename it, go back and try a duplicate name
+// (the API answers 409, which shows up as a failed request), then open it again and delete it. The created
+// checklist's id is kept in a file of its own under pendingDir until it's deleted, so load.global-teardown.ts can
+// delete it if the visit fails partway.
 async function visit(browser: Browser, name: string) {
   const context = await browser.newContext()
   const page = await context.newPage()
@@ -77,23 +78,19 @@ async function visit(browser: Browser, name: string) {
 
     await page.getByLabel('Checklist name').fill(name)
     const pendingFile = await recordCreated(await clickCreate(page))
-    const item = page
-      .getByRole('listitem')
-      .filter({ has: page.getByText(name, { exact: true }) })
-    await expect(item).toBeVisible()
+    await page.getByRole('link', { name, exact: true }).click()
+    await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
 
-    await item.getByRole('button', { name: 'Edit' }).click()
-    await expect(
-      page.getByRole('heading', { name: 'Edit checklist' }),
-    ).toBeVisible()
     const renamed = `${name} renamed`
     await page.getByLabel('Checklist name').fill(renamed)
     await page.getByRole('button', { name: 'Save changes' }).click()
-    const renamedItem = page
-      .getByRole('listitem')
-      .filter({ has: page.getByText(renamed, { exact: true }) })
-    await expect(renamedItem).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: renamed, exact: true }),
+    ).toBeVisible()
 
+    await page.getByRole('link', { name: 'Back to checklists' }).click()
+    const renamedLink = page.getByRole('link', { name: renamed, exact: true })
+    await expect(renamedLink).toBeVisible()
     await page.getByLabel('Checklist name').fill(renamed)
     const duplicate = await clickCreate(page)
     if (duplicate.status() === 201) {
@@ -103,12 +100,16 @@ async function visit(browser: Browser, name: string) {
     }
     await expect(page.getByText('already exists')).toBeVisible()
 
-    await renamedItem.getByRole('button', { name: 'Delete' }).click()
-    await expect(renamedItem).toBeHidden()
+    await renamedLink.click()
+    await page.getByRole('button', { name: 'Delete' }).click()
+    await expect(
+      page.getByRole('heading', { name: 'Create checklist' }),
+    ).toBeVisible()
     rmSync(pendingFile, { force: true })
-    // The item disappears as soon as the app starts reloading the list, so wait for that reload too. Leaving
-    // while it's in flight aborts it, and the app reports the aborted fetch as a "Failed to fetch" exception.
+    // Deleting goes back to the list, which loads again, so wait for that load too. Leaving while it's in flight
+    // aborts it, and the app reports the aborted fetch as a "Failed to fetch" exception.
     await expect(page.getByLabel('Loading')).toBeHidden()
+    await expect(renamedLink).toBeHidden()
 
     // Leaving the page makes the Application Insights SDK flush what it has buffered; give the beacon a moment.
     await page.goto('about:blank')
