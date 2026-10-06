@@ -54,6 +54,7 @@ var slackEnabled = !empty(slackWebhookUrl)
 var investigationEnabled = slackEnabled && !empty(alertInvestigationToken)
 
 // Rule names the Slack messages look up "What to do" steps by. Azure names the Failure Anomalies rule itself.
+var slowApiName = 'CheckMate slow API'
 var slowPageLoadsName = 'CheckMate slow page loads'
 var failureAnomaliesName = 'Failure Anomalies - ${last(split(appInsightsId, '/'))}'
 var resourceHealthName = 'CheckMate resource health'
@@ -89,6 +90,11 @@ var apiServerErrorSteps = [
 var alertSteps = union(
   toObject(metricAlerts, alert => alert.name, alert => alert.steps),
   {
+    '${slowApiName}': [
+      'On the *API* tab of the ${workbookLink}, check *Operations* and *SQL call duration* for what\'s slow. ${performanceLink} breaks it down further.'
+      'Cold starts and database resumes make a few requests slow; if that\'s all it is, close the alert.'
+      'If SQL is slow, check ${queryPerformanceLink}. If everything is slow, check whether the CPU quota is nearly used up.'
+    ]
     '${slowPageLoadsName}': [
       'On the *Frontend* tab of the ${workbookLink}, check *Page load time* for the slow pages, and *Browser-observed API duration*.'
       'If the API calls are slow, follow the steps for *CheckMate slow API*. Otherwise check whether a recent frontend deployment (${ciRunsLink}) made the bundle bigger or added work on load.'
@@ -639,25 +645,6 @@ var metricAlerts = [
     dimensions: []
   }
   {
-    name: 'CheckMate slow API'
-    description: 'The API\'s average response time was over 5 seconds for 30 minutes.'
-    steps: [
-      'On the *API* tab of the ${workbookLink}, check *Operations* and *SQL call duration* for what\'s slow. ${performanceLink} breaks it down further.'
-      'Cold starts and database resumes make a few requests slow; if that\'s all it is, close the alert.'
-      'If SQL is slow, check ${queryPerformanceLink}. If everything is slow, check whether the CPU quota is nearly used up.'
-    ]
-    severity: 3
-    scope: appServiceId
-    namespace: 'Microsoft.Web/sites'
-    metric: 'HttpResponseTime'
-    timeAggregation: 'Average'
-    operator: 'GreaterThan'
-    threshold: 5
-    windowSize: 'PT30M'
-    frequency: 'PT5M'
-    dimensions: []
-  }
-  {
     name: 'CheckMate SQL storage'
     description: 'The database has used more than 80% of its maximum size.'
     steps: [
@@ -709,6 +696,41 @@ resource metricAlertRules 'Microsoft.Insights/metricAlerts@2018-03-01' = [
     }
   }
 ]
+
+// A log alert rather than the App Service HttpResponseTime metric, which also counts Kudu deployment calls: at
+// CheckMate's traffic a deployment's few slow publish calls pushed the 30 minute average over the threshold. App
+// Insights only sees the app's own requests, and needing at least 10 of them keeps a cold start from alerting alone.
+resource slowApi 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
+  name: slowApiName
+  location: location
+  properties: {
+    displayName: slowApiName
+    description: 'The API\'s average response time was over 5 seconds across at least 10 requests in 30 minutes.'
+    severity: 3
+    enabled: true
+    scopes: [workspaceId]
+    evaluationFrequency: 'PT15M'
+    windowSize: 'PT30M'
+    autoMitigate: true
+    criteria: {
+      allOf: [
+        {
+          query: 'AppRequests\n| where AppRoleName != "${frontendRoleName}" and Url !endswith "/robots933456.txt"\n| summarize Requests = count(), AverageMs = avg(DurationMs)\n| where Requests >= 10 and AverageMs > 5000'
+          timeAggregation: 'Count'
+          operator: 'GreaterThan'
+          threshold: 0
+          failingPeriods: {
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
+          }
+        }
+      ]
+    }
+    actions: {
+      actionGroups: [actionGroup.id]
+    }
+  }
+}
 
 // Needs at least 5 page loads so one slow phone on bad wifi doesn't alert.
 resource slowPageLoads 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
