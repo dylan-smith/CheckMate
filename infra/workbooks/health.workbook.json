@@ -143,7 +143,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Health at a glance\nAPI and browser telemetry from Application Insights. Server errors (5xx) mean something is broken and turn orange at 1% and red at 5%. Client errors (4xx) usually mean a caller sent a bad request, such as a duplicate name or a checklist that no longer exists, so they are shown but never colored. P95 response time turns orange at 1 s and red at 3 s. It's the P95 across every request in the time range, so it won't match the P95 under the response time chart's legend, which averages the P95 of each interval (as do the legends on the other percentile charts). **Overall** is the worst of the colored tiles, and health check uptime turns orange when there are no results, because the test runs every 15 minutes so that means it has stopped. API and browser errors count only exceptions that need attention: expected ones (API exceptions logged below Error, such as retried SQL connections; automated test traffic; and browser network errors the user recovered from, because a later API call in the same session succeeded) are counted separately and never colored. The exception tables on the API and Frontend tabs give the reason for each."
+              "json": "## Health at a glance\nAPI and browser telemetry from Application Insights. The time charts mark each backend deployment (green for success, red for a failed deployment)."
             },
             "name": "overview-intro"
           },
@@ -280,148 +280,257 @@
             "name": "overview-tiles"
           },
           {
-            "type": 3,
+            "type": 1,
             "content": {
-              "version": "KqlItem/1.0",
-              "query": "availabilityResults\n| where timestamp {TimeRange}\n| summarize [\"Availability %\"] = round(100.0 * countif(success == 1) / count(), 1) by bin(timestamp, {TimeRange:grain})",
-              "size": 0,
-              "aggregation": 3,
-              "title": "Health check availability (GET /health every 15 minutes)",
-              "noDataMessage": "No health check results in this period.",
-              "timeContext": {
-                "durationMs": 86400000
-              },
-              "timeContextFromParameter": "TimeRange",
-              "queryType": 0,
-              "resourceType": "microsoft.insights/components",
-              "crossComponentResources": [
-                "__APP_INSIGHTS_ID__"
-              ],
-              "visualization": "timechart",
-              "showAnnotations": true,
-              "chartSettings": {
-                "ySettings": {
-                  "min": 0,
-                  "max": 100
+              "json": "**Overall** is the worst of the colored tiles. Gray tiles are there for context and never count against it.\n- **Health check uptime** turns orange below 100% and red below 95%. It's also orange when there are no results, because the test runs every 15 minutes so that means it has stopped.\n- **Server errors (5xx)** mean something is broken and turn orange at 1% and red at 5%. **Client errors (4xx)** usually mean a caller sent a bad request, so they're never colored.\n- **P95 response time** turns orange at 1 s and red at 3 s. It's the P95 across every request in the time range.\n- **API errors** and **Browser errors** count only exceptions that need attention, and turn orange at 1 and red at 10. **Expected exceptions** are counted separately and never colored."
+            },
+            "name": "overview-tiles-description"
+          },
+          {
+            "type": 12,
+            "content": {
+              "version": "NotebookGroup/1.0",
+              "groupType": "editable",
+              "items": [
+                {
+                  "type": 3,
+                  "content": {
+                    "version": "KqlItem/1.0",
+                    "query": "availabilityResults\n| where timestamp {TimeRange}\n| summarize [\"Availability %\"] = round(100.0 * countif(success == 1) / count(), 1) by bin(timestamp, {TimeRange:grain})",
+                    "size": 0,
+                    "aggregation": 3,
+                    "title": "Health check availability (GET /health every 15 minutes)",
+                    "noDataMessage": "No health check results in this period.",
+                    "timeContext": {
+                      "durationMs": 86400000
+                    },
+                    "timeContextFromParameter": "TimeRange",
+                    "queryType": 0,
+                    "resourceType": "microsoft.insights/components",
+                    "crossComponentResources": [
+                      "__APP_INSIGHTS_ID__"
+                    ],
+                    "visualization": "timechart",
+                    "showAnnotations": true,
+                    "chartSettings": {
+                      "ySettings": {
+                        "min": 0,
+                        "max": 100
+                      }
+                    }
+                  },
+                  "name": "overview-availability"
+                },
+                {
+                  "type": 1,
+                  "content": {
+                    "json": "The health check is expected to fail during a deployment, because the API restarts while the new version starts up. A dip that lines up with a deployment marker is normal. A dip with no deployment nearby means the API was down."
+                  },
+                  "name": "overview-availability-description"
                 }
-              }
+              ]
             },
-            "name": "overview-availability",
-            "customWidth": "50"
+            "customWidth": "50",
+            "name": "overview-availability-group"
           },
           {
-            "type": 3,
+            "type": 12,
             "content": {
-              "version": "KqlItem/1.0",
-              "query": "availabilityResults\n| where timestamp {TimeRange}\n| where success == 0\n| project timestamp, location, message, [\"duration (ms)\"] = round(duration, 0)\n| order by timestamp desc\n| take 50",
-              "size": 0,
-              "title": "Failed health checks",
-              "noDataMessage": "No failed health checks in this period.",
-              "noDataMessageStyle": 3,
-              "timeContext": {
-                "durationMs": 86400000
-              },
-              "timeContextFromParameter": "TimeRange",
-              "queryType": 0,
-              "resourceType": "microsoft.insights/components",
-              "crossComponentResources": [
-                "__APP_INSIGHTS_ID__"
-              ],
-              "visualization": "table",
-              "gridSettings": {
-                "rowLimit": 50
-              }
+              "version": "NotebookGroup/1.0",
+              "groupType": "editable",
+              "items": [
+                {
+                  "type": 3,
+                  "content": {
+                    "version": "KqlItem/1.0",
+                    "query": "availabilityResults\n| where timestamp {TimeRange}\n| where success == 0\n| project timestamp, location, message, [\"duration (ms)\"] = round(duration, 0)\n| order by timestamp desc\n| take 50",
+                    "size": 0,
+                    "title": "Failed health checks",
+                    "noDataMessage": "No failed health checks in this period.",
+                    "noDataMessageStyle": 3,
+                    "timeContext": {
+                      "durationMs": 86400000
+                    },
+                    "timeContextFromParameter": "TimeRange",
+                    "queryType": 0,
+                    "resourceType": "microsoft.insights/components",
+                    "crossComponentResources": [
+                      "__APP_INSIGHTS_ID__"
+                    ],
+                    "visualization": "table",
+                    "gridSettings": {
+                      "rowLimit": 50
+                    }
+                  },
+                  "name": "overview-availability-failures"
+                },
+                {
+                  "type": 1,
+                  "content": {
+                    "json": "Each failed check with the error it got, newest first. Compare the times with the deployment markers on the availability chart: failures during a deployment are expected."
+                  },
+                  "name": "overview-availability-failures-description"
+                }
+              ]
             },
-            "name": "overview-availability-failures",
-            "customWidth": "50"
+            "customWidth": "50",
+            "name": "overview-availability-failures-group"
           },
           {
-            "type": 3,
+            "type": 12,
             "content": {
-              "version": "KqlItem/1.0",
-              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize Succeeded = countif(success == true), [\"Client errors (4xx)\"] = countif(toint(resultCode) between (400 .. 499)),\n    [\"Server errors (5xx)\"] = countif(toint(resultCode) between (500 .. 599)) by bin(timestamp, {TimeRange:grain})",
-              "size": 0,
-              "title": "API requests",
-              "timeContext": {
-                "durationMs": 86400000
-              },
-              "timeContextFromParameter": "TimeRange",
-              "queryType": 0,
-              "resourceType": "microsoft.insights/components",
-              "crossComponentResources": [
-                "__APP_INSIGHTS_ID__"
-              ],
-              "visualization": "timechart",
-              "showAnnotations": true
+              "version": "NotebookGroup/1.0",
+              "groupType": "editable",
+              "items": [
+                {
+                  "type": 3,
+                  "content": {
+                    "version": "KqlItem/1.0",
+                    "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize Succeeded = countif(success == true), [\"Client errors (4xx)\"] = countif(toint(resultCode) between (400 .. 499)),\n    [\"Server errors (5xx)\"] = countif(toint(resultCode) between (500 .. 599)) by bin(timestamp, {TimeRange:grain})",
+                    "size": 0,
+                    "title": "API requests",
+                    "timeContext": {
+                      "durationMs": 86400000
+                    },
+                    "timeContextFromParameter": "TimeRange",
+                    "queryType": 0,
+                    "resourceType": "microsoft.insights/components",
+                    "crossComponentResources": [
+                      "__APP_INSIGHTS_ID__"
+                    ],
+                    "visualization": "timechart",
+                    "showAnnotations": true
+                  },
+                  "name": "overview-requests"
+                },
+                {
+                  "type": 1,
+                  "content": {
+                    "json": "Server errors (5xx) mean something is broken. Client errors (4xx) usually mean a caller sent a bad request, such as a duplicate name or a checklist that no longer exists."
+                  },
+                  "name": "overview-requests-description"
+                }
+              ]
             },
-            "name": "overview-requests",
-            "customWidth": "50"
+            "customWidth": "50",
+            "name": "overview-requests-group"
           },
           {
-            "type": 3,
+            "type": 12,
             "content": {
-              "version": "KqlItem/1.0",
-              "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize P50 = percentile(duration, 50), P95 = percentile(duration, 95) by bin(timestamp, {TimeRange:grain})",
-              "size": 0,
-              "aggregation": 3,
-              "title": "API response time (ms)",
-              "timeContext": {
-                "durationMs": 86400000
-              },
-              "timeContextFromParameter": "TimeRange",
-              "queryType": 0,
-              "resourceType": "microsoft.insights/components",
-              "crossComponentResources": [
-                "__APP_INSIGHTS_ID__"
-              ],
-              "visualization": "timechart",
-              "showAnnotations": true
+              "version": "NotebookGroup/1.0",
+              "groupType": "editable",
+              "items": [
+                {
+                  "type": 3,
+                  "content": {
+                    "version": "KqlItem/1.0",
+                    "query": "requests\n| where timestamp {TimeRange}\n| where url !endswith '/robots933456.txt'\n| summarize P50 = percentile(duration, 50), P95 = percentile(duration, 95) by bin(timestamp, {TimeRange:grain})",
+                    "size": 0,
+                    "aggregation": 3,
+                    "title": "API response time (ms)",
+                    "timeContext": {
+                      "durationMs": 86400000
+                    },
+                    "timeContextFromParameter": "TimeRange",
+                    "queryType": 0,
+                    "resourceType": "microsoft.insights/components",
+                    "crossComponentResources": [
+                      "__APP_INSIGHTS_ID__"
+                    ],
+                    "visualization": "timechart",
+                    "showAnnotations": true
+                  },
+                  "name": "overview-duration"
+                },
+                {
+                  "type": 1,
+                  "content": {
+                    "json": "P50 and P95 of each interval. The P95 under the legend averages the per-interval values, so it won't match the **P95 response time** tile, which is the P95 across every request in the time range."
+                  },
+                  "name": "overview-duration-description"
+                }
+              ]
             },
-            "name": "overview-duration",
-            "customWidth": "50"
+            "customWidth": "50",
+            "name": "overview-duration-group"
           },
           {
-            "type": 3,
+            "type": 12,
             "content": {
-              "version": "KqlItem/1.0",
-              "query": "exceptions\n| where timestamp {TimeRange}\n| extend Source = iff(cloud_RoleName == \"CheckMate.Web\", \"Browser\", \"API\")\n| join kind=leftouter (dependencies\n    | where timestamp {TimeRange}\n    | where cloud_RoleName == \"CheckMate.Web\" and success == true and isnotempty(session_Id)\n    | summarize LastApiSuccess = max(timestamp) by session_Id) on session_Id\n| extend Handled = Source == \"API\" and severityLevel < 3, Synthetic = client_Browser startswith \"HeadlessChrome\",\n    NetworkError = Source == \"Browser\" and outerMessage has_any (\"Failed to fetch\", \"Load failed\", \"NetworkError\")\n| extend Recovered = NetworkError and LastApiSuccess > timestamp\n| extend Status = iff(Handled or Synthetic or Recovered, \"Expected\", \"Needs attention\"),\n    Reason = case(Handled, \"Logged below Error, such as a retried SQL connection\",\n        Source == \"API\", \"Logged as an error\",\n        Synthetic, \"Automated test traffic (CI smoke tests or Generate Load)\",\n        Recovered, \"Network error; a later API call in the same session succeeded\",\n        NetworkError, \"Network error with no later successful API call: the API was unreachable (cold start, outage or CORS) or the user gave up\",\n        \"Frontend error\")\n| extend Series = iff(Status == \"Expected\", \"Expected\", strcat(Source, \" errors\"))\n| summarize Exceptions = count() by Series, bin(timestamp, {TimeRange:grain})",
-              "size": 0,
-              "title": "Exceptions: errors to investigate vs expected",
-              "timeContext": {
-                "durationMs": 86400000
-              },
-              "timeContextFromParameter": "TimeRange",
-              "queryType": 0,
-              "resourceType": "microsoft.insights/components",
-              "crossComponentResources": [
-                "__APP_INSIGHTS_ID__"
-              ],
-              "visualization": "barchart"
+              "version": "NotebookGroup/1.0",
+              "groupType": "editable",
+              "items": [
+                {
+                  "type": 3,
+                  "content": {
+                    "version": "KqlItem/1.0",
+                    "query": "exceptions\n| where timestamp {TimeRange}\n| extend Source = iff(cloud_RoleName == \"CheckMate.Web\", \"Browser\", \"API\")\n| join kind=leftouter (dependencies\n    | where timestamp {TimeRange}\n    | where cloud_RoleName == \"CheckMate.Web\" and success == true and isnotempty(session_Id)\n    | summarize LastApiSuccess = max(timestamp) by session_Id) on session_Id\n| extend Handled = Source == \"API\" and severityLevel < 3, Synthetic = client_Browser startswith \"HeadlessChrome\",\n    NetworkError = Source == \"Browser\" and outerMessage has_any (\"Failed to fetch\", \"Load failed\", \"NetworkError\")\n| extend Recovered = NetworkError and LastApiSuccess > timestamp\n| extend Status = iff(Handled or Synthetic or Recovered, \"Expected\", \"Needs attention\"),\n    Reason = case(Handled, \"Logged below Error, such as a retried SQL connection\",\n        Source == \"API\", \"Logged as an error\",\n        Synthetic, \"Automated test traffic (CI smoke tests or Generate Load)\",\n        Recovered, \"Network error; a later API call in the same session succeeded\",\n        NetworkError, \"Network error with no later successful API call: the API was unreachable (cold start, outage or CORS) or the user gave up\",\n        \"Frontend error\")\n| extend Series = iff(Status == \"Expected\", \"Expected\", strcat(Source, \" errors\"))\n| summarize Exceptions = count() by Series, bin(timestamp, {TimeRange:grain})",
+                    "size": 0,
+                    "title": "Exceptions: errors to investigate vs expected",
+                    "timeContext": {
+                      "durationMs": 86400000
+                    },
+                    "timeContextFromParameter": "TimeRange",
+                    "queryType": 0,
+                    "resourceType": "microsoft.insights/components",
+                    "crossComponentResources": [
+                      "__APP_INSIGHTS_ID__"
+                    ],
+                    "visualization": "barchart"
+                  },
+                  "name": "overview-exceptions"
+                },
+                {
+                  "type": 1,
+                  "content": {
+                    "json": "Only **API errors** and **Browser errors** need attention. **Expected** covers API exceptions logged below Error (such as retried SQL connections), automated test traffic, and browser network errors the user recovered from because a later API call in the same session succeeded. The exception tables on the API and Frontend tabs give the reason for each."
+                  },
+                  "name": "overview-exceptions-description"
+                }
+              ]
             },
-            "name": "overview-exceptions",
-            "customWidth": "50"
+            "customWidth": "50",
+            "name": "overview-exceptions-group"
           },
           {
-            "type": 3,
+            "type": 12,
             "content": {
-              "version": "KqlItem/1.0",
-              "query": "pageViews\n| where timestamp {TimeRange}\n| summarize Views = count(), Users = dcount(user_Id) by bin(timestamp, {TimeRange:grain})",
-              "size": 0,
-              "title": "Page views and users",
-              "timeContext": {
-                "durationMs": 86400000
-              },
-              "timeContextFromParameter": "TimeRange",
-              "queryType": 0,
-              "resourceType": "microsoft.insights/components",
-              "crossComponentResources": [
-                "__APP_INSIGHTS_ID__"
-              ],
-              "visualization": "timechart",
-              "showAnnotations": true
+              "version": "NotebookGroup/1.0",
+              "groupType": "editable",
+              "items": [
+                {
+                  "type": 3,
+                  "content": {
+                    "version": "KqlItem/1.0",
+                    "query": "pageViews\n| where timestamp {TimeRange}\n| summarize Views = count(), Users = dcount(user_Id) by bin(timestamp, {TimeRange:grain})",
+                    "size": 0,
+                    "title": "Page views and users",
+                    "timeContext": {
+                      "durationMs": 86400000
+                    },
+                    "timeContextFromParameter": "TimeRange",
+                    "queryType": 0,
+                    "resourceType": "microsoft.insights/components",
+                    "crossComponentResources": [
+                      "__APP_INSIGHTS_ID__"
+                    ],
+                    "visualization": "timechart",
+                    "showAnnotations": true
+                  },
+                  "name": "overview-pageviews"
+                },
+                {
+                  "type": 1,
+                  "content": {
+                    "json": "Page views and distinct users of the frontend in each interval. Automated test traffic (CI smoke tests and Generate Load) is included."
+                  },
+                  "name": "overview-pageviews-description"
+                }
+              ]
             },
-            "name": "overview-pageviews",
-            "customWidth": "50"
+            "customWidth": "50",
+            "name": "overview-pageviews-group"
           },
           {
             "type": 3,
