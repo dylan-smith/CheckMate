@@ -290,7 +290,7 @@ When CI fails on a pull request, `.github/workflows/ci-failure-investigation.yml
 
 When an alert fires (not when it resolves) or a budget alert is sent, the **CheckMate-SlackAlerts** Logic App posts the alert to Slack, adds a note that Claude is investigating, and starts `.github/workflows/alert-investigation.yml` with the alert payload. Claude Code reads the alert rule in `infra/modules/alerts.bicep`, queries Application Insights, Log Analytics, metrics, the activity log, resource health and costs, and checks recent deployments and Generate Load runs. It then posts a follow-up in the same channel with its verdict: for a real problem, the steps to fix it; for a false positive, the change to the rule (threshold, window, filter or query) that would stop it firing falsely. If Claude can't finish, or the Logic App can't start the workflow (for example because the token expired), Slack gets a message saying so.
 
-Claude only has read access: the `checkmate-alert-investigator` identity can't change Azure resources, and its GitHub token can only read the repository.
+Claude only has read access: the `checkmate-alert-investigator` identity can't change Azure resources, and its GitHub token can only read the repository. It never sees the Slack webhook either: it uploads its findings as an artifact, and a separate job on a fresh runner posts them. The Logic App hides its HTTP actions' inputs (the webhook URL and GitHub token) from its run history.
 
 To set it up:
 

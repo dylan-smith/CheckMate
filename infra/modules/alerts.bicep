@@ -133,7 +133,15 @@ Spent @{outputs('Parse_payload')?['data']?['SpendingAmount']} @{outputs('Parse_p
 2. A jump in Application Insights or Log Analytics usually means a lot of telemetry (for example a long Generate Load run). A jump in App Service or SQL Database usually means a plan or SKU changed, so check the resource group's Deployments and Activity log.
 3. Fix the cause, or raise `monthlyBudget` in `infra/main.bicepparam` if the new spend is expected.'''
 
-var investigatingLine = ':mag: Claude is investigating and will post what it finds here.'
+// Hides each HTTP action's inputs (the Slack webhook URL and GitHub token) from the Logic App's run history, which
+// anyone with Reader on the resource group can see, including the alert investigation identity.
+var secureInputs = {
+  secureData: {
+    properties: ['inputs']
+  }
+}
+
+var investigatingLine =':mag: Claude is investigating and will post what it finds here.'
 var commonAlertText = investigationEnabled
   ? '${commonAlertMessage}@{if(equals(outputs(\'Essentials\')?[\'monitorCondition\'], \'Resolved\'), \'\', concat(decodeUriComponent(\'%0A\'), \'${investigatingLine}\'))}'
   : commonAlertMessage
@@ -187,6 +195,7 @@ var investigationActions = {
       Start_Claude_investigation: {
         type: 'Http'
         runAfter: {}
+        runtimeConfiguration: secureInputs
         inputs: {
           method: 'POST'
           uri: 'https://api.github.com/repos/@{parameters(\'githubRepository\')}/actions/workflows/alert-investigation.yml/dispatches'
@@ -208,6 +217,7 @@ var investigationActions = {
         runAfter: {
           Start_Claude_investigation: ['Failed', 'TimedOut']
         }
+        runtimeConfiguration: secureInputs
         inputs: {
           method: 'POST'
           uri: '@parameters(\'slackWebhookUrl\')'
@@ -312,6 +322,7 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
             Post_budget_alert_to_Slack: {
               type: 'Http'
               runAfter: {}
+              runtimeConfiguration: secureInputs
               inputs: {
                 method: 'POST'
                 uri: '@parameters(\'slackWebhookUrl\')'
@@ -363,6 +374,7 @@ resource slackNotifier 'Microsoft.Logic/workflows@2019-05-01' = if (slackEnabled
                 runAfter: {
                   Azure_says_line: ['Succeeded']
                 }
+                runtimeConfiguration: secureInputs
                 inputs: {
                   method: 'POST'
                   uri: '@parameters(\'slackWebhookUrl\')'

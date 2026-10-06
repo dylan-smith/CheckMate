@@ -6,9 +6,11 @@ run-name: Investigate ${{ fromJSON(inputs.alert).data.essentials.alertRule || fr
 # decides whether it's a real problem or a false positive, and its findings are posted to the same Slack channel as
 # the alert: remediation steps for a real problem, or how to stop the alert firing falsely next time.
 #
-# Claude runs with every tool and no permission prompts (--dangerously-skip-permissions). That's safe because its
-# Azure identity is read-only and its GitHub token can only read this repository, so it can look but not change
-# anything. It writes its findings to a file, and a separate step posts that to Slack.
+# Claude runs with every tool and no permission prompts (--dangerously-skip-permissions). Its Azure identity is
+# read-only and its GitHub token can only read this repository, so it can look but not change anything. Telemetry it
+# reads could still try to steer it, and with a shell it could tamper with later steps on the same runner, so it
+# never sees the Slack webhook: it uploads its findings as an artifact, and a separate job on a fresh runner posts
+# them to Slack.
 #
 # To try it, run this workflow from the Actions tab with an alert payload (e.g. one copied from a Logic App run), or
 # choose Test on the CheckMate-Alerts action group in the Azure portal.
@@ -41,8 +43,6 @@ jobs:
       actions: read
       id-token: write
     timeout-minutes: 30
-    env:
-      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -116,15 +116,42 @@ jobs:
                  `infra/modules/alerts.bicep` (threshold, window, aggregation, dimension filter or query) with the
                  current and suggested values, and why it would still catch a real problem.
                - For inconclusive, what you couldn't check and what a person should look at next.
-               Don't include secrets, connection strings or personal data. A later step posts the file to Slack with
+               Don't include secrets, connection strings or personal data. A later job posts the file to Slack with
                a link to this run, so don't post it yourself.
 
-      - name: Post findings to Slack
+      - name: Upload findings
         if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: findings
+          path: ${{ env.FINDINGS_FILE }}
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Runs even if the investigation failed or timed out, so Slack always hears back.
+  notify:
+    name: Post findings to Slack
+    needs: investigate
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 5
+    steps:
+      - name: Download findings
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: findings
+          path: findings
+
+      # The findings are Slack mrkdwn written from telemetry Claude read, so cap their length and stop them pinging
+      # the whole channel.
+      - name: Post to Slack
         run: |
-          rule=$(jq -r '.data.essentials.alertRule // .data.BudgetName // "the alert"' "$ALERT_FILE" 2>/dev/null || echo "the alert")
-          if [ -s "$FINDINGS_FILE" ]; then
-            text="$(cat "$FINDINGS_FILE")"$'\n'"<${RUN_URL}|Investigation run>"
+          rule=$(printf '%s' "$ALERT" | jq -r '.data.essentials.alertRule // .data.BudgetName // "the alert"' 2>/dev/null || echo "the alert")
+          if [ -s findings/findings.md ]; then
+            findings=$(head -c 3500 findings/findings.md | sed -E 's/<!(channel|here|everyone|subteam)/\&lt;!\1/g')
+            text="${findings}"$'\n'"<${RUN_URL}|Investigation run>"
           else
             text=":warning: Claude couldn't finish investigating *${rule}*. See the <${RUN_URL}|investigation run>."
           fi
@@ -136,4 +163,6 @@ jobs:
           jq -n --arg text "$text" '{text: $text}' \
             | curl --fail-with-body --silent --show-error -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
         env:
+          ALERT: ${{ inputs.alert }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
