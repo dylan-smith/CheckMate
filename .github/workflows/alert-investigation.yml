@@ -1,0 +1,168 @@
+name: Alert Investigation
+run-name: Investigate ${{ fromJSON(inputs.alert).data.essentials.alertRule || fromJSON(inputs.alert).data.BudgetName || 'Azure alert' }}
+
+# When an Azure Monitor alert fires (or a budget alert is sent), the CheckMate-SlackAlerts Logic App in
+# infra/modules/alerts.bicep starts this workflow with the alert payload. Claude investigates why the alert fired,
+# decides whether it's a real problem or a false positive, and its findings are posted to the same Slack channel as
+# the alert: remediation steps for a real problem, or how to stop the alert firing falsely next time.
+#
+# Claude runs with every tool and no permission prompts (--dangerously-skip-permissions). Its Azure identity is
+# read-only and its GitHub token can only read this repository, so it can look but not change anything. Telemetry it
+# reads could still try to steer it, and with a shell it could tamper with later steps on the same runner, so it
+# never sees the Slack webhook: it uploads its findings as an artifact, and a separate job on a fresh runner posts
+# them to Slack.
+#
+# To try it, run this workflow from the Actions tab with an alert payload (e.g. one copied from a Logic App run), or
+# choose Test on the CheckMate-Alerts action group in the Azure portal.
+#
+# Requires (see Alert Investigation in the README):
+# - The alert-investigation environment, restricted to main, with the AZURE_ALERT_INVESTIGATOR_CLIENT_ID variable:
+#   the read-only checkmate-alert-investigator managed identity.
+# - Repository variables AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID and AZURE_RESOURCE_GROUP.
+# - Secrets CLAUDE_CODE_OAUTH_TOKEN and SLACK_WEBHOOK_URL. The Logic App starts the workflow with the
+#   ALERT_INVESTIGATION_TOKEN secret, which the infrastructure deployment passes to it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      alert:
+        description: Azure Monitor alert payload (common alert schema) or budget alert payload, as JSON
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  investigate:
+    name: Investigate alert
+    runs-on: ubuntu-latest
+    environment: alert-investigation
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # Kept outside the checkout so Claude's working tree stays clean.
+      - name: Save the alert payload
+        run: |
+          echo "ALERT_FILE=${RUNNER_TEMP}/alert.json" >> "$GITHUB_ENV"
+          echo "FINDINGS_FILE=${RUNNER_TEMP}/findings.md" >> "$GITHUB_ENV"
+          printf '%s' "$ALERT" | jq . > "${RUNNER_TEMP}/alert.json"
+        env:
+          ALERT: ${{ inputs.alert }}
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_ALERT_INVESTIGATOR_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Investigate with Claude
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          # Lets `az monitor app-insights` and other extension commands install themselves without prompting.
+          AZURE_EXTENSION_USE_DYNAMIC_INSTALL: yes_without_prompt
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          additional_permissions: |
+            actions: read
+          claude_args: --dangerously-skip-permissions --max-turns 80
+          prompt: |
+            An Azure alert for CheckMate just fired. Investigate why, decide whether it's a real problem with the
+            service or a false positive, and write up your findings for the team's Slack channel.
+
+            - Alert payload: `${{ env.ALERT_FILE }}` (Azure Monitor common alert schema, or a Cost Management budget
+              payload if it has `data.BudgetName`).
+            - Azure: the `az` CLI is logged in with read-only access to resource group `${{ vars.AZURE_RESOURCE_GROUP }}`
+              (subscription `${{ vars.AZURE_SUBSCRIPTION_ID }}`). You can't change anything in Azure, so don't try.
+            - GitHub: `gh` can read this repository, including workflow runs. `main` is checked out with full history.
+
+            Follow AGENTS.md. Every alert rule, its threshold, window and "What to do" steps are in
+            `infra/modules/alerts.bicep`, the README's Alerts section explains them, and the queries in
+            `infra/workbooks/health.workbook.json` are a good starting point for Log Analytics queries.
+
+            1. Read the payload: which rule fired, when, on which resource, and the measured value against the
+               threshold.
+            2. Find out what actually happened around the time it fired. Use whatever helps, for example
+               `az monitor app-insights query` and `az monitor log-analytics query` (requests, exceptions,
+               dependencies, traces, page views, availability results, AppServiceHTTPLogs, AppServiceConsoleLogs),
+               `az monitor metrics list`, `az monitor activity-log list`, resource health
+               (`az rest` against `Microsoft.ResourceHealth`), `az webapp show`, and `az consumption` or
+               `az costmanagement` for budget alerts. Check whether it lines up with a deployment
+               (`gh run list --workflow ci.yml --branch main`, `git log`) or a Generate Load run
+               (`gh run list --workflow load-test.yml`). Check whether the problem is still happening now.
+            3. Decide on a verdict: *real problem*, *false positive* (the alert fired but users weren't affected or
+               it was expected, such as a load test, a cold start or a database resume), or *inconclusive*.
+            4. Write your findings to `${{ env.FINDINGS_FILE }}` as Slack mrkdwn, not Markdown: `*bold*`, `_italic_`,
+               `<url|text>` links, `•` bullets, no `#` headings or tables. Keep it short enough to read on a phone:
+               - First line: `:red_circle:` (real problem), `:large_green_circle:` (false positive) or
+                 `:white_circle:` (inconclusive), then `*Claude's investigation:*` and the alert rule name.
+               - *Verdict* and a two or three sentence summary of what happened.
+               - *Evidence*: the few facts that support it, with numbers and times (UTC).
+               - For a real problem, *What to do*: concrete remediation steps, in the Azure portal (blade and
+                 menu path) or PowerShell, plus any code change worth making with the file to change.
+               - For a false positive, *Reducing false positives*: the specific change to the rule in
+                 `infra/modules/alerts.bicep` (threshold, window, aggregation, dimension filter or query) with the
+                 current and suggested values, and why it would still catch a real problem.
+               - For inconclusive, what you couldn't check and what a person should look at next.
+               Don't include secrets, connection strings or personal data. A later job posts the file to Slack with
+               a link to this run, so don't post it yourself.
+
+      - name: Upload findings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: findings
+          path: ${{ env.FINDINGS_FILE }}
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Runs even if the investigation failed or timed out, so Slack always hears back.
+  notify:
+    name: Post findings to Slack
+    needs: investigate
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 5
+    steps:
+      - name: Download findings
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: findings
+          path: findings
+
+      # The findings are Slack mrkdwn written from telemetry Claude read, so cap their length and stop them pinging
+      # the whole channel.
+      - name: Post to Slack
+        run: |
+          rule=$(printf '%s' "$ALERT" | jq -r '.data.essentials.alertRule // .data.BudgetName // "the alert"' 2>/dev/null || echo "the alert")
+          if [ -s findings/findings.md ]; then
+            findings=$(head -c 3500 findings/findings.md | sed -E 's/<!(channel|here|everyone|subteam)/\&lt;!\1/g')
+            text="${findings}"$'\n'"<${RUN_URL}|Investigation run>"
+          else
+            text=":warning: Claude couldn't finish investigating *${rule}*. See the <${RUN_URL}|investigation run>."
+          fi
+          printf '%s\n' "$text" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "::warning::SLACK_WEBHOOK_URL isn't set, so the findings are only in the job summary."
+            exit 0
+          fi
+          jq -n --arg text "$text" '{text: $text}' \
+            | curl --fail-with-body --silent --show-error -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+        env:
+          ALERT: ${{ inputs.alert }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
