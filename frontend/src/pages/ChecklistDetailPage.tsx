@@ -146,7 +146,7 @@ function ChecklistDetail({ id }: { id: number }) {
             </Typography>
             <Box
               component="form"
-              onSubmit={handleSubmit}
+              onSubmit={(event) => void handleSubmit(event)}
               sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}
             >
               <TextField

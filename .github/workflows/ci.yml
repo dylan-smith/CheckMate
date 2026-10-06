@@ -146,7 +146,7 @@ jobs:
         run: npx vite build
 
       - name: Lint
-        run: npx eslint .
+        run: npx eslint . --max-warnings 0
 
       - name: Verify formatting
         run: npx prettier --check .

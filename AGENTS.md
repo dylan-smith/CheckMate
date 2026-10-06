@@ -37,7 +37,7 @@ Frontend (from `frontend/`):
 npm ci
 npx tsc -b
 npx vite build
-npx eslint .
+npx eslint . --max-warnings 0
 npx prettier --check .
 npm test
 ```
