@@ -7,6 +7,7 @@ import IconButton from '@mui/material/IconButton'
 import List from '@mui/material/List'
 import ListItem from '@mui/material/ListItem'
 import ListItemText from '@mui/material/ListItemText'
+import MenuItem from '@mui/material/MenuItem'
 import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
@@ -17,9 +18,11 @@ import {
   deleteStep,
   describeFetchError,
   reorderSteps,
+  stepTypeLabels,
+  stepTypes,
   updateStep,
 } from '../api/checklists'
-import type { ChecklistStep } from '../api/checklists'
+import type { ChecklistStep, StepType } from '../api/checklists'
 import { trackEvent, trackException } from '../telemetry'
 
 type ChecklistStepsProps = {
@@ -33,11 +36,45 @@ function moveButtonId(stepId: number, direction: MoveDirection) {
   return `step-${stepId}-move-${direction}`
 }
 
+type StepTypeFieldProps = {
+  id: string
+  value: StepType
+  onChange: (type: StepType) => void
+}
+
+function StepTypeField({ id, value, onChange }: StepTypeFieldProps) {
+  return (
+    <TextField
+      id={id}
+      select
+      label="Type"
+      value={value}
+      onChange={(event) => {
+        // The menu only offers stepTypes, so this always finds one.
+        const type = stepTypes.find((item) => item === event.target.value)
+        if (type) {
+          onChange(type)
+        }
+      }}
+      size="small"
+      sx={{ minWidth: 140 }}
+    >
+      {stepTypes.map((type) => (
+        <MenuItem key={type} value={type}>
+          {stepTypeLabels[type]}
+        </MenuItem>
+      ))}
+    </TextField>
+  )
+}
+
 function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
   const [steps, setSteps] = useState(initialSteps)
   const [newText, setNewText] = useState('')
+  const [newType, setNewType] = useState<StepType>('Checkbox')
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editText, setEditText] = useState('')
+  const [editType, setEditType] = useState<StepType>('Checkbox')
   // Only one change runs at a time, so the list can't get out of step with the API.
   const [busy, setBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -77,10 +114,11 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     setErrorMessage('')
 
     try {
-      const created = await createStep(checklistId, trimmedText)
+      const created = await createStep(checklistId, trimmedText, newType)
       trackEvent('StepAdded')
       setSteps((current) => [...current, created])
       setNewText('')
+      setNewType('Checkbox')
     } catch (error) {
       trackException(error, { operation: 'addStep' })
       setErrorMessage(describeFetchError(error, 'Unable to save step.'))
@@ -92,6 +130,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
   function startEditing(step: ChecklistStep) {
     setEditingId(step.id)
     setEditText(step.text)
+    setEditType(step.type)
     setErrorMessage('')
   }
 
@@ -117,7 +156,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     setErrorMessage('')
 
     try {
-      const saved = await updateStep(checklistId, stepId, trimmedText)
+      const saved = await updateStep(checklistId, stepId, trimmedText, editType)
       trackEvent('StepUpdated')
       setSteps((current) =>
         current.map((step) => (step.id === saved.id ? saved : step)),
@@ -243,6 +282,11 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                     size="small"
                     sx={{ flexGrow: 1 }}
                   />
+                  <StepTypeField
+                    id={`step-${step.id}-type`}
+                    value={editType}
+                    onChange={setEditType}
+                  />
                   <Stack direction="row" spacing={1}>
                     <Button type="submit" variant="contained" disabled={busy}>
                       Save
@@ -267,6 +311,12 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                 >
                   <ListItemText
                     primary={step.text}
+                    // Checkbox is the usual type, so only the others are called out.
+                    secondary={
+                      step.type === 'Checkbox'
+                        ? undefined
+                        : stepTypeLabels[step.type]
+                    }
                     sx={{ overflowWrap: 'anywhere' }}
                   />
                   <Stack direction="row" spacing={1}>
@@ -336,6 +386,11 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
           slotProps={{ htmlInput: { maxLength: 500 } }}
           size="small"
           sx={{ flexGrow: 1 }}
+        />
+        <StepTypeField
+          id="new-step-type"
+          value={newType}
+          onChange={setNewType}
         />
         <Button type="submit" variant="contained" disabled={busy}>
           Add step

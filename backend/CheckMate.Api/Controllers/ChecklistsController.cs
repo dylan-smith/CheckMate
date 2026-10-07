@@ -49,7 +49,7 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
             .Where(step => step.ChecklistId == id)
             .OrderBy(step => step.SortOrder)
             .ThenBy(step => step.Id)
-            .Select(step => new ChecklistStepResponse(step.Id, step.Text, step.SortOrder))
+            .Select(step => new ChecklistStepResponse(step.Id, step.Text, step.Type, step.SortOrder))
             .ToListAsync();
 
         return Ok(new ChecklistDetailResponse(checklist.Id, checklist.Name, steps));

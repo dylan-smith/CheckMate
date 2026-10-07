@@ -16,9 +16,16 @@ public class ChecklistRunStep
     [MaxLength(500)]
     public string StepText { get; set; } = string.Empty;
 
+    /// <summary>The step's type when the run started.</summary>
+    public StepType StepType { get; set; }
+
     public int SortOrder { get; set; }
 
     public bool IsDone { get; set; }
 
     public DateTimeOffset? CompletedAt { get; set; }
+
+    /// <summary>The value entered for a text step, or null when there isn't one.</summary>
+    [MaxLength(1000)]
+    public string? ResponseText { get; set; }
 }
