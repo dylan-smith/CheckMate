@@ -1319,7 +1319,11 @@ describe('App', () => {
       const user = userEvent.setup()
       const requests: string[] = []
       let finishTick: (response: Response) => void = () => {}
-      mockFetch(async (_url, init) => {
+      mockFetch(async (url, init) => {
+        if (!url.includes('/api/runs/5')) {
+          // The checklists page, which completing goes back to.
+          return jsonResponse([])
+        }
         requests.push(init?.method ?? 'GET')
         if (init?.method === 'PUT') {
           return new Promise<Response>((resolve) => {
@@ -1346,7 +1350,9 @@ describe('App', () => {
         }),
       )
 
-      expect(await screen.findByText(/^Completed /)).toBeInTheDocument()
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Completed "Morning".',
+      )
       expect(requests).toEqual(['GET', 'PUT', 'POST'])
     })
 
@@ -1372,28 +1378,39 @@ describe('App', () => {
       })
     })
 
-    it('completes the run and makes it read-only', async () => {
+    it('completes the run and goes back to the checklists page', async () => {
       const user = userEvent.setup()
       const completed = { ...run, completedAt: '2026-10-06T08:30:00Z' }
-      mockFetch(async (_url, init) =>
-        init?.method === 'POST' ? jsonResponse(completed) : jsonResponse(run),
-      )
+      mockFetch(async (url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse(completed)
+        }
+        return url.endsWith('/api/runs/5')
+          ? jsonResponse(run)
+          : jsonResponse([])
+      })
 
       renderAt('/runs/5')
       await user.click(await screen.findByRole('button', { name: 'Complete' }))
 
-      expect(
-        await screen.findByText(
-          `Completed ${new Date(completed.completedAt).toLocaleString()}`,
-        ),
-      ).toBeInTheDocument()
-      expect(
-        screen.queryByRole('button', { name: 'Complete' }),
-      ).not.toBeInTheDocument()
-      expect(
-        screen.getByRole('checkbox', { name: 'Make coffee' }),
-      ).toBeDisabled()
+      expect(await screen.findByText('No checklists yet.')).toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/runs\/5\/complete$/),
+        expect.objectContaining({ method: 'POST' }),
+      )
       expect(trackEvent).toHaveBeenCalledWith('RunCompleted')
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Completed "Morning".',
+      )
+
+      // A click elsewhere on the page doesn't dismiss it.
+      await user.click(screen.getByRole('heading', { name: 'Checklists' }))
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Close' }))
+      await waitFor(() => {
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      })
     })
 
     it('shows the run as complete when it was completed elsewhere', async () => {
@@ -1598,7 +1615,11 @@ describe('App', () => {
           completedAt: '2026-10-06T08:30:00Z',
           steps: [...run.steps, savedNotes],
         }
-        mockFetch(async (_url, init) => {
+        const fetchMock = mockFetch(async (url, init) => {
+          if (!url.includes('/api/runs/5')) {
+            // The checklists page, which completing goes back to.
+            return jsonResponse([])
+          }
           requests.push(init?.method ?? 'GET')
           if (init?.method === 'PUT') {
             return jsonResponse(savedNotes)
@@ -1616,10 +1637,15 @@ describe('App', () => {
         // Leaving the field starts its save, which is still under way when the click lands.
         await user.click(screen.getByRole('button', { name: 'Complete' }))
 
-        expect(await screen.findByText(/^Completed /)).toBeInTheDocument()
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          'Completed "Morning".',
+        )
         expect(requests).toEqual(['GET', 'PUT', 'POST'])
-        expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveValue(
-          'All good',
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
+          expect.objectContaining({
+            body: JSON.stringify({ text: 'All good' }),
+          }),
         )
       })
 
@@ -1631,7 +1657,11 @@ describe('App', () => {
           completedAt: '2026-10-06T08:30:00Z',
           steps: [...run.steps, savedNotes],
         }
-        const fetchMock = mockFetch(async (_url, init) => {
+        const fetchMock = mockFetch(async (url, init) => {
+          if (!url.includes('/api/runs/5')) {
+            // The checklists page, which completing goes back to.
+            return jsonResponse([])
+          }
           if (init?.method === 'PUT') {
             puts += 1
             return puts === 1
@@ -1655,7 +1685,9 @@ describe('App', () => {
 
         await user.click(screen.getByRole('button', { name: 'Complete' }))
 
-        expect(await screen.findByText(/^Completed /)).toBeInTheDocument()
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          'Completed "Morning".',
+        )
         expect(puts).toBe(2)
         expect(fetchMock).toHaveBeenCalledWith(
           expect.stringMatching(/\/api\/runs\/5\/complete$/),
