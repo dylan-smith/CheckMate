@@ -1254,6 +1254,10 @@ describe('App', () => {
         'Completed "Morning".',
       )
 
+      // A click elsewhere on the page doesn't dismiss it.
+      await user.click(screen.getByRole('heading', { name: 'Checklists' }))
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+
       await user.click(screen.getByRole('button', { name: 'Close' }))
       await waitFor(() => {
         expect(screen.queryByRole('alert')).not.toBeInTheDocument()

@@ -353,7 +353,23 @@ test.describe('Checklist management', () => {
       await expect(page).toHaveURL(/\/$/)
       const toast = page.getByRole('alert')
       await expect(toast).toHaveText('Completed "Opening up".')
+      // A click elsewhere on the page doesn't dismiss it.
+      await page.getByRole('heading', { name: 'Checklists' }).click()
+      await expect(toast).toBeVisible()
       await expect(toast).toBeHidden({ timeout: 10_000 })
+
+      // The notice only shows once, not after a reload or going back to this page.
+      const fillOut = page.getByRole('button', {
+        name: 'Fill out "Opening up"',
+      })
+      await page.reload()
+      await expect(fillOut).toBeVisible()
+      await expect(toast).toHaveCount(0)
+      await page.goBack()
+      await expect(page).toHaveURL(runUrl)
+      await page.goForward()
+      await expect(fillOut).toBeVisible()
+      await expect(toast).toHaveCount(0)
 
       await page.goto(runUrl)
       await expect(page.getByText(/^Completed /)).toBeVisible()
