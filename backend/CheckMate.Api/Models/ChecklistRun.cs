@@ -10,5 +10,5 @@ public class ChecklistRun
 
     public DateTimeOffset? CompletedAt { get; set; }
 
-    public List<RunStepResponse> Responses { get; set; } = [];
+    public List<ChecklistRunStep> Steps { get; set; } = [];
 }
