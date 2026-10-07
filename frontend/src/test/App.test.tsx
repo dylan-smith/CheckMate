@@ -1718,9 +1718,6 @@ describe('App', () => {
         const field = await screen.findByRole('textbox', { name: 'Notes' })
         expect(field).toHaveValue('All good')
         expect(field).toBeDisabled()
-        expect(field).toHaveAccessibleDescription(
-          `Done ${new Date('2026-10-06T08:10:00Z').toLocaleString()}`,
-        )
       })
 
       it('saves the text first when Complete is clicked straight from the field', async () => {
@@ -2327,10 +2324,9 @@ describe('App', () => {
         screen.getByRole('checkbox', { name: 'Make coffee' }),
       ).toBeChecked()
       expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
-      expect(screen.queryByText(/^Done /)).not.toBeInTheDocument()
     })
 
-    it('opens a completed fill-out read-only, with when each step was done', async () => {
+    it('opens a completed fill-out read-only', async () => {
       const user = userEvent.setup()
       mockFetch(
         async (url) =>
@@ -2367,19 +2363,18 @@ describe('App', () => {
       renderAt('/checklists/3')
       await user.click(await screen.findByRole('link', { name: /Started/ }))
 
+      const makeCoffee = await screen.findByRole('checkbox', {
+        name: 'Make coffee',
+      })
+      expect(makeCoffee).toBeChecked()
+      expect(makeCoffee).toBeDisabled()
+      const readEmail = screen.getByRole('checkbox', { name: 'Read email' })
+      expect(readEmail).not.toBeChecked()
+      expect(readEmail).toBeDisabled()
+      // Each step's completion time is kept, but not shown.
       expect(
-        await screen.findByRole('checkbox', { name: 'Make coffee' }),
-      ).toBeDisabled()
-      expect(
-        screen.getByRole('checkbox', { name: 'Read email' }),
-      ).toBeDisabled()
-      expect(
-        screen.getByRole('checkbox', { name: 'Make coffee' }),
-      ).toHaveAccessibleDescription(`Done ${local('2026-10-06T08:05:00Z')}`)
-      expect(
-        screen.getByRole('checkbox', { name: 'Read email' }),
-      ).not.toHaveAccessibleDescription()
-      expect(screen.getAllByText(/^Done /)).toHaveLength(1)
+        screen.queryByText(local('2026-10-06T08:05:00Z'), { exact: false }),
+      ).not.toBeInTheDocument()
       expect(
         screen.getByText(`Completed ${local(completed.completedAt)}`),
       ).toBeInTheDocument()

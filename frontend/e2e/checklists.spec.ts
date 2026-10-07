@@ -622,7 +622,6 @@ test.describe('Checklist management', () => {
       await fillOuts.nth(1).click()
       await expect(clearInbox).toBeChecked()
       await expect(clearInbox).toBeDisabled()
-      await expect(page.getByText(/^Done /)).toBeVisible()
       await expect(page.getByRole('button', { name: 'Complete' })).toBeHidden()
     })
 

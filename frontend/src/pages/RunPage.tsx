@@ -175,14 +175,7 @@ function InputStepField({
         onBlur={saveIfEnabled}
         disabled={disabled}
         error={error !== '' && !disabled}
-        // While editing, why the value can't be saved. Once the run is complete, when the step was done.
-        helperText={
-          disabled
-            ? showSaved && step.completedAt
-              ? `Done ${formatDateTime(step.completedAt)}`
-              : undefined
-            : error || undefined
-        }
+        helperText={disabled ? undefined : error || undefined}
         // Read-only rather than disabled while saving, so pressing Enter doesn't lose focus.
         slotProps={{
           htmlInput: {
@@ -439,11 +432,6 @@ function RunView({ id }: { id: number }) {
                   // A step deleted from the checklist can't be saved any more.
                   const disabled = isComplete || completing || stepId === null
                   const kind = inputKinds[step.type]
-                  // A completed run is read-only, so it shows when each checkbox step was done.
-                  const doneTimeId =
-                    isComplete && step.completedAt
-                      ? `run-step-${index}-done`
-                      : undefined
                   return (
                     <ListItem key={stepId ?? `deleted-${index}`} disableGutters>
                       {kind ? (
@@ -469,41 +457,21 @@ function RunView({ id }: { id: number }) {
                           }}
                         />
                       ) : (
-                        <Box>
-                          <FormControlLabel
-                            sx={{ overflowWrap: 'anywhere' }}
-                            control={
-                              <Checkbox
-                                checked={step.isDone}
-                                disabled={disabled || savingStepIds.has(stepId)}
-                                onChange={(event) => {
-                                  if (stepId !== null) {
-                                    handleToggle(stepId, event.target.checked)
-                                  }
-                                }}
-                                // Read out with the checkbox, as a text step's helper text is.
-                                slotProps={{
-                                  input: { 'aria-describedby': doneTimeId },
-                                }}
-                              />
-                            }
-                            label={step.text}
-                          />
-                          {doneTimeId && step.completedAt && (
-                            // Styled like a text step's helper text, which is greyed out with the field.
-                            <Typography
-                              id={doneTimeId}
-                              variant="caption"
-                              sx={{
-                                display: 'block',
-                                ml: 4,
-                                color: 'text.disabled',
+                        <FormControlLabel
+                          sx={{ overflowWrap: 'anywhere' }}
+                          control={
+                            <Checkbox
+                              checked={step.isDone}
+                              disabled={disabled || savingStepIds.has(stepId)}
+                              onChange={(event) => {
+                                if (stepId !== null) {
+                                  handleToggle(stepId, event.target.checked)
+                                }
                               }}
-                            >
-                              Done {formatDateTime(step.completedAt)}
-                            </Typography>
-                          )}
-                        </Box>
+                            />
+                          }
+                          label={step.text}
+                        />
                       )}
                     </ListItem>
                   )
