@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1027,6 +1027,94 @@ describe('App', () => {
       expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
         operation: 'reorderSteps',
       })
+    })
+
+    const rowHeight = 50
+
+    // Drags a step by its handle to the middle of the row at targetIndex.
+    async function dragStep(
+      text: string,
+      fromIndex: number,
+      targetIndex: number,
+    ) {
+      // jsdom has no layout, so each step gets a row stacked from the top. Anything else measured is
+      // the dragged copy, which starts on the dragged step's row.
+      const rows = screen.getAllByRole('listitem')
+      vi.spyOn(
+        HTMLElement.prototype,
+        'getBoundingClientRect',
+      ).mockImplementation(function (this: HTMLElement) {
+        const index = rows.indexOf(this)
+        return DOMRect.fromRect({
+          x: 0,
+          y: (index === -1 ? fromIndex : index) * rowHeight,
+          width: 600,
+          height: rowHeight,
+        })
+      })
+
+      const handle = screen.getByTitle(`Drag to reorder step "${text}"`)
+      const pointer = { isPrimary: true, button: 0, clientX: 10 }
+      const fromY = fromIndex * rowHeight + rowHeight / 2
+      const toY = targetIndex * rowHeight + rowHeight / 2
+      fireEvent.pointerDown(handle, { ...pointer, clientY: fromY })
+      // The first move passes the few pixels a drag needs to start.
+      fireEvent.pointerMove(document, { ...pointer, clientY: fromY + 10 })
+      fireEvent.pointerMove(document, { ...pointer, clientY: toY })
+      // dnd-kit works out where the step is over in an animation frame.
+      await act(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+      fireEvent.pointerUp(document, { ...pointer, clientY: toY })
+    }
+
+    it('drags a step above another and saves the new order', async () => {
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return jsonResponse([
+            { id: 11, text: 'Read email', type: 'Checkbox', sortOrder: 0 },
+            { id: 10, text: 'Make coffee', type: 'Checkbox', sortOrder: 1 },
+          ])
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+      await screen.findByText('Read email')
+
+      await dragStep('Read email', 1, 0)
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
+          'Read email',
+        )
+      })
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/1\/steps\/order$/),
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ stepIds: [11, 10] }),
+        }),
+      )
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Moved step "Read email" to position 1 of 2.',
+      )
+      expect(trackEvent).toHaveBeenCalledWith('StepsReordered')
+    })
+
+    it('does not save when a step is dropped where it already is', async () => {
+      mockFetch(async () => jsonResponse(checklistWithSteps))
+
+      renderAt('/checklists/1')
+      await screen.findByText('Read email')
+
+      await dragStep('Read email', 1, 1)
+
+      expect(fetch).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ method: 'PUT' }),
+      )
+      expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
+        'Make coffee',
+      )
     })
 
     it('adds a text step with the type picker and labels it', async () => {
