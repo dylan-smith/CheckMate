@@ -452,6 +452,13 @@ jobs:
       - name: Install SqlPackage
         run: dotnet tool install --global microsoft.sqlpackage
 
+      # The pause makes /health return 403, so turn the availability test off while it lasts (see Enable health check).
+      - name: Disable health check
+        id: disable-health-check
+        run: bash .github/scripts/set-health-check.sh false
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+
       # Pause the API from before the backup until the new version is deployed, so the old API never runs
       # against the migrated database (and the backup can't miss writes made after it).
       - name: Pause API
@@ -537,6 +544,13 @@ jobs:
       - name: Report API left paused
         if: always() && steps.pause.outcome != 'skipped' && steps.resume.outcome != 'success'
         run: echo "::error::The API is still paused, so it isn't serving users. Either a deployment stopped after its migrations started (this run or an earlier one), or resuming failed. Deploy a fix, or restore the backup and remove the app's deploy-pause-* access restriction rules."
+
+      # Turned back on even when the API is left paused, since users can't reach it then and the alert should fire.
+      - name: Enable health check
+        if: always() && steps.disable-health-check.outcome != 'skipped'
+        run: bash .github/scripts/set-health-check.sh true
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
 
   deploy-frontend:
     name: Deploy Frontend (React)

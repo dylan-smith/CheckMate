@@ -189,7 +189,7 @@ To put some data on the workbook, run the **Generate Load** workflow (`.github/w
 | Failure anomalies | Application Insights smart detection sees an unusual rise in failures | 3 |
 | Monthly budget | Resource group costs pass 80% of `monthlyBudget`, or are forecast to pass 100% | — |
 
-`/health` doesn't check the database, so the availability test doesn't stop the serverless database from auto-pausing.
+`/health` doesn't check the database, so the availability test doesn't stop the serverless database from auto-pausing. A backend deployment turns the availability test off while it has the API paused and back on when it finishes, so a deployment doesn't fire **API down**. If a deployment leaves the API paused, the test is still turned back on so the alert fires.
 
 To set up Slack, create a Slack app with an **Incoming Webhook** for the alerts channel and save the webhook URL as the `SLACK_WEBHOOK_URL` repository secret. The next deployment creates the Logic App. To get push notifications, sign in to the Azure mobile app as `alertEmail`. To check the whole chain, open the action group in the portal and choose **Test**.
 
