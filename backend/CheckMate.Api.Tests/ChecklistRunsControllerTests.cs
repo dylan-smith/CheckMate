@@ -93,18 +93,23 @@ public class ChecklistRunsControllerTests
         var checklist = await AddChecklistAsync(dbContext, "Daily");
         var other = await AddChecklistAsync(dbContext, "Weekly");
         var startedAt = new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero);
+        var completed = new ChecklistRun { ChecklistId = checklist.Id, StartedAt = startedAt, CompletedAt = startedAt.AddMinutes(5) };
+        var inProgress = new ChecklistRun { ChecklistId = checklist.Id, StartedAt = startedAt.AddDays(1) };
         dbContext.ChecklistRuns.AddRange(
-            new ChecklistRun { ChecklistId = checklist.Id, StartedAt = startedAt, CompletedAt = startedAt.AddMinutes(5) },
-            new ChecklistRun { ChecklistId = checklist.Id, StartedAt = startedAt.AddDays(1) },
+            completed,
+            inProgress,
             new ChecklistRun { ChecklistId = other.Id, StartedAt = startedAt.AddDays(2) });
         await dbContext.SaveChangesAsync();
 
         var result = await CreateController(dbContext).GetForChecklist(checklist.Id);
 
         var runs = Assert.IsType<List<ChecklistRunSummaryResponse>>(Assert.IsType<OkObjectResult>(result.Result).Value);
-        Assert.Collection(runs,
-            run => Assert.Equal((startedAt.AddDays(1), (DateTimeOffset?)null), (run.StartedAt, run.CompletedAt)),
-            run => Assert.Equal((startedAt, (DateTimeOffset?)startedAt.AddMinutes(5)), (run.StartedAt, run.CompletedAt)));
+        Assert.Equal(
+            [
+                new ChecklistRunSummaryResponse(inProgress.Id, startedAt.AddDays(1), null),
+                new ChecklistRunSummaryResponse(completed.Id, startedAt, startedAt.AddMinutes(5)),
+            ],
+            runs);
     }
 
     [Fact]
