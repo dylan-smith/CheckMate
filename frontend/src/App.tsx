@@ -7,6 +7,7 @@ import logo from './assets/logo.svg'
 import ChecklistDetailPage from './pages/ChecklistDetailPage'
 import ChecklistsPage from './pages/ChecklistsPage'
 import NotFoundPage from './pages/NotFoundPage'
+import RunPage from './pages/RunPage'
 import { trackPageView } from './telemetry'
 
 function App() {
@@ -46,6 +47,7 @@ function App() {
       <Routes>
         <Route path="/" element={<ChecklistsPage />} />
         <Route path="/checklists/:id" element={<ChecklistDetailPage />} />
+        <Route path="/runs/:runId" element={<RunPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Container>

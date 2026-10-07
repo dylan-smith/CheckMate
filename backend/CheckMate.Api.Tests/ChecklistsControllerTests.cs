@@ -179,6 +179,38 @@ public class ChecklistsControllerTests
     }
 
     [Fact]
+    public async Task Delete_RemovesChecklistRuns()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = new Checklist { Name = "Daily" };
+        var other = new Checklist { Name = "Other" };
+        dbContext.Checklists.AddRange(checklist, other);
+        await dbContext.SaveChangesAsync();
+
+        var step = new ChecklistStep { ChecklistId = checklist.Id, Text = "Step", SortOrder = 0 };
+        dbContext.ChecklistSteps.Add(step);
+        await dbContext.SaveChangesAsync();
+
+        dbContext.ChecklistRuns.AddRange(
+            new ChecklistRun
+            {
+                ChecklistId = checklist.Id,
+                Responses = [new RunStepResponse { StepId = step.Id, StepText = step.Text }]
+            },
+            new ChecklistRun { ChecklistId = other.Id });
+        await dbContext.SaveChangesAsync();
+        dbContext.ChangeTracker.Clear();
+
+        var controller = new ChecklistsController(dbContext, NullLogger<ChecklistsController>.Instance);
+
+        var result = await controller.Delete(checklist.Id);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(other.Id, (await dbContext.ChecklistRuns.SingleAsync()).ChecklistId);
+        Assert.False(await dbContext.RunStepResponses.AnyAsync());
+    }
+
+    [Fact]
     public async Task Delete_ReturnsNotFound_WhenChecklistDoesNotExist()
     {
         await using var dbContext = CreateDbContext();

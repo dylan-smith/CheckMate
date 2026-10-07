@@ -12,7 +12,7 @@ import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
-import { Link } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import {
   ApiError,
   createChecklist,
@@ -20,13 +20,17 @@ import {
   listChecklists,
 } from '../api/checklists'
 import type { Checklist } from '../api/checklists'
+import { startRun } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
 
 function ChecklistsPage() {
   const [checklists, setChecklists] = useState<Checklist[]>([])
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(true)
+  const navigate = useNavigate()
   const [submitting, setSubmitting] = useState(false)
+  // The checklist whose fill-out is being started, so its button can say so.
+  const [startingId, setStartingId] = useState<number | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
 
   useEffect(() => {
@@ -75,6 +79,23 @@ function ChecklistsPage() {
     }
   }
 
+  async function handleFillOut(checklistId: number) {
+    setStartingId(checklistId)
+    setErrorMessage('')
+
+    try {
+      const run = await startRun(checklistId)
+      trackEvent('RunStarted')
+      void navigate(`/runs/${run.id}`)
+    } catch (error) {
+      trackException(error, { operation: 'startRun' })
+      setErrorMessage(
+        describeFetchError(error, 'Unable to start filling out the checklist.'),
+      )
+      setStartingId(null)
+    }
+  }
+
   return (
     <Stack spacing={2}>
       <Paper component="section" elevation={2} sx={{ p: 3 }}>
@@ -118,13 +139,33 @@ function ChecklistsPage() {
         ) : (
           <List disablePadding>
             {checklists.map((checklist) => (
-              <ListItem key={checklist.id} divider disablePadding>
+              <ListItem
+                key={checklist.id}
+                divider
+                disablePadding
+                sx={{ gap: 1 }}
+              >
                 <ListItemButton
                   component={Link}
                   to={`/checklists/${checklist.id}`}
                 >
-                  <ListItemText primary={checklist.name} />
+                  <ListItemText
+                    primary={checklist.name}
+                    sx={{ overflowWrap: 'anywhere' }}
+                  />
                 </ListItemButton>
+                {/* Filling out is the most common thing to do with a checklist, so it's one click from here. */}
+                <Button
+                  type="button"
+                  variant="contained"
+                  size="small"
+                  sx={{ flexShrink: 0 }}
+                  disabled={startingId !== null}
+                  aria-label={`Fill out "${checklist.name}"`}
+                  onClick={() => void handleFillOut(checklist.id)}
+                >
+                  {startingId === checklist.id ? 'Starting…' : 'Fill out'}
+                </Button>
               </ListItem>
             ))}
           </List>

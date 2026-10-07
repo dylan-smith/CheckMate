@@ -171,6 +171,14 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             return NotFound();
         }
 
+        // Runs keep their copy of the step text, so they only lose the link to the deleted step.
+        var responses = await dbContext.RunStepResponses.Where(response => response.StepId == stepId).ToListAsync();
+
+        foreach (var response in responses)
+        {
+            response.StepId = null;
+        }
+
         dbContext.ChecklistSteps.Remove(step);
         await dbContext.SaveChangesAsync();
 
