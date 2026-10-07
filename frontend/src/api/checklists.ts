@@ -5,8 +5,10 @@ export type Checklist = {
   name: string
 }
 
-// What a step asks for when the checklist is filled out.
-export type StepType = 'Checkbox' | 'Text' | 'Number'
+// What a step asks for when the checklist is filled out, in the order the type picker lists them.
+export const stepTypes = ['Checkbox', 'Text', 'Number'] as const
+
+export type StepType = (typeof stepTypes)[number]
 
 export const stepTypeLabels: Record<StepType, string> = {
   Checkbox: 'Checkbox',
