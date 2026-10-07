@@ -22,11 +22,14 @@ module.exports = async ({ github, context }) => {
     failed: `❌ Deploying \`${sha}\` failed ([workflow run](${runUrl})). An earlier deployment, if any, is still running.`,
     deleting: '🧹 Deleting the preview environment now that the PR is closed…',
     deleted: `🗑️ The preview environment was deleted at ${now}.`,
-    'delete-failed': `⚠️ Deleting the preview environment failed ([workflow run](${runUrl})). The weekly sweep retries it.`,
+    'delete-failed': `⚠️ Deleting the preview environment failed ([workflow run](${runUrl})). The cleanup after the next PR to close retries it.`,
   };
   if (!(status in statusLines)) {
     throw new Error(`Unknown PREVIEW_STATUS '${status}'`);
   }
+
+  const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+  const existing = comments.find((c) => c.user.type === 'Bot' && c.body.startsWith(marker));
 
   const body = [marker, '# 🚀 Preview environment', statusLines[status]];
   if (frontendUrl && apiUrl) {
@@ -40,14 +43,19 @@ module.exports = async ({ github, context }) => {
         `| Health | ${apiUrl}/health |`,
       ].join('\n'),
     );
+  } else if (existing && status !== 'deleted') {
+    // Updates made before the new URLs are known (or without them) keep the links to the preview that's still
+    // running, until it's deleted.
+    const table = existing.body.split('\n').filter((line) => line.startsWith('|'));
+    if (table.length > 0) {
+      body.push(table.join('\n'));
+    }
   }
   body.push(
     'The preview has an empty database of its own and is deleted when this PR is closed. It runs on a free ' +
       'plan, so the first request after a while can take a minute while the app and database start.',
   );
 
-  const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
-  const existing = comments.find((c) => c.user.type === 'Bot' && c.body.startsWith(marker));
   if (existing) {
     await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: body.join('\n\n') });
   } else if (!updateOnly) {

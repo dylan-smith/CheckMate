@@ -11,7 +11,7 @@ targetScope = 'resourceGroup'
 
 @description('Number of the pull request this preview is for. Names every per-PR resource.')
 @minValue(1)
-// Keeps the storage account name within its 24-character limit.
+// Keeps the storage account name (checkmatepr + this + a 5-character suffix) within its 24-character limit.
 @maxValue(9999999)
 param prNumber int
 
@@ -38,8 +38,10 @@ param useFreeLimit bool = true
 
 var appServiceName = 'checkmate-pr-${prNumber}'
 var sqlDatabaseName = 'CheckMate-pr-${prNumber}'
-// Storage account names are lowercase letters and digits only.
-var storageAccountName = 'checkmatepr${prNumber}'
+// Storage account names are lowercase letters and digits only, and unique across all of Azure, so a suffix from
+// the resource group's ID keeps another tenant's account from blocking a PR. CI reads the name from the
+// storageAccountName output, and cleanup finds the account by its pr-number tag.
+var storageAccountName = 'checkmatepr${prNumber}${take(uniqueString(resourceGroup().id), 5)}'
 
 // Lets the cleanup workflow find a PR's resources.
 var prTags = {

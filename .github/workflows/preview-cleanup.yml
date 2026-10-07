@@ -1,29 +1,27 @@
 name: Preview Cleanup
 
-# Deletes a pull request's preview environment (see the deploy-preview job in ci.yml) when the PR is closed, and
-# sweeps the preview resource group weekly for previews whose PR has since closed without this running (for
-# example a Dependabot PR someone pushed to, which Dependabot then closed: its runs can't log in to Azure). The
-# App Service plan and SQL server shared by every preview are never deleted.
+# Deletes a pull request's preview environment (see the deploy-preview job in ci.yml) when the PR is closed,
+# then sweeps the preview resource group for previews of other closed PRs whose own cleanup failed. The App
+# Service plan and SQL server shared by every preview are never deleted.
+#
+# Both jobs run on pull_request events only: the preview identity's federated credential trusts this
+# repository's pull_request tokens, so a scheduled or manual run couldn't log in to Azure.
 on:
   pull_request:
     types: [closed]
-  schedule:
-    - cron: '0 6 * * 1'
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
   PREVIEW_RESOURCE_GROUP: CheckMate-Preview
-  PREVIEW_SQL_SERVER: checkmate-preview-sql
 
 jobs:
   delete:
     name: Delete PR Preview
     runs-on: ubuntu-latest
-    # Fork and Dependabot PRs never get a preview (and can't log in to Azure), so there's nothing to delete.
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    # The same PRs deploy-preview deploys: from this repository and not opened by Dependabot (whoever closes it).
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'
     # The same group as deploy-preview, so closing the PR cancels a deployment still running for it.
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
@@ -74,7 +72,13 @@ jobs:
   sweep:
     name: Sweep Orphaned Previews
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    needs: delete
+    # Runs whether or not this PR's own deletion succeeded, and retries it if it didn't.
+    if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
+    # One sweep at a time, so two PRs closing together don't delete the same leftovers at once.
+    concurrency:
+      group: preview-sweep
+      cancel-in-progress: false
     permissions:
       id-token: write
       contents: read
@@ -92,14 +96,17 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       # Every per-PR resource carries a pr-number tag (infra/preview.bicep). A PR that can't be read is kept,
-      # since deleting a live preview is worse than keeping a stale one for another week.
+      # since deleting a live preview is worse than keeping a stale one until the next sweep. One failed
+      # deletion doesn't stop the others; the step fails at the end if any did.
       - name: Delete previews whose PR is closed
         shell: bash
         run: |
-          for pr in $(az resource list \
-              --resource-group "${PREVIEW_RESOURCE_GROUP}" \
-              --query '[?tags."pr-number"].tags."pr-number"' \
-              --output tsv | sort -un); do
+          listing="$(az resource list \
+            --resource-group "${PREVIEW_RESOURCE_GROUP}" \
+            --query '[?tags."pr-number"].tags."pr-number"' \
+            --output tsv)"
+          failed=()
+          for pr in $(sort -un <<<"${listing}"); do
             state="$(gh pr view "${pr}" --repo "${GITHUB_REPOSITORY}" --json state --jq .state 2>/dev/null || echo UNKNOWN)"
             case "${state}" in
               OPEN)
@@ -110,9 +117,16 @@ jobs:
                 ;;
               *)
                 echo "PR #${pr} is ${state}; deleting its preview"
-                PR_NUMBER="${pr}" bash .github/scripts/delete-preview.sh
+                if ! PR_NUMBER="${pr}" bash .github/scripts/delete-preview.sh; then
+                  echo "::warning::Deleting the preview for PR #${pr} failed"
+                  failed+=("#${pr}")
+                fi
                 ;;
             esac
           done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::Couldn't delete the previews for PRs ${failed[*]}"
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ github.token }}

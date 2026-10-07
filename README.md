@@ -230,7 +230,7 @@ GitHub issues OIDC tokens for this repo with immutable-ID subjects, so federated
 
 #### PR Preview Environments
 
-Every pull request from this repository (not forks or Dependabot) is deployed to a preview environment of its own, so the change can be tried before it's merged. The `deploy-preview` job in `ci.yml` runs once the backend and frontend builds pass, and posts (then keeps updating) a **Preview environment** comment on the PR with the frontend and API links, the deployed commit and the time. It's done when the comment says **Ready**, which is after the smoke tests have passed against the preview. `.github/workflows/preview-cleanup.yml` deletes the environment when the PR is closed or merged, and sweeps the resource group weekly for previews whose PR has closed without that running.
+Every pull request from this repository (not forks, and not opened by Dependabot) is deployed to a preview environment of its own, so the change can be tried before it's merged. The `deploy-preview` job in `ci.yml` runs once the backend and frontend builds pass, and posts (then keeps updating) a **Preview environment** comment on the PR with the frontend and API links, the deployed commit and the time. It's done when the comment says **Ready**, which is after the smoke tests have passed against the preview. `.github/workflows/preview-cleanup.yml` deletes the environment when the PR is closed or merged, then sweeps the resource group for previews of other closed PRs whose own deletion failed. It runs only on PR events, because the preview identity only trusts pull request tokens.
 
 Previews live in the `CheckMate-Preview` resource group, defined by `infra/preview.bicep` and `infra/preview.bicepparam`, and are kept cheap by sharing the fixed-cost resources:
 
@@ -240,14 +240,14 @@ Previews live in the `CheckMate-Preview` resource group, defined by `infra/previ
 | SQL server `checkmate-preview-sql` | Shared | Entra-only auth; the `checkmate-preview-deploy` identity is its Entra admin (set by the template) |
 | Web app `checkmate-pr-<N>` | Per PR | Same settings as production minus Application Insights (telemetry is off). The API URL has a random suffix, so take it from the PR comment |
 | Database `CheckMate-pr-<N>` | Per PR | Serverless, auto-pauses after an hour, starts empty, and uses the [SQL free offer](https://learn.microsoft.com/azure/azure-sql/database/free-offer) like production. The offer covers 10 databases per subscription including production's; if a deployment fails because they're used up, close stale PRs or set `useFreeLimit = false` in `preview.bicepparam` (about $0.25 an hour while active, nothing while paused) |
-| Storage account `checkmatepr<N>` | Per PR | Static website, deployed exactly like production |
+| Storage account `checkmatepr<N><suffix>` | Per PR | Static website, deployed exactly like production. Storage account names are unique across Azure, so the name ends with 5 characters derived from the resource group |
 
-The first request after a while can take a minute while the app and database start. Each deployment runs the PR's migrations against its database, then creates the web app's database user from its managed identity's client ID (`.github/scripts/preview-db-user.sql`), so no database users are set up by hand. A newer push to the PR cancels a deployment still running for it. If a preview is broken (for example a migration was cancelled partway), close and reopen the PR, or delete its database in the portal and re-run the job.
+The first request after a while can take a minute while the app and database start. Each deployment runs the PR's migrations against its database, then creates the web app's database user from its managed identity's client ID (`.github/scripts/preview-db-user.sql`), so no database users are set up by hand. A deployment still running for the PR finishes before a newer push deploys (closing the PR cancels it). The database is recreated empty when a migration script it already ran has been edited, or its last migration run didn't finish (`.github/scripts/preview-migrations.sh`); scripts added since keep its data. If a preview is still broken, close and reopen the PR.
 
 To preview the template by hand (needs rights on the `CheckMate-Preview` resource group):
 
 ```powershell
-$env:PREVIEW_PR_NUMBER = '0'
+$env:PREVIEW_PR_NUMBER = '1'  # any PR number; what-if doesn't change anything
 az deployment group what-if --resource-group CheckMate-Preview --template-file infra/preview.bicep --parameters infra/preview.bicepparam
 ```
 

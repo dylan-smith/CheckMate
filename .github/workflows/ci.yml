@@ -17,7 +17,7 @@ permissions:
 # job-level groups can't. Never cancel a running deployment: stopping it partway through migrations would leave
 # the API paused. A newer main run waiting its turn replaces an older waiting one, which is fine since it has
 # the newer code. Other runs (pull requests) get a group of their own, so they never wait. The deploy-preview job
-# has a job-level group per PR (shared with preview-cleanup.yml) so only its newest deployment runs.
+# has a job-level group per PR (shared with preview-cleanup.yml) so one deployment runs for a PR at a time.
 concurrency:
   group: ${{ github.ref == 'refs/heads/main' && 'production-deploy' || format('ci-{0}', github.run_id) }}
   cancel-in-progress: false
@@ -371,29 +371,32 @@ jobs:
     name: Deploy PR Preview
     runs-on: ubuntu-latest
     needs: [backend, frontend]
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    # Checks who opened the PR, not who triggered the run, so a push to a Dependabot PR doesn't deploy it either.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'
     # No environment: PR runs use the preview identity, which can only change the preview resource group, and
     # never get the production environment's credentials or secrets.
-    # A newer push to the PR replaces a deployment still running for it (the Bicep deployment is idempotent, and
-    # a cancelled migration run is finished by the next one). preview-cleanup.yml uses the same group.
+    # A deployment still running for the PR finishes before the next one starts (a newer push waiting its turn
+    # replaces an older waiting one), since stopping it partway through migrations would break the database.
+    # Closing the PR does cancel it (preview-cleanup.yml uses the same group), since the database is deleted then.
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     permissions:
       id-token: write
       contents: read
       pull-requests: write
-    timeout-minutes: 30
+    # Long enough for every step's own waits and retries to run their course on a slow first deployment.
+    timeout-minutes: 60
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       # Read by infra/preview.bicepparam.
       PREVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
       PREVIEW_RESOURCE_GROUP: CheckMate-Preview
       PREVIEW_SQL_SERVER: checkmate-preview-sql
-      # The per-PR resource names, as infra/preview.bicep derives them.
+      # The per-PR resource names, as infra/preview.bicep derives them. The storage account's name has a suffix
+      # of its own, so it comes from the deployment's outputs.
       PREVIEW_APP_NAME: checkmate-pr-${{ github.event.pull_request.number }}
       PREVIEW_DB_NAME: CheckMate-pr-${{ github.event.pull_request.number }}
-      PREVIEW_STORAGE_ACCOUNT_NAME: checkmatepr${{ github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@v7
 
@@ -445,20 +448,33 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      # Recreates the database empty if an applied migration script was edited, or the last migration run
+      # didn't finish (see the script), so the migrations below always match the PR's scripts.
+      - name: Check the preview database's migrations
+        run: bash .github/scripts/preview-migrations.sh check
+
       # The deployment has a fixed name per PR, and Azure refuses a deployment while one of the same name is
-      # still running (a run this one cancelled), so wait for it first. The deployment is retried in case two
-      # PRs' runs update the shared App Service plan or SQL server at the same moment.
+      # still running (one whose job timed out, say), so wait for it first. Only a missing deployment counts as
+      # not running; other lookup errors fail the step. The deployment is retried in case two PRs' runs update
+      # the shared App Service plan or SQL server at the same moment.
       - name: Deploy preview infrastructure (Bicep)
         id: infra
         shell: bash
         run: |
           deployment="preview-pr-${PR_NUMBER}"
           for attempt in $(seq 1 60); do
-            state="$(az deployment group show \
-              --resource-group "${PREVIEW_RESOURCE_GROUP}" \
-              --name "${deployment}" \
-              --query properties.provisioningState \
-              --output tsv 2>/dev/null || true)"
+            if ! state="$(az deployment group show \
+                --resource-group "${PREVIEW_RESOURCE_GROUP}" \
+                --name "${deployment}" \
+                --query properties.provisioningState \
+                --output tsv 2>&1)"; then
+              if grep -q "DeploymentNotFound" <<<"${state}"; then
+                state=""
+              else
+                echo "::error::Couldn't check deployment ${deployment}: ${state}"
+                exit 1
+              fi
+            fi
             case "${state}" in
               Running | Accepted)
                 echo "An earlier deployment is still running (${state}); checking again in 10 seconds"
@@ -493,6 +509,7 @@ jobs:
             echo "app-service-id=$(jq -r '.appServiceId.value' "${outputs}")"
             echo "app-service-url=$(jq -r '.appServiceUrl.value' "${outputs}")"
             echo "sql-server-fqdn=$(jq -r '.sqlServerFqdn.value' "${outputs}")"
+            echo "storage-account-name=$(jq -r '.storageAccountName.value' "${outputs}")"
             # The browser sends the origin without a trailing slash.
             echo "frontend-origin=${frontend_endpoint%/}"
           } >> "$GITHUB_OUTPUT"
@@ -516,12 +533,19 @@ jobs:
         env:
           APP_SERVICE_ID: ${{ steps.infra.outputs['app-service-id'] }}
 
+      # Until the migrations finish, the database isn't marked as matching any scripts (see the check above).
+      - name: Mark the migrations as started
+        run: bash .github/scripts/preview-migrations.sh clear
+
       # Active Directory Default authenticates as the identity azure/login signed in, which is the preview SQL
       # server's Entra admin, so no database user or secret is needed for the migrations.
       - name: Run database migrations
         run: ./backend/database-publish/CheckMate.Database "$CONNECTION_STRING"
         env:
           CONNECTION_STRING: Server=tcp:${{ steps.infra.outputs['sql-server-fqdn'] }},1433;Initial Catalog=${{ env.PREVIEW_DB_NAME }};Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;Connection Timeout=120;
+
+      - name: Record the migrations applied
+        run: bash .github/scripts/preview-migrations.sh record
 
       - name: Create the API's database user
         uses: azure/sql-action@v2.4
@@ -578,6 +602,8 @@ jobs:
             echo "Attempt ${attempt} failed; retrying in 15 seconds"
             sleep 15
           done
+        env:
+          PREVIEW_STORAGE_ACCOUNT_NAME: ${{ steps.infra.outputs['storage-account-name'] }}
 
       # No Application Insights connection string: the preview doesn't report telemetry.
       - name: Build frontend
@@ -590,7 +616,7 @@ jobs:
         run: npm run deploy
         working-directory: frontend
         env:
-          AZURE_STORAGE_ACCOUNT_NAME: ${{ env.PREVIEW_STORAGE_ACCOUNT_NAME }}
+          AZURE_STORAGE_ACCOUNT_NAME: ${{ steps.infra.outputs['storage-account-name'] }}
 
       - name: Install Playwright browser
         run: npx playwright install chromium --with-deps
