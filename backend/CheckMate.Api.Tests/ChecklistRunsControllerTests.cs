@@ -1,3 +1,4 @@
+using System.Globalization;
 using CheckMate.Api.Contracts;
 using CheckMate.Api.Controllers;
 using CheckMate.Api.Data;
@@ -183,6 +184,77 @@ public class ChecklistRunsControllerTests
         var saved = Assert.IsType<ChecklistRunStepResponse>(Assert.IsType<OkObjectResult>(second.Result).Value);
         Assert.Equal("Second", saved.ResponseText);
         Assert.Equal(firstCompletedAt, saved.CompletedAt);
+    }
+
+    [Theory]
+    [InlineData("42")]
+    [InlineData("-3.5")]
+    [InlineData("0")]
+    [InlineData("0.000001")]
+    [InlineData("999999999.999999")]
+    [InlineData("-999999999.999999")]
+    public async Task UpdateStep_SavesNumber_ForNumberStep_AndMarksItDone(string value)
+    {
+        var number = decimal.Parse(value, CultureInfo.InvariantCulture);
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Temperature", type: StepType.Number);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+
+        // IsDone and Text are ignored for a number step: only the number decides it.
+        var result = await controller.UpdateStep(runId, step.Id, new RunStepRequest { Number = number, Text = "x", IsDone = false });
+
+        var saved = Assert.IsType<ChecklistRunStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(number, saved.ResponseNumber);
+        Assert.Null(saved.ResponseText);
+        Assert.True(saved.IsDone);
+        Assert.NotNull(saved.CompletedAt);
+        var reloaded = Assert.Single(GetRun(await controller.GetById(runId)).Steps);
+        Assert.Equal((number, true), (reloaded.ResponseNumber, reloaded.IsDone));
+    }
+
+    [Fact]
+    public async Task UpdateStep_ClearsNumberStep_WhenNumberIsNull()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Temperature", type: StepType.Number);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.UpdateStep(runId, step.Id, new RunStepRequest { Number = 21.5m });
+
+        var result = await controller.UpdateStep(runId, step.Id, new RunStepRequest { Number = null, IsDone = true });
+
+        var saved = Assert.IsType<ChecklistRunStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Null(saved.ResponseNumber);
+        Assert.False(saved.IsDone);
+        Assert.Null(saved.CompletedAt);
+    }
+
+    [Theory]
+    [InlineData("1000000000")]
+    [InlineData("-1000000000")]
+    [InlineData("1.0000001")]
+    // decimal.MinValue and MaxValue: Math.Abs(decimal) can't overflow, unlike Math.Abs(int.MinValue).
+    [InlineData("-79228162514264337593543950335")]
+    [InlineData("79228162514264337593543950335")]
+    public async Task UpdateStep_ReturnsValidationProblem_WhenNumberDoesNotFit(string value)
+    {
+        var number = decimal.Parse(value, CultureInfo.InvariantCulture);
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Temperature", type: StepType.Number);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+
+        var result = await controller.UpdateStep(runId, step.Id, new RunStepRequest { Number = number });
+
+        var objectResult = Assert.IsType<ObjectResult>(result.Result);
+        Assert.IsType<ValidationProblemDetails>(objectResult.Value);
+        var saved = await dbContext.ChecklistRunSteps.SingleAsync();
+        Assert.Null(saved.ResponseNumber);
+        Assert.False(saved.IsDone);
     }
 
     [Fact]

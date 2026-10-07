@@ -11,4 +11,7 @@ public class RunStepRequest
     /// <summary>The value of a text step. It's done when this isn't empty.</summary>
     [MaxLength(1000)]
     public string? Text { get; set; }
+
+    /// <summary>The value of a number step. It's done when this isn't null.</summary>
+    public decimal? Number { get; set; }
 }

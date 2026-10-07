@@ -28,4 +28,7 @@ public class ChecklistRunStep
     /// <summary>The value entered for a text step, or null when there isn't one.</summary>
     [MaxLength(1000)]
     public string? ResponseText { get; set; }
+
+    /// <summary>The value entered for a number step, or null when there isn't one.</summary>
+    public decimal? ResponseNumber { get; set; }
 }

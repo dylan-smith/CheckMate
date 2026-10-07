@@ -13,7 +13,10 @@ public enum StepType
     Checkbox = 0,
 
     /// <summary>Done once some text has been entered.</summary>
-    Text = 1
+    Text = 1,
+
+    /// <summary>Done once a number has been entered.</summary>
+    Number = 2
 }
 
 /// <summary>Reads and writes a <see cref="StepType"/> by name only, so a number such as 1 is rejected.</summary>

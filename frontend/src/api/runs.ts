@@ -10,12 +10,15 @@ export type RunStep = {
   type: StepType
   isDone: boolean
   completedAt: string | null
-  // The value entered for a text step.
+  // The value entered for a text or number step.
   responseText: string | null
+  responseNumber: number | null
 }
 
 // A checkbox step sends isDone. A text step sends its text, and is done when the text isn't empty.
-export type RunStepUpdate = { isDone: boolean } | { text: string }
+// A number step sends its number, and is done when it isn't null.
+export type RunStepUpdate =
+  { isDone: boolean } | { text: string } | { number: number | null }
 
 export type ChecklistRun = {
   id: number
