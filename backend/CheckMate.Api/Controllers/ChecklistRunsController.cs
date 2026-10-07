@@ -41,7 +41,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         {
             ChecklistId = checklistId,
             StartedAt = DateTimeOffset.UtcNow,
-            Responses = [.. steps.Select((step, index) => new RunStepResponse
+            Steps = [.. steps.Select((step, index) => new ChecklistRunStep
             {
                 StepId = step.Id,
                 StepText = step.Text,
@@ -64,7 +64,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
         var run = await dbContext.ChecklistRuns
             .AsNoTracking()
-            .Include(item => item.Responses)
+            .Include(item => item.Steps)
             .FirstOrDefaultAsync(item => item.Id == runId);
 
         if (run is null)
@@ -87,10 +87,10 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return NotFound();
         }
 
-        var response = await dbContext.RunStepResponses
+        var runStep = await dbContext.ChecklistRunSteps
             .FirstOrDefaultAsync(item => item.RunId == runId && item.StepId == stepId);
 
-        if (response is null)
+        if (runStep is null)
         {
             logger.LogWarning("Step {StepId} not found in run {RunId}", stepId, runId);
             return NotFound();
@@ -102,10 +102,10 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return Conflict(new { message = CompletedRunMessage });
         }
 
-        if (response.IsDone != request.IsDone)
+        if (runStep.IsDone != request.IsDone)
         {
-            response.IsDone = request.IsDone;
-            response.CompletedAt = request.IsDone ? DateTimeOffset.UtcNow : null;
+            runStep.IsDone = request.IsDone;
+            runStep.CompletedAt = request.IsDone ? DateTimeOffset.UtcNow : null;
         }
 
         // Write the run's CompletedAt back unchanged, so the save checks the run is still open in the same
@@ -124,14 +124,14 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
         logger.LogInformation("Saved step {StepId} in run {RunId}", stepId, runId);
 
-        return Ok(ChecklistRunStepResponse.From(response));
+        return Ok(ChecklistRunStepResponse.From(runStep));
     }
 
     [HttpPost("{runId:int}/complete")]
     public async Task<ActionResult<ChecklistRunResponse>> Complete(int runId)
     {
         var run = await dbContext.ChecklistRuns
-            .Include(item => item.Responses)
+            .Include(item => item.Steps)
             .FirstOrDefaultAsync(item => item.Id == runId);
 
         if (run is null)
@@ -176,9 +176,9 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
     private static ChecklistRunResponse ToResponse(ChecklistRun run, string checklistName)
     {
-        var steps = run.Responses
-            .OrderBy(response => response.SortOrder)
-            .ThenBy(response => response.Id)
+        var steps = run.Steps
+            .OrderBy(step => step.SortOrder)
+            .ThenBy(step => step.Id)
             .Select(ChecklistRunStepResponse.From)
             .ToList();
 

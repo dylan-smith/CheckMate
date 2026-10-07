@@ -195,7 +195,7 @@ public class ChecklistsControllerTests
             new ChecklistRun
             {
                 ChecklistId = checklist.Id,
-                Responses = [new RunStepResponse { StepId = step.Id, StepText = step.Text }]
+                Steps = [new ChecklistRunStep { StepId = step.Id, StepText = step.Text }]
             },
             new ChecklistRun { ChecklistId = other.Id });
         await dbContext.SaveChangesAsync();
@@ -207,7 +207,7 @@ public class ChecklistsControllerTests
 
         Assert.IsType<NoContentResult>(result);
         Assert.Equal(other.Id, (await dbContext.ChecklistRuns.SingleAsync()).ChecklistId);
-        Assert.False(await dbContext.RunStepResponses.AnyAsync());
+        Assert.False(await dbContext.ChecklistRunSteps.AnyAsync());
     }
 
     [Fact]
