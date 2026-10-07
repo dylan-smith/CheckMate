@@ -134,9 +134,16 @@ jobs:
     needs: investigate
     if: always()
     runs-on: ubuntu-latest
-    permissions: {}
+    permissions:
+      contents: read
     timeout-minutes: 5
     steps:
+      # Only the script that posts the findings is needed. Check out before downloading, since checkout cleans
+      # the workspace.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+
       - name: Download findings
         uses: actions/download-artifact@v8
         continue-on-error: true
@@ -144,24 +151,8 @@ jobs:
           name: findings
           path: findings
 
-      # The findings are Slack mrkdwn written from telemetry Claude read, so cap their length and stop them pinging
-      # the whole channel.
       - name: Post to Slack
-        run: |
-          rule=$(printf '%s' "$ALERT" | jq -r '.data.essentials.alertRule // .data.BudgetName // "the alert"' 2>/dev/null || echo "the alert")
-          if [ -s findings/findings.md ]; then
-            findings=$(head -c 3500 findings/findings.md | sed -E 's/<!(channel|here|everyone|subteam)/\&lt;!\1/g')
-            text="${findings}"$'\n'"<${RUN_URL}|Investigation run>"
-          else
-            text=":warning: Claude couldn't finish investigating *${rule}*. See the <${RUN_URL}|investigation run>."
-          fi
-          printf '%s\n' "$text" >> "$GITHUB_STEP_SUMMARY"
-          if [ -z "$SLACK_WEBHOOK_URL" ]; then
-            echo "::warning::SLACK_WEBHOOK_URL isn't set, so the findings are only in the job summary."
-            exit 0
-          fi
-          jq -n --arg text "$text" '{text: $text}' \
-            | curl --fail-with-body --silent --show-error -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+        run: bash .github/scripts/post-alert-findings.sh
         env:
           ALERT: ${{ inputs.alert }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

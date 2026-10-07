@@ -22,6 +22,29 @@ async function openChecklist(page: Page, name: string) {
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
 }
 
+// Drags a step by its handle onto another step's place, in small moves like a real pointer.
+async function dragStep(page: Page, text: string, targetIndex: number) {
+  const handleLocator = page.getByTitle(`Drag to reorder step "${text}"`)
+  // The dragged copy from the last drop settles into place before another drag can start.
+  await expect(handleLocator).toHaveCount(1)
+  const handle = await handleLocator.boundingBox()
+  const target = await page.getByRole('listitem').nth(targetIndex).boundingBox()
+  if (!handle || !target) {
+    throw new Error('Step not on screen')
+  }
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2,
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    target.y + target.height / 2,
+    { steps: 10 },
+  )
+  await page.mouse.up()
+}
+
 test.describe('Checklist management', () => {
   test.beforeEach(async ({ page, request }) => {
     // Delete leftover checklists (including ones other spec files created) through the API, since
@@ -243,6 +266,36 @@ test.describe('Checklist management', () => {
       await expect(steps.nth(0)).toContainText('Read a book')
       await expect(steps.nth(1)).toContainText('Brush teeth')
       await expect(steps.nth(2)).toContainText('Wash dishes')
+    })
+
+    test('reorders steps by dragging, and the order persists', async ({
+      page,
+    }) => {
+      await createChecklist(page, 'Weekend chores')
+      await openChecklist(page, 'Weekend chores')
+
+      await addStep(page, 'Mow lawn')
+      await addStep(page, 'Do laundry')
+      await addStep(page, 'Buy groceries')
+
+      const steps = page.getByRole('listitem')
+
+      await dragStep(page, 'Buy groceries', 0)
+      await expect(page.getByRole('status')).toHaveText(
+        'Moved step "Buy groceries" to position 1 of 3.',
+      )
+
+      await dragStep(page, 'Buy groceries', 1)
+      await expect(page.getByRole('status')).toHaveText(
+        'Moved step "Buy groceries" to position 2 of 3.',
+      )
+
+      await page.reload()
+
+      await expect(steps).toHaveCount(3)
+      await expect(steps.nth(0)).toContainText('Mow lawn')
+      await expect(steps.nth(1)).toContainText('Buy groceries')
+      await expect(steps.nth(2)).toContainText('Do laundry')
     })
 
     test('rejects a stale list of step ids', async ({ request }) => {
