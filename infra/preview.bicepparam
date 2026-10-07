@@ -1,19 +1,18 @@
 using './preview.bicep'
 
-// Values for the CheckMate-Preview resource group, which holds every pull request's preview environment. The
-// deploy-preview CI job sets PREVIEW_PR_NUMBER; to run the template by hand, set it to the PR's number first.
+// Values for a pull request's preview environment in the CheckMate-Preview resource group (the resources every
+// preview shares are in preview-shared.bicepparam). The deploy-preview CI job sets PREVIEW_PR_NUMBER and
+// PREVIEW_DATABASE_TAGS; to run the template by hand, set PREVIEW_PR_NUMBER to the PR's number first.
 param location = 'westus2'
 param prNumber = int(readEnvironmentVariable('PREVIEW_PR_NUMBER'))
 
-// Shared by every preview
+// The shared resources, deployed by preview-shared.bicep
 param appServicePlanName = 'CheckMate-Preview-Plan'
-param appServicePlanSku = 'F1'
 param sqlServerName = 'checkmate-preview-sql'
-
-// The checkmate-preview-deploy managed identity (see README, Identities & Permissions)
-param sqlEntraAdminLogin = 'checkmate-preview-deploy'
-param sqlEntraAdminObjectId = '48ab6f58-454d-4a88-870f-18d071bf38ff'
 
 // The free offer covers 10 databases per subscription, one of which is production's. Turn this off if a
 // deployment fails because they're used up (an existing database keeps the setting it was created with).
 param useFreeLimit = true
+
+// The database's current tags, as JSON, so the deployment keeps them (see the parameter in preview.bicep)
+param existingDatabaseTags = json(readEnvironmentVariable('PREVIEW_DATABASE_TAGS', '{}'))

@@ -9,7 +9,9 @@
 #   check   (before the Bicep deployment) deletes the database, so the deployment recreates it empty, when the
 #           tag is missing (the last run didn't finish its migrations) or the scripts it covers have changed.
 #           Scripts added after them don't count, so new migrations keep the database's data.
-#   clear   (before the migrations) removes the tag, so a run that stops partway is caught by the next check.
+#   clear   (just before the migrations) removes the tag, so a run that stops partway is caught by the next
+#           check. Until then the tag is kept, including through the Bicep deployment (see
+#           deploy-preview-infra.sh), so a run that fails before migrating doesn't lose the database's data.
 #   record  (after the migrations) sets the tag for the current scripts.
 # Requires PREVIEW_RESOURCE_GROUP and PR_NUMBER, and runs from the repository root.
 set -euo pipefail
@@ -61,12 +63,15 @@ case "${1:-}" in
     fi
     ;;
   clear)
-    az tag update \
-      --resource-id "${database_id}" \
-      --operation Replace \
-      --tags "pr-number=${PR_NUMBER}" \
-      --only-show-errors \
-      --output none
+    # Only this tag goes: the others (pr-number, seeded) stay. Deleting a tag takes its current value.
+    if [ -n "${applied}" ] && [ "${applied}" != "None" ]; then
+      az tag update \
+        --resource-id "${database_id}" \
+        --operation Delete \
+        --tags "migrations=${applied}" \
+        --only-show-errors \
+        --output none
+    fi
     ;;
   record)
     az tag update \

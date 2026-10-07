@@ -37,8 +37,10 @@ jobs:
         with:
           sparse-checkout: .github/scripts
 
-      # Only updates the preview comment, so a PR that never had a preview gets none.
+      # Only updates the preview comment, so a PR that never had a preview gets none. It's only a status report,
+      # so failing to post it doesn't stop the cleanup.
       - name: Report preview deletion started
+        continue-on-error: true
         uses: actions/github-script@v9
         env:
           PREVIEW_STATUS: deleting

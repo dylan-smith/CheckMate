@@ -14,7 +14,8 @@ CheckMate is a checklist management app.
 - `frontend`: React 19 + TypeScript + Material UI (Vite). Unit tests use Vitest in `src/test`,
   and Playwright E2E tests are in `e2e`.
 - `infra`: Bicep templates for Azure (App Service, Azure SQL serverless, Storage static website,
-  monitoring). `preview.bicep` is a pull request's preview environment.
+  monitoring). `preview.bicep` is a pull request's preview environment, and `preview-shared.bicep`
+  the plan and SQL server every preview shares (deployed from the PR's base branch).
 - `.github/workflows/ci.yml`: build, test, CodeQL, E2E, PR what-if preview, deploy each PR to a
   preview environment, and deploy to production on `main`. `preview-cleanup.yml` deletes a PR's
   preview when it closes.
@@ -85,8 +86,9 @@ npm run test:e2e
 - Bicep in `infra/` owns **all** App Service app settings. Add new settings in
   `infra/modules/appservice.bicep` (and `infra/preview.bicep` for previews), never by hand in the
   portal.
-- The template doesn't manage identities, role assignments or database users. Those are set up
-  manually (see README).
+- The templates don't manage identities, role assignments or database users. Production's are set
+  up manually (see README). Preview web apps' database users are created by the `deploy-preview`
+  job (`.github/scripts/preview-db-user.sql`), so don't add manual steps for them.
 - Pushes to `main` deploy to production, so treat changes to `ci.yml` and `infra/` with care.
 
 ## Pull requests

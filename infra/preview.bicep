@@ -1,8 +1,7 @@
 // A pull request's preview environment: a web app, a serverless database and a static-website storage account
-// of its own, on an App Service plan and SQL server shared by every preview. The deploy-preview CI job deploys
-// this template on each push to a PR, and preview-cleanup.yml deletes the PR's resources when it closes. The
-// shared resources are declared here too, so the first deployment creates them and later ones leave them as
-// they are.
+// of its own, on the App Service plan and SQL server every preview shares (preview-shared.bicep, which CI deploys
+// first). The deploy-preview CI job deploys this template on each push to a PR, and preview-cleanup.yml deletes
+// the PR's resources when it closes.
 //
 // The resources mirror the production modules (modules/appservice.bicep, modules/sql.bicep and
 // modules/storage.bicep) without their monitoring, alerts or backups, so keep their settings in sync when
@@ -21,20 +20,14 @@ param location string = resourceGroup().location
 @description('Name of the App Service Plan shared by every preview.')
 param appServicePlanName string
 
-@description('SKU of the shared App Service Plan.')
-param appServicePlanSku string
-
 @description('Name of the Azure SQL Server shared by every preview.')
 param sqlServerName string
 
-@description('Entra ID admin login of the shared SQL Server: the preview deployment identity, which runs the migrations and creates each web app\'s database user.')
-param sqlEntraAdminLogin string
-
-@description('Object ID of the preview deployment identity.')
-param sqlEntraAdminObjectId string
-
 @description('Use the Azure SQL free offer for the database. The offer covers a limited number of databases per subscription, and can\'t be turned on for an existing database.')
 param useFreeLimit bool = true
+
+@description('The database\'s current tags. A deployment replaces a resource\'s tags with the ones it declares, so CI passes these in to keep the ones its scripts set (migrations, seeded) through the deployment.')
+param existingDatabaseTags object = {}
 
 var appServiceName = 'checkmate-pr-${prNumber}'
 var sqlDatabaseName = 'CheckMate-pr-${prNumber}'
@@ -48,52 +41,18 @@ var prTags = {
   'pr-number': string(prNumber)
 }
 
-// Free and Shared plans don't support Always On.
-var isFreeOrShared = startsWith(appServicePlanSku, 'F') || startsWith(appServicePlanSku, 'D')
+// ---- Shared by every preview (preview-shared.bicep) ----
 
-// ---- Shared by every preview ----
-
-resource appServicePlan 'Microsoft.Web/serverfarms@2024-11-01' = {
+resource appServicePlan 'Microsoft.Web/serverfarms@2024-11-01' existing = {
   name: appServicePlanName
-  location: location
-  kind: 'linux'
-  sku: {
-    name: appServicePlanSku
-  }
-  properties: {
-    // Marks the plan as Linux; the OS can't be changed on an existing plan.
-    reserved: true
-  }
 }
 
-// Entra-only authentication, with the deployment identity as admin so it can reach every preview database
-// without a database user of its own.
-resource sqlServer 'Microsoft.Sql/servers@2023-08-01' = {
+resource sqlServer 'Microsoft.Sql/servers@2023-08-01' existing = {
   name: sqlServerName
-  location: location
-  properties: {
-    minimalTlsVersion: '1.2'
-    publicNetworkAccess: 'Enabled'
-    administrators: {
-      administratorType: 'ActiveDirectory'
-      azureADOnlyAuthentication: true
-      login: sqlEntraAdminLogin
-      sid: sqlEntraAdminObjectId
-      tenantId: tenant().tenantId
-      principalType: 'Application'
-    }
-  }
 }
 
-// GitHub-hosted runners run in Azure, so this lets the migrations reach the server.
-resource allowAzureServices 'Microsoft.Sql/servers/firewallRules@2023-08-01' = {
-  parent: sqlServer
-  name: 'AllowAllWindowsAzureIps'
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
-  }
-}
+// Free and Shared plans don't support Always On.
+var isFreeOrShared = startsWith(appServicePlan.sku.name, 'F') || startsWith(appServicePlan.sku.name, 'D')
 
 // ---- This pull request's resources ----
 
@@ -101,7 +60,7 @@ resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-08-01' = {
   parent: sqlServer
   name: sqlDatabaseName
   location: location
-  tags: prTags
+  tags: union(existingDatabaseTags, prTags)
   sku: {
     name: 'GP_S_Gen5'
     tier: 'GeneralPurpose'

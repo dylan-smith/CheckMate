@@ -150,6 +150,8 @@ infra/
 ├── main.bicepparam      # Production parameter values (resource names, regions, SKUs)
 ├── preview.bicep        # A pull request's preview environment (see PR preview environments)
 ├── preview.bicepparam   # Preview parameter values
+├── preview-shared.bicep # The App Service plan and SQL server every preview shares
+├── preview-shared.bicepparam # Their parameter values
 ├── modules/
 │   ├── alerts.bicep     # Alert rules, action group, availability test, Slack notifier and budget
 │   ├── appservice.bicep # App Service Plan + App Service (Linux/.NET 10) and its app settings
@@ -215,7 +217,7 @@ az deployment group create --resource-group CheckMate --template-file infra/main
 
 #### Identities & Permissions
 
-The template doesn't manage identities, role assignments or database users, so a new environment needs these set up by hand:
+The template doesn't manage identities, role assignments or database users, so a new environment needs these set up by hand. The exception is [PR preview environments](#pr-preview-environments): the `deploy-preview` job creates each preview web app's database user itself.
 
 | Identity | Grants |
 |----------|--------|
@@ -223,35 +225,37 @@ The template doesn't manage identities, role assignments or database users, so a
 | `checkmate-pr-whatif` (user-assigned managed identity, `AZURE_WHATIF_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:pull_request`; custom **CheckMate What-If Reader** role (`*/read`, `Microsoft.Resources/deployments/validate/action`, `Microsoft.Resources/deployments/whatIf/action`, `Microsoft.Resources/deployments/write`) on the resource group |
 | `checkmate-alert-investigator` (user-assigned managed identity, `AZURE_ALERT_INVESTIGATOR_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:environment:alert-investigation`; **Reader**, **Monitoring Reader**, **Log Analytics Reader** and **Cost Management Reader** on the resource group; **Monitoring Reader** on the subscription (Service Health events). Read-only, used by the alert investigation workflow |
 | App Service system-assigned identity | `db_datareader` + `db_datawriter` database user (the API's runtime connection) |
-| `checkmate-preview-deploy` (user-assigned managed identity, `AZURE_PREVIEW_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:pull_request`; **Contributor** and **Storage Blob Data Owner** on the `CheckMate-Preview` resource group; Entra admin of the preview SQL server (set by `infra/preview.bicep`, so it can run migrations on and create users in every preview database). Deploys [PR preview environments](#pr-preview-environments), so it must have no rights outside that resource group: PR branches control the workflow that uses it |
+| `checkmate-preview-deploy` (user-assigned managed identity, `AZURE_PREVIEW_CLIENT_ID`) | Federated credential for subject `repo:dylan-smith@1508559/CheckMate@1213636751:pull_request`; **Contributor** and **Storage Blob Data Owner** on the `CheckMate-Preview` resource group; Entra admin of the preview SQL server (set by `infra/preview-shared.bicep`, so it can run migrations on and create users in every preview database). Deploys [PR preview environments](#pr-preview-environments), so it must have no rights outside that resource group: PR branches control the workflow that uses it |
 | Preview web app system-assigned identities | `db_datareader` + `db_datawriter` user in the PR's database, created by the `deploy-preview` job |
 
 GitHub issues OIDC tokens for this repo with immutable-ID subjects, so federated credentials must use the portal's **Other issuer** scenario (issuer `https://token.actions.githubusercontent.com`) rather than the GitHub Actions template. Create the database users as the SQL Entra admin, e.g. `CREATE USER [checkmate-deploy] FROM EXTERNAL PROVIDER; ALTER ROLE db_owner ADD MEMBER [checkmate-deploy];`.
 
 #### PR Preview Environments
 
-Every pull request from this repository (not forks, and not opened by Dependabot) is deployed to a preview environment of its own, so the change can be tried before it's merged. The `deploy-preview` job in `ci.yml` runs once the backend and frontend builds pass, and posts (then keeps updating) a **Preview environment** comment on the PR with the frontend and API links, the deployed commit and the time. It's done when the comment says **Ready**, which is after the smoke tests have passed against the preview. `.github/workflows/preview-cleanup.yml` deletes the environment when the PR is closed or merged, then sweeps the resource group for previews of other closed PRs whose own deletion failed. It runs only on PR events, because the preview identity only trusts pull request tokens.
+Every pull request from this repository (not forks, and not opened by Dependabot) is deployed to a preview environment of its own, so the change can be tried before it's merged. The `deploy-preview` job in `ci.yml` runs once the backend and frontend builds pass, and posts (then keeps updating) a **Preview environment** comment on the PR with the frontend and API links, the deployed commit and the time. It's done when the comment says **Ready**, which is after the smoke tests have passed against the preview. Only the run for the PR's latest commit deploys, and only while the PR is open, so an older run that finishes its builds late doesn't overwrite a newer deployment. `.github/workflows/preview-cleanup.yml` deletes the environment when the PR is closed or merged, then sweeps the resource group for previews of other closed PRs whose own deletion failed. It runs only on PR events, because the preview identity only trusts pull request tokens.
 
-Previews live in the `CheckMate-Preview` resource group, defined by `infra/preview.bicep` and `infra/preview.bicepparam`, and are kept cheap by sharing the fixed-cost resources:
+Previews live in the `CheckMate-Preview` resource group and are kept cheap by sharing the fixed-cost resources. The shared ones are defined by `infra/preview-shared.bicep`, which each deployment applies from the PR's base branch, so a PR can't change them for every other preview (a change to them reaches previews once it's merged). Each PR's own resources are defined by `infra/preview.bicep`.
 
 | Resource | Shared or per PR | Notes |
 |----------|------------------|-------|
-| App Service plan `CheckMate-Preview-Plan` | Shared | Free (F1) Linux plan: 60 CPU minutes a day, 1 GB and at most 10 web apps, shared by every preview. When the minutes run out, every preview stops until the next day. `appServicePlanSku` in `preview.bicepparam` can raise it to B1 |
-| SQL server `checkmate-preview-sql` | Shared | Entra-only auth; the `checkmate-preview-deploy` identity is its Entra admin (set by the template) |
+| App Service plan `CheckMate-Preview-Plan` | Shared | Free (F1) Linux plan: 60 CPU minutes a day, 1 GB and at most 10 web apps, shared by every preview. When the minutes run out, every preview stops until the next day. `appServicePlanSku` in `preview-shared.bicepparam` can raise it to B1 |
+| SQL server `checkmate-preview-sql` | Shared | Entra-only auth; the `checkmate-preview-deploy` identity is its Entra admin (set by `preview-shared.bicep`) |
 | Web app `checkmate-pr-<N>` | Per PR | Same settings as production minus Application Insights (telemetry is off). The API URL has a random suffix, so take it from the PR comment |
 | Database `CheckMate-pr-<N>` | Per PR | Serverless, auto-pauses after an hour, starts with sample checklists (see below), and uses the [SQL free offer](https://learn.microsoft.com/azure/azure-sql/database/free-offer) like production. The offer covers 10 databases per subscription including production's; if a deployment fails because they're used up, close stale PRs or set `useFreeLimit = false` in `preview.bicepparam` (about $0.25 an hour while active, nothing while paused) |
 | Storage account `checkmatepr<N><suffix>` | Per PR | Static website, deployed exactly like production. Storage account names are unique across Azure, so the name ends with 5 characters derived from the resource group |
 
-The first request after a while can take a minute while the app and database start. Each deployment runs the PR's migrations against its database, then creates the web app's database user from its managed identity's client ID (`.github/scripts/preview-db-user.sql`), so no database users are set up by hand. A deployment still running for the PR finishes before a newer push deploys (closing the PR cancels it). The database is recreated empty when a migration script it already ran has been edited, or its last migration run didn't finish (`.github/scripts/preview-migrations.sh`); scripts added since keep its data. When a deployment finds no checklists (a new or recreated database), it adds the sample checklists in `.github/scripts/preview-seed-data.json` through the API, covering every step type; edit that file to change them. A preview that already has checklists is left as reviewers left it. If a preview is still broken, close and reopen the PR.
+The first request after a while can take a minute while the app and database start. Each deployment runs the PR's migrations against its database, then creates the web app's database user from its managed identity's client ID (`.github/scripts/preview-db-user.sql`), so no database users are set up by hand. A deployment still running for the PR finishes before a newer push deploys (closing the PR cancels it). The database is recreated empty when a migration script it already ran has been edited, or its last migration run didn't finish (`.github/scripts/preview-migrations.sh`); scripts added since keep its data. A new or recreated database gets the sample checklists in `.github/scripts/preview-seed-data.json`, added through the API and covering every step type; edit that file to change them. A `seeded` tag on the database records that seeding finished, so later deployments leave the data as reviewers left it, and a seed that stopped partway is redone. The `migrations` and `seeded` tags are carried through each Bicep deployment, which would otherwise replace them. If a preview is still broken, close and reopen the PR.
 
-To preview the template by hand (needs rights on the `CheckMate-Preview` resource group):
+To preview the templates by hand (needs rights on the `CheckMate-Preview` resource group):
 
 ```powershell
+az deployment group what-if --resource-group CheckMate-Preview --template-file infra/preview-shared.bicep --parameters infra/preview-shared.bicepparam
+
 $env:PREVIEW_PR_NUMBER = '1'  # any PR number; what-if doesn't change anything
 az deployment group what-if --resource-group CheckMate-Preview --template-file infra/preview.bicep --parameters infra/preview.bicepparam
 ```
 
-Setting up previews for a new environment: create the `CheckMate-Preview` resource group, the `checkmate-preview-deploy` identity and its grants (see [Identities & Permissions](#identities--permissions)), put the identity's object ID in `preview.bicepparam` (`sqlEntraAdminObjectId`) and its client ID in the `AZURE_PREVIEW_CLIENT_ID` repository variable. The template creates the plan and SQL server on the first deployment.
+Setting up previews for a new environment: create the `CheckMate-Preview` resource group, the `checkmate-preview-deploy` identity and its grants (see [Identities & Permissions](#identities--permissions)), put the identity's object ID in `preview-shared.bicepparam` (`sqlEntraAdminObjectId`) and its client ID in the `AZURE_PREVIEW_CLIENT_ID` repository variable. The first deployment creates the plan and SQL server.
 
 ### Deployment Architecture
 

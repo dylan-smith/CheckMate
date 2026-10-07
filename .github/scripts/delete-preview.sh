@@ -31,10 +31,13 @@ for id in "${ids[@]}"; do
   az resource delete --ids "${id}" --only-show-errors --output none
 done
 
-# The deployment record is only history; removing it keeps the resource group's deployment list short.
-az deployment group delete \
-  --resource-group "${PREVIEW_RESOURCE_GROUP}" \
-  --name "${deployment}" \
-  --only-show-errors \
-  --output none 2>/dev/null || true
+# The deployment records (this PR's resources and its deployment of the shared ones) are only history; removing
+# them keeps the resource group's deployment list short.
+for name in "${deployment}" "preview-shared-pr-${PR_NUMBER}"; do
+  az deployment group delete \
+    --resource-group "${PREVIEW_RESOURCE_GROUP}" \
+    --name "${name}" \
+    --only-show-errors \
+    --output none 2>/dev/null || true
+done
 echo "Preview for PR #${PR_NUMBER} deleted"
