@@ -1,0 +1,118 @@
+name: Preview Cleanup
+
+# Deletes a pull request's preview environment (see the deploy-preview job in ci.yml) when the PR is closed, and
+# sweeps the preview resource group weekly for previews whose PR has since closed without this running (for
+# example a Dependabot PR someone pushed to, which Dependabot then closed: its runs can't log in to Azure). The
+# App Service plan and SQL server shared by every preview are never deleted.
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PREVIEW_RESOURCE_GROUP: CheckMate-Preview
+  PREVIEW_SQL_SERVER: checkmate-preview-sql
+
+jobs:
+  delete:
+    name: Delete PR Preview
+    runs-on: ubuntu-latest
+    # Fork and Dependabot PRs never get a preview (and can't log in to Azure), so there's nothing to delete.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    # The same group as deploy-preview, so closing the PR cancels a deployment still running for it.
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+
+      # Only updates the preview comment, so a PR that never had a preview gets none.
+      - name: Report preview deletion started
+        uses: actions/github-script@v9
+        env:
+          PREVIEW_STATUS: deleting
+          PREVIEW_UPDATE_ONLY: 'true'
+        with:
+          script: |
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/preview-comment.cjs`);
+            await run({ github, context });
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_PREVIEW_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Delete preview resources
+        run: bash .github/scripts/delete-preview.sh
+
+      - name: Update preview comment
+        if: ${{ !cancelled() }}
+        uses: actions/github-script@v9
+        env:
+          PREVIEW_STATUS: ${{ job.status == 'success' && 'deleted' || 'delete-failed' }}
+          PREVIEW_UPDATE_ONLY: 'true'
+        with:
+          script: |
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/preview-comment.cjs`);
+            await run({ github, context });
+
+  sweep:
+    name: Sweep Orphaned Previews
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_PREVIEW_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # Every per-PR resource carries a pr-number tag (infra/preview.bicep). A PR that can't be read is kept,
+      # since deleting a live preview is worse than keeping a stale one for another week.
+      - name: Delete previews whose PR is closed
+        shell: bash
+        run: |
+          for pr in $(az resource list \
+              --resource-group "${PREVIEW_RESOURCE_GROUP}" \
+              --query '[?tags."pr-number"].tags."pr-number"' \
+              --output tsv | sort -un); do
+            state="$(gh pr view "${pr}" --repo "${GITHUB_REPOSITORY}" --json state --jq .state 2>/dev/null || echo UNKNOWN)"
+            case "${state}" in
+              OPEN)
+                echo "PR #${pr} is open; keeping its preview"
+                ;;
+              UNKNOWN)
+                echo "::warning::Couldn't read PR #${pr}; keeping its preview"
+                ;;
+              *)
+                echo "PR #${pr} is ${state}; deleting its preview"
+                PR_NUMBER="${pr}" bash .github/scripts/delete-preview.sh
+                ;;
+            esac
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}

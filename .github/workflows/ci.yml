@@ -16,7 +16,8 @@ permissions:
 # workflow-level group holds the lock for the whole infrastructure, backend and frontend sequence, which
 # job-level groups can't. Never cancel a running deployment: stopping it partway through migrations would leave
 # the API paused. A newer main run waiting its turn replaces an older waiting one, which is fine since it has
-# the newer code. Other runs (pull requests) get a group of their own, so they never wait.
+# the newer code. Other runs (pull requests) get a group of their own, so they never wait. The deploy-preview job
+# has a job-level group per PR (shared with preview-cleanup.yml) so only its newest deployment runs.
 concurrency:
   group: ${{ github.ref == 'refs/heads/main' && 'production-deploy' || format('ci-{0}', github.run_id) }}
   cancel-in-progress: false
@@ -301,8 +302,14 @@ jobs:
           path: baseline
           sparse-checkout: infra
 
+      # The preview template is only linted here; deploy-preview deploys it for real on every PR.
       - name: Lint Bicep templates
-        run: az bicep lint --file infra/main.bicep
+        run: |
+          az bicep lint --file infra/main.bicep
+          az bicep lint --file infra/preview.bicep
+          az bicep build-params --file infra/preview.bicepparam --stdout > /dev/null
+        env:
+          PREVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
 
       - name: Login to Azure
         uses: azure/login@v3
@@ -356,6 +363,270 @@ jobs:
         with:
           script: |
             const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/what-if-comment.cjs`);
+            await run({ github, context });
+
+  # Deploys the PR to a preview environment of its own (infra/preview.bicep) and links to it from a PR comment.
+  # preview-cleanup.yml deletes it when the PR closes.
+  deploy-preview:
+    name: Deploy PR Preview
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    # No environment: PR runs use the preview identity, which can only change the preview resource group, and
+    # never get the production environment's credentials or secrets.
+    # A newer push to the PR replaces a deployment still running for it (the Bicep deployment is idempotent, and
+    # a cancelled migration run is finished by the next one). preview-cleanup.yml uses the same group.
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    timeout-minutes: 30
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      # Read by infra/preview.bicepparam.
+      PREVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
+      PREVIEW_RESOURCE_GROUP: CheckMate-Preview
+      PREVIEW_SQL_SERVER: checkmate-preview-sql
+      # The per-PR resource names, as infra/preview.bicep derives them.
+      PREVIEW_APP_NAME: checkmate-pr-${{ github.event.pull_request.number }}
+      PREVIEW_DB_NAME: CheckMate-pr-${{ github.event.pull_request.number }}
+      PREVIEW_STORAGE_ACCOUNT_NAME: checkmatepr${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Report preview deployment started
+        uses: actions/github-script@v9
+        env:
+          PREVIEW_STATUS: deploying
+        with:
+          script: |
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/preview-comment.cjs`);
+            await run({ github, context });
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Restore dependencies
+        run: |
+          dotnet restore backend/CheckMate.Api/CheckMate.Api.csproj
+          dotnet restore backend/CheckMate.Database/CheckMate.Database.csproj
+
+      - name: Build
+        run: |
+          dotnet build backend/CheckMate.Api/CheckMate.Api.csproj --configuration Release --no-restore
+          dotnet build backend/CheckMate.Database/CheckMate.Database.csproj --configuration Release --no-restore
+
+      - name: Publish API
+        run: dotnet publish backend/CheckMate.Api/CheckMate.Api.csproj --configuration Release --no-build --output ./backend/publish
+
+      - name: Publish Database CLI
+        run: dotnet publish backend/CheckMate.Database/CheckMate.Database.csproj --configuration Release --no-build --output ./backend/database-publish
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_PREVIEW_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # The deployment has a fixed name per PR, and Azure refuses a deployment while one of the same name is
+      # still running (a run this one cancelled), so wait for it first. The deployment is retried in case two
+      # PRs' runs update the shared App Service plan or SQL server at the same moment.
+      - name: Deploy preview infrastructure (Bicep)
+        id: infra
+        shell: bash
+        run: |
+          deployment="preview-pr-${PR_NUMBER}"
+          for attempt in $(seq 1 60); do
+            state="$(az deployment group show \
+              --resource-group "${PREVIEW_RESOURCE_GROUP}" \
+              --name "${deployment}" \
+              --query properties.provisioningState \
+              --output tsv 2>/dev/null || true)"
+            case "${state}" in
+              Running | Accepted)
+                echo "An earlier deployment is still running (${state}); checking again in 10 seconds"
+                sleep 10
+                ;;
+              *)
+                break
+                ;;
+            esac
+          done
+          for attempt in 1 2 3; do
+            if az deployment group create \
+                --resource-group "${PREVIEW_RESOURCE_GROUP}" \
+                --name "${deployment}" \
+                --template-file infra/preview.bicep \
+                --parameters infra/preview.bicepparam \
+                --only-show-errors \
+                --query properties.outputs \
+                --output json > "${RUNNER_TEMP}/preview-outputs.json"; then
+              break
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "::error::The preview infrastructure deployment failed"
+              exit 1
+            fi
+            echo "Deployment attempt ${attempt} failed; retrying in 30 seconds"
+            sleep 30
+          done
+          outputs="${RUNNER_TEMP}/preview-outputs.json"
+          frontend_endpoint="$(jq -r '.frontendWebEndpoint.value' "${outputs}")"
+          {
+            echo "app-service-id=$(jq -r '.appServiceId.value' "${outputs}")"
+            echo "app-service-url=$(jq -r '.appServiceUrl.value' "${outputs}")"
+            echo "sql-server-fqdn=$(jq -r '.sqlServerFqdn.value' "${outputs}")"
+            # The browser sends the origin without a trailing slash.
+            echo "frontend-origin=${frontend_endpoint%/}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Azure SQL derives an application's SID from its client ID (see preview-db-user.sql), which the Bicep
+      # identity output doesn't include. Resource Manager exposes it without a Microsoft Entra ID lookup.
+      - name: Resolve the API identity's client ID
+        id: identity
+        shell: bash
+        run: |
+          client_id="$(az rest \
+            --method get \
+            --url "https://management.azure.com${APP_SERVICE_ID}/providers/Microsoft.ManagedIdentity/identities/default?api-version=2023-01-31" \
+            --query properties.clientId \
+            --output tsv)"
+          if [ -z "${client_id}" ]; then
+            echo "::error::Couldn't read the client ID of ${PREVIEW_APP_NAME}'s managed identity"
+            exit 1
+          fi
+          echo "client-id=${client_id}" >> "$GITHUB_OUTPUT"
+        env:
+          APP_SERVICE_ID: ${{ steps.infra.outputs['app-service-id'] }}
+
+      # Active Directory Default authenticates as the identity azure/login signed in, which is the preview SQL
+      # server's Entra admin, so no database user or secret is needed for the migrations.
+      - name: Run database migrations
+        run: ./backend/database-publish/CheckMate.Database "$CONNECTION_STRING"
+        env:
+          CONNECTION_STRING: Server=tcp:${{ steps.infra.outputs['sql-server-fqdn'] }},1433;Initial Catalog=${{ env.PREVIEW_DB_NAME }};Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;Connection Timeout=120;
+
+      - name: Create the API's database user
+        uses: azure/sql-action@v2.4
+        with:
+          connection-string: Server=tcp:${{ steps.infra.outputs['sql-server-fqdn'] }},1433;Initial Catalog=${{ env.PREVIEW_DB_NAME }};Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;
+          path: .github/scripts/preview-db-user.sql
+          arguments: -v AppUserName=${{ env.PREVIEW_APP_NAME }} AppSid=${{ steps.identity.outputs['client-id'] }}
+
+      # The Bicep deployment's app settings restart the site's deployment (SCM) container shortly before this,
+      # which can stop the deployment partway (see deploy-backend), so a failed deployment is retried once.
+      - name: Deploy API to Azure App Service
+        id: deploy
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.PREVIEW_APP_NAME }}
+          package: ./backend/publish
+
+      - name: Wait before retrying the deployment
+        if: steps.deploy.outcome == 'failure'
+        run: |
+          echo "::warning::Deployment failed; retrying it once in 60 seconds"
+          sleep 60
+
+      - name: Retry deploy to Azure App Service
+        if: steps.deploy.outcome == 'failure'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.PREVIEW_APP_NAME }}
+          package: ./backend/publish
+
+      # Static website hosting is a data-plane setting that ARM templates can't manage. The preview identity's
+      # role on the resource group covers the new account, but data-plane calls can be refused for a short while
+      # after an account is created, so this is retried.
+      - name: Enable static website hosting
+        shell: bash
+        run: |
+          for attempt in $(seq 1 5); do
+            if az storage blob service-properties update \
+                --account-name "${PREVIEW_STORAGE_ACCOUNT_NAME}" \
+                --auth-mode login \
+                --static-website \
+                --index-document index.html \
+                --404-document index.html \
+                --only-show-errors \
+                --output none; then
+              break
+            fi
+            if [ "${attempt}" -eq 5 ]; then
+              echo "::error::Couldn't enable static website hosting on ${PREVIEW_STORAGE_ACCOUNT_NAME}"
+              exit 1
+            fi
+            echo "Attempt ${attempt} failed; retrying in 15 seconds"
+            sleep 15
+          done
+
+      # No Application Insights connection string: the preview doesn't report telemetry.
+      - name: Build frontend
+        run: npm run build
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: ${{ steps.infra.outputs['app-service-url'] }}
+
+      - name: Deploy frontend to Azure Storage Account
+        run: npm run deploy
+        working-directory: frontend
+        env:
+          AZURE_STORAGE_ACCOUNT_NAME: ${{ env.PREVIEW_STORAGE_ACCOUNT_NAME }}
+
+      - name: Install Playwright browser
+        run: npx playwright install chromium --with-deps
+        working-directory: frontend
+
+      # Checks the preview works end to end before the comment says it's ready. The tests first wait for the API
+      # to answer with the right CORS header (see e2e/smoke.global-setup.ts); on the free plan a new app and a
+      # new database take a while to start, hence the longer wait.
+      - name: Run smoke tests against the preview
+        run: npm run test:smoke
+        working-directory: frontend
+        env:
+          SMOKE_BASE_URL: ${{ steps.infra.outputs['frontend-origin'] }}
+          SMOKE_API_URL: ${{ steps.infra.outputs['app-service-url'] }}
+          SMOKE_READY_TIMEOUT_MS: '600000'
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ failure() }}
+        with:
+          name: preview-smoke-test-report
+          path: |
+            frontend/playwright-report/smoke/
+            frontend/playwright-report/smoke-results.xml
+          retention-days: 30
+
+      # Not when cancelled: the newer run for this PR owns the comment then.
+      - name: Update preview comment
+        if: ${{ !cancelled() }}
+        uses: actions/github-script@v9
+        env:
+          PREVIEW_STATUS: ${{ job.status == 'success' && 'ready' || 'failed' }}
+          PREVIEW_FRONTEND_URL: ${{ steps.infra.outputs['frontend-origin'] }}
+          PREVIEW_API_URL: ${{ steps.infra.outputs['app-service-url'] }}
+        with:
+          script: |
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/preview-comment.cjs`);
             await run({ github, context });
 
   deploy-infrastructure:
