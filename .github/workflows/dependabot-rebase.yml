@@ -26,31 +26,12 @@ jobs:
     name: Rebase next Dependabot PR
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+
       - name: Request rebase
         env:
           GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          prs=$(gh pr list --app dependabot --state open \
-                --json number,mergeStateStatus,autoMergeRequest,createdAt,statusCheckRollup \
-                --jq 'map(select(.autoMergeRequest != null)) | sort_by(.createdAt)')
-
-          # An up-to-date PR with checks still running is already on its way in; let it finish
-          in_flight=$(echo "$prs" | jq -r '
-            map(select(.mergeStateStatus != "BEHIND"
-                       and any(.statusCheckRollup[]; (.status // "COMPLETED") != "COMPLETED"
-                                                      or .state == "PENDING")))
-            | first | .number // empty')
-          if [ -n "$in_flight" ]; then
-            echo "PR #$in_flight is already running checks"
-            exit 0
-          fi
-
-          next=$(echo "$prs" | jq -r 'map(select(.mergeStateStatus == "BEHIND")) | first | .number // empty')
-          if [ -z "$next" ]; then
-            echo "No Dependabot PRs are behind main"
-            exit 0
-          fi
-
-          echo "Requesting rebase of PR #$next"
-          gh pr comment "$next" --body "@dependabot rebase"
+        run: bash .github/scripts/rebase-next-dependabot-pr.sh
