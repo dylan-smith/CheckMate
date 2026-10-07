@@ -16,7 +16,8 @@ permissions:
 # workflow-level group holds the lock for the whole infrastructure, backend and frontend sequence, which
 # job-level groups can't. Never cancel a running deployment: stopping it partway through migrations would leave
 # the API paused. A newer main run waiting its turn replaces an older waiting one, which is fine since it has
-# the newer code. Other runs (pull requests) get a group of their own, so they never wait.
+# the newer code. Other runs (pull requests) get a group of their own, so they never wait. The deploy-preview job
+# has a job-level group per PR (shared with preview-cleanup.yml) so one deployment runs for a PR at a time.
 concurrency:
   group: ${{ github.ref == 'refs/heads/main' && 'production-deploy' || format('ci-{0}', github.run_id) }}
   cancel-in-progress: false
@@ -301,8 +302,16 @@ jobs:
           path: baseline
           sparse-checkout: infra
 
+      # The preview template is only linted here; deploy-preview deploys it for real on every PR.
       - name: Lint Bicep templates
-        run: az bicep lint --file infra/main.bicep
+        run: |
+          az bicep lint --file infra/main.bicep
+          az bicep lint --file infra/preview.bicep
+          az bicep lint --file infra/preview-shared.bicep
+          az bicep build-params --file infra/preview.bicepparam --stdout > /dev/null
+          az bicep build-params --file infra/preview-shared.bicepparam --stdout > /dev/null
+        env:
+          PREVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
 
       - name: Login to Azure
         uses: azure/login@v3
@@ -356,6 +365,250 @@ jobs:
         with:
           script: |
             const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/what-if-comment.cjs`);
+            await run({ github, context });
+
+  # Deploys the PR to a preview environment of its own (infra/preview.bicep) and links to it from a PR comment.
+  # preview-cleanup.yml deletes it when the PR closes.
+  deploy-preview:
+    name: Deploy PR Preview
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    # Checks who opened the PR, not who triggered the run, so a push to a Dependabot PR doesn't deploy it either.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'
+    # No environment: PR runs use the preview identity, which can only change the preview resource group, and
+    # never get the production environment's credentials or secrets.
+    # A deployment still running for the PR finishes before the next one starts (a newer push waiting its turn
+    # replaces an older waiting one), since stopping it partway through migrations would break the database.
+    # Closing the PR does cancel it (preview-cleanup.yml uses the same group), since the database is deleted then.
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    # Long enough for every step's own waits and retries to run their course on a slow first deployment.
+    timeout-minutes: 60
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      # Read by infra/preview.bicepparam.
+      PREVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
+      PREVIEW_RESOURCE_GROUP: CheckMate-Preview
+      PREVIEW_SQL_SERVER: checkmate-preview-sql
+      # The per-PR resource names, as infra/preview.bicep derives them. The storage account's name has a suffix
+      # of its own, so it comes from the deployment's outputs.
+      PREVIEW_APP_NAME: checkmate-pr-${{ github.event.pull_request.number }}
+      PREVIEW_DB_NAME: CheckMate-pr-${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Only the run for the PR's current head commit, while the PR is open, deploys (see the script).
+      - name: Check this run is for the PR's latest commit
+        id: current
+        run: bash .github/scripts/preview-is-current.sh
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+
+      # The resources every preview shares are deployed from the base branch (see deploy-preview-infra.sh).
+      - name: Checkout the base branch's infrastructure
+        if: steps.current.outputs.current == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.base_ref }}
+          path: baseline
+          sparse-checkout: infra
+
+      # The comment is only a status report, so failing to post it doesn't stop the deployment.
+      - name: Report preview deployment started
+        if: steps.current.outputs.current == 'true'
+        continue-on-error: true
+        uses: actions/github-script@v9
+        env:
+          PREVIEW_STATUS: deploying
+        with:
+          script: |
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/preview-comment.cjs`);
+            await run({ github, context });
+
+      - name: Setup .NET
+        if: steps.current.outputs.current == 'true'
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        if: steps.current.outputs.current == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Restore dependencies
+        if: steps.current.outputs.current == 'true'
+        run: |
+          dotnet restore backend/CheckMate.Api/CheckMate.Api.csproj
+          dotnet restore backend/CheckMate.Database/CheckMate.Database.csproj
+
+      - name: Build
+        if: steps.current.outputs.current == 'true'
+        run: |
+          dotnet build backend/CheckMate.Api/CheckMate.Api.csproj --configuration Release --no-restore
+          dotnet build backend/CheckMate.Database/CheckMate.Database.csproj --configuration Release --no-restore
+
+      - name: Publish API
+        if: steps.current.outputs.current == 'true'
+        run: dotnet publish backend/CheckMate.Api/CheckMate.Api.csproj --configuration Release --no-build --output ./backend/publish
+
+      - name: Publish Database CLI
+        if: steps.current.outputs.current == 'true'
+        run: dotnet publish backend/CheckMate.Database/CheckMate.Database.csproj --configuration Release --no-build --output ./backend/database-publish
+
+      - name: Install frontend dependencies
+        if: steps.current.outputs.current == 'true'
+        run: npm ci
+        working-directory: frontend
+
+      - name: Login to Azure
+        if: steps.current.outputs.current == 'true'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_PREVIEW_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # Recreates the database empty if an applied migration script was edited, or the last migration run
+      # didn't finish (see the script), so the migrations below always match the PR's scripts.
+      - name: Check the preview database's migrations
+        if: steps.current.outputs.current == 'true'
+        run: bash .github/scripts/preview-migrations.sh check
+
+      - name: Deploy preview infrastructure (Bicep)
+        if: steps.current.outputs.current == 'true'
+        id: infra
+        run: bash .github/scripts/deploy-preview-infra.sh
+        env:
+          BASE_DIR: baseline
+
+      # Until the migrations finish, the database isn't marked as matching any scripts (see the check above).
+      - name: Mark the migrations as started
+        if: steps.current.outputs.current == 'true'
+        run: bash .github/scripts/preview-migrations.sh clear
+
+      # Active Directory Default authenticates as the identity azure/login signed in, which is the preview SQL
+      # server's Entra admin, so no database user or secret is needed for the migrations.
+      - name: Run database migrations
+        if: steps.current.outputs.current == 'true'
+        run: ./backend/database-publish/CheckMate.Database "$CONNECTION_STRING"
+        env:
+          CONNECTION_STRING: Server=tcp:${{ steps.infra.outputs['sql-server-fqdn'] }},1433;Initial Catalog=${{ env.PREVIEW_DB_NAME }};Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;Connection Timeout=120;
+
+      - name: Record the migrations applied
+        if: steps.current.outputs.current == 'true'
+        run: bash .github/scripts/preview-migrations.sh record
+
+      - name: Create the API's database user
+        if: steps.current.outputs.current == 'true'
+        uses: azure/sql-action@v2.4
+        with:
+          connection-string: Server=tcp:${{ steps.infra.outputs['sql-server-fqdn'] }},1433;Initial Catalog=${{ env.PREVIEW_DB_NAME }};Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;
+          path: .github/scripts/preview-db-user.sql
+          arguments: -v AppUserName=${{ env.PREVIEW_APP_NAME }} AppSid=${{ steps.infra.outputs['api-client-id'] }}
+
+      # The Bicep deployment's app settings restart the site's deployment (SCM) container shortly before this,
+      # which can stop the deployment partway (see deploy-backend), so a failed deployment is retried once.
+      - name: Deploy API to Azure App Service
+        if: steps.current.outputs.current == 'true'
+        id: deploy
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.PREVIEW_APP_NAME }}
+          package: ./backend/publish
+
+      - name: Wait before retrying the deployment
+        if: steps.deploy.outcome == 'failure'
+        run: |
+          echo "::warning::Deployment failed; retrying it once in 60 seconds"
+          sleep 60
+
+      - name: Retry deploy to Azure App Service
+        if: steps.deploy.outcome == 'failure'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.PREVIEW_APP_NAME }}
+          package: ./backend/publish
+
+      - name: Enable static website hosting
+        if: steps.current.outputs.current == 'true'
+        run: bash .github/scripts/enable-static-website.sh
+        env:
+          AZURE_STORAGE_ACCOUNT_NAME: ${{ steps.infra.outputs['storage-account-name'] }}
+
+      # No Application Insights connection string: the preview doesn't report telemetry.
+      - name: Build frontend
+        if: steps.current.outputs.current == 'true'
+        run: npm run build
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: ${{ steps.infra.outputs['app-service-url'] }}
+
+      - name: Deploy frontend to Azure Storage Account
+        if: steps.current.outputs.current == 'true'
+        run: npm run deploy
+        working-directory: frontend
+        env:
+          AZURE_STORAGE_ACCOUNT_NAME: ${{ steps.infra.outputs['storage-account-name'] }}
+
+      # It normally takes under a minute, but its system package download has hung for good, so it times out
+      # instead of holding the job until the job's own timeout.
+      - name: Install Playwright browser
+        if: steps.current.outputs.current == 'true'
+        timeout-minutes: 5
+        run: npx playwright install chromium --with-deps
+        working-directory: frontend
+
+      # Checks the preview works end to end before the comment says it's ready. The tests first wait for the API
+      # to answer with the right CORS header (see e2e/smoke.global-setup.ts); on the free plan a new app and a
+      # new database take a while to start, hence the longer wait.
+      - name: Run smoke tests against the preview
+        if: steps.current.outputs.current == 'true'
+        run: npm run test:smoke
+        working-directory: frontend
+        env:
+          SMOKE_BASE_URL: ${{ steps.infra.outputs['frontend-origin'] }}
+          SMOKE_API_URL: ${{ steps.infra.outputs['app-service-url'] }}
+          SMOKE_READY_TIMEOUT_MS: '600000'
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ failure() }}
+        with:
+          name: preview-smoke-test-report
+          path: |
+            frontend/playwright-report/smoke/
+            frontend/playwright-report/smoke-results.xml
+          retention-days: 30
+
+      # Adds sample checklists to a preview that hasn't been seeded yet, so there's something to try straight away.
+      - name: Seed sample data
+        if: steps.current.outputs.current == 'true'
+        run: bash .github/scripts/seed-preview.sh
+        env:
+          API_URL: ${{ steps.infra.outputs['app-service-url'] }}
+
+      # Not when cancelled: the newer run for this PR owns the comment then.
+      - name: Update preview comment
+        if: ${{ !cancelled() && steps.current.outputs.current == 'true' }}
+        uses: actions/github-script@v9
+        env:
+          PREVIEW_STATUS: ${{ job.status == 'success' && 'ready' || 'failed' }}
+          PREVIEW_FRONTEND_URL: ${{ steps.infra.outputs['frontend-origin'] }}
+          PREVIEW_API_URL: ${{ steps.infra.outputs['app-service-url'] }}
+        with:
+          script: |
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/preview-comment.cjs`);
             await run({ github, context });
 
   deploy-infrastructure:
@@ -584,23 +837,9 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # The connection string isn't a secret (it ships in the public bundle). Read it from the API's app
-      # setting, which Bicep sets from the monitoring module, so the frontend always reports to the same
-      # Application Insights resource as the backend without a copy in a repository variable.
       - name: Resolve Application Insights connection string
         id: resolve-appinsights
-        shell: bash
-        run: |
-          CONNECTION_STRING="$(az webapp config appsettings list \
-            --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --name "${AZURE_BACKEND_APP_NAME}" \
-            --query "[?name=='APPLICATIONINSIGHTS_CONNECTION_STRING'].value | [0]" \
-            --output tsv)"
-          if [ -z "${CONNECTION_STRING}" ]; then
-            echo "::error::APPLICATIONINSIGHTS_CONNECTION_STRING isn't set on ${AZURE_BACKEND_APP_NAME}."
-            exit 1
-          fi
-          echo "connection-string=${CONNECTION_STRING}" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/resolve-appinsights-connection-string.sh
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
