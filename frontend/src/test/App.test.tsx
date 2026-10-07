@@ -1,4 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import {
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1019,6 +1025,84 @@ describe('App', () => {
       expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
         operation: 'reorderSteps',
       })
+    })
+
+    // jsdom has no DragEvent, so the pointer position is set on the event by hand.
+    function dragStepOnto(source: string, target: string, clientY: number) {
+      const dataTransfer = {
+        effectAllowed: '',
+        dropEffect: '',
+        setData: vi.fn(),
+        setDragImage: vi.fn(),
+      }
+      const targetItem = screen
+        .getAllByRole('listitem')
+        .find((item) => item.textContent?.includes(target))
+      if (!targetItem) {
+        throw new Error(`No step "${target}"`)
+      }
+      fireEvent.dragStart(
+        screen.getByTitle(`Drag to reorder step "${source}"`),
+        { dataTransfer },
+      )
+      for (const type of ['dragOver', 'drop'] as const) {
+        const event = createEvent[type](targetItem, { dataTransfer })
+        Object.defineProperty(event, 'clientY', { value: clientY })
+        fireEvent(targetItem, event)
+      }
+    }
+
+    it('drags a step above another and saves the new order', async () => {
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return jsonResponse([
+            { id: 11, text: 'Read email', sortOrder: 0 },
+            { id: 10, text: 'Make coffee', sortOrder: 1 },
+          ])
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+      await screen.findByText('Read email')
+
+      // The rows have no size in jsdom, so any pointer above 0 is in a row's top half.
+      dragStepOnto('Read email', 'Make coffee', -1)
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
+          'Read email',
+        )
+      })
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/1\/steps\/order$/),
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ stepIds: [11, 10] }),
+        }),
+      )
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Moved step "Read email" to position 1 of 2.',
+      )
+      expect(trackEvent).toHaveBeenCalledWith('StepsReordered')
+    })
+
+    it('does not save when a step is dropped where it already is', async () => {
+      mockFetch(async () => jsonResponse(checklistWithSteps))
+
+      renderAt('/checklists/1')
+      await screen.findByText('Read email')
+
+      // Below "Make coffee" is where "Read email" already is.
+      dragStepOnto('Read email', 'Make coffee', 1)
+
+      expect(fetch).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ method: 'PUT' }),
+      )
+      expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
+        'Make coffee',
+      )
     })
 
     it('keeps the steps after renaming the checklist', async () => {

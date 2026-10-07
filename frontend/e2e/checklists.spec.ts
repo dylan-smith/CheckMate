@@ -245,6 +245,45 @@ test.describe('Checklist management', () => {
       await expect(steps.nth(2)).toContainText('Wash dishes')
     })
 
+    test('reorders steps by dragging, and the order persists', async ({
+      page,
+    }) => {
+      await createChecklist(page, 'Weekend chores')
+      await openChecklist(page, 'Weekend chores')
+
+      await addStep(page, 'Mow lawn')
+      await addStep(page, 'Do laundry')
+      await addStep(page, 'Buy groceries')
+
+      const steps = page.getByRole('listitem')
+
+      // Dropping on the top edge of the first step puts it above that step.
+      await page
+        .getByTitle('Drag to reorder step "Buy groceries"')
+        .dragTo(steps.nth(0), { targetPosition: { x: 20, y: 2 } })
+      await expect(page.getByRole('status')).toHaveText(
+        'Moved step "Buy groceries" to position 1 of 3.',
+      )
+
+      // Dropping on the bottom edge of a step puts it below that step.
+      const mowLawn = await steps.nth(1).boundingBox()
+      await page
+        .getByTitle('Drag to reorder step "Buy groceries"')
+        .dragTo(steps.nth(1), {
+          targetPosition: { x: 20, y: (mowLawn?.height ?? 0) - 2 },
+        })
+      await expect(page.getByRole('status')).toHaveText(
+        'Moved step "Buy groceries" to position 2 of 3.',
+      )
+
+      await page.reload()
+
+      await expect(steps).toHaveCount(3)
+      await expect(steps.nth(0)).toContainText('Mow lawn')
+      await expect(steps.nth(1)).toContainText('Buy groceries')
+      await expect(steps.nth(2)).toContainText('Do laundry')
+    })
+
     test('rejects a stale list of step ids', async ({ request }) => {
       const response = await request.post(checklistsApiUrl, {
         data: { name: 'Stale order' },

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { SubmitEvent } from 'react'
+import type { DragEvent, SubmitEvent } from 'react'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -43,6 +43,9 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
   const [errorMessage, setErrorMessage] = useState('')
   // Read out by screen readers, since a moved step otherwise changes place silently.
   const [moveAnnouncement, setMoveAnnouncement] = useState('')
+  const [draggingId, setDraggingId] = useState<number | null>(null)
+  // Where the dragged step would go, counted as a gap between steps (0 is above the first).
+  const [dropIndex, setDropIndex] = useState<number | null>(null)
   // The move buttons are disabled while a move saves, which drops keyboard focus, so it's put back here.
   const focusAfterMove = useRef<{
     stepId: number
@@ -150,14 +153,15 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     }
   }
 
-  async function handleMove(index: number, direction: MoveDirection) {
-    const targetIndex = direction === 'up' ? index - 1 : index + 1
+  // The direction is set for the move buttons, so keyboard focus can be put back on the step.
+  async function moveStep(
+    index: number,
+    targetIndex: number,
+    direction?: MoveDirection,
+  ) {
     const reordered = [...steps]
-    ;[reordered[index], reordered[targetIndex]] = [
-      reordered[targetIndex],
-      reordered[index],
-    ]
-    const moved = steps[index]
+    const [moved] = reordered.splice(index, 1)
+    reordered.splice(targetIndex, 0, moved)
 
     setBusy(true)
     setErrorMessage('')
@@ -180,9 +184,86 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
       }
       setErrorMessage(describeFetchError(error, 'Unable to reorder steps.'))
     } finally {
-      focusAfterMove.current = { stepId: moved.id, direction }
+      if (direction) {
+        focusAfterMove.current = { stepId: moved.id, direction }
+      }
       setBusy(false)
     }
+  }
+
+  function handleMove(index: number, direction: MoveDirection) {
+    return moveStep(
+      index,
+      direction === 'up' ? index - 1 : index + 1,
+      direction,
+    )
+  }
+
+  function handleDragStart(event: DragEvent<HTMLElement>, stepId: number) {
+    const row = event.currentTarget.closest('li')
+    event.dataTransfer.effectAllowed = 'move'
+    // Firefox only starts a drag when it carries some data.
+    event.dataTransfer.setData('text/plain', String(stepId))
+    if (row) {
+      event.dataTransfer.setDragImage(row, 0, 0)
+    }
+    setDraggingId(stepId)
+  }
+
+  // The gap the pointer is nearest: above the step it's over, or below it.
+  function gapAt(event: DragEvent<HTMLElement>, index: number) {
+    const rect = event.currentTarget.getBoundingClientRect()
+    return event.clientY < rect.top + rect.height / 2 ? index : index + 1
+  }
+
+  function handleDragOver(event: DragEvent<HTMLElement>, index: number) {
+    // Only steps dragged from this list can be dropped on it, not files or text.
+    if (draggingId === null) {
+      return
+    }
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setDropIndex(gapAt(event, index))
+  }
+
+  function endDrag() {
+    setDraggingId(null)
+    setDropIndex(null)
+  }
+
+  function handleDrop(event: DragEvent<HTMLElement>, index: number) {
+    const draggedIndex = steps.findIndex((step) => step.id === draggingId)
+    if (draggedIndex === -1) {
+      return
+    }
+    event.preventDefault()
+    const gap = gapAt(event, index)
+    endDrag()
+    // The gap counts the dragged step, which is taken out before it goes back in.
+    const targetIndex = gap > draggedIndex ? gap - 1 : gap
+    if (targetIndex !== draggedIndex) {
+      void moveStep(draggedIndex, targetIndex)
+    }
+  }
+
+  // Shows where a dragged step will land, unless dropping it there wouldn't move it.
+  function dropIndicator(index: number): 'top' | 'bottom' | null {
+    const draggedIndex = steps.findIndex((step) => step.id === draggingId)
+    if (
+      draggedIndex === -1 ||
+      dropIndex === null ||
+      dropIndex === draggedIndex ||
+      dropIndex === draggedIndex + 1
+    ) {
+      return null
+    }
+    if (dropIndex === index) {
+      return 'top'
+    }
+    if (dropIndex === steps.length && index === steps.length - 1) {
+      return 'bottom'
+    }
+    return null
   }
 
   return (
@@ -219,9 +300,40 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
           No steps yet.
         </Typography>
       ) : (
-        <List disablePadding sx={{ mb: 2 }}>
+        <List
+          disablePadding
+          sx={{ mb: 2 }}
+          onDragLeave={(event) => {
+            // Leaving one step for the next fires too, so only clear the indicator on leaving the list.
+            if (
+              !(event.relatedTarget instanceof Node) ||
+              !event.currentTarget.contains(event.relatedTarget)
+            ) {
+              setDropIndex(null)
+            }
+          }}
+        >
           {steps.map((step, index) => (
-            <ListItem key={step.id} divider disableGutters>
+            <ListItem
+              key={step.id}
+              divider
+              disableGutters
+              onDragOver={(event) => handleDragOver(event, index)}
+              onDrop={(event) => handleDrop(event, index)}
+              sx={(theme) => {
+                const indicator = dropIndicator(index)
+                const color = theme.palette.primary.main
+                return {
+                  opacity: draggingId === step.id ? 0.5 : 1,
+                  boxShadow:
+                    indicator === 'top'
+                      ? `inset 0 3px 0 ${color}`
+                      : indicator === 'bottom'
+                        ? `inset 0 -3px 0 ${color}`
+                        : 'none',
+                }
+              }}
+            >
               {editingId === step.id ? (
                 <Box
                   component="form"
@@ -265,6 +377,25 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                     width: '100%',
                   }}
                 >
+                  {/* Keyboard and screen reader users reorder with the move buttons instead. */}
+                  <Box
+                    component="span"
+                    aria-hidden="true"
+                    title={`Drag to reorder step "${step.text}"`}
+                    draggable={!busy}
+                    onDragStart={(event) => handleDragStart(event, step.id)}
+                    onDragEnd={endDrag}
+                    sx={{
+                      px: 0.5,
+                      color: 'text.secondary',
+                      cursor: busy ? 'default' : 'grab',
+                      userSelect: 'none',
+                      fontSize: '1.25rem',
+                      lineHeight: 1,
+                    }}
+                  >
+                    ⠿
+                  </Box>
                   <ListItemText
                     primary={step.text}
                     sx={{ overflowWrap: 'anywhere' }}
