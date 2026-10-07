@@ -1918,7 +1918,11 @@ describe('App', () => {
       it('saves a typed number before completing', async () => {
         const user = userEvent.setup()
         const requests: string[] = []
-        mockFetch(async (_url, init) => {
+        const fetchMock = mockFetch(async (url, init) => {
+          if (!url.includes('/api/runs/5')) {
+            // The checklists page, which completing goes back to.
+            return jsonResponse([])
+          }
           requests.push(init?.method ?? 'GET')
           if (init?.method === 'PUT') {
             return respondWithNumber(init)
@@ -1942,11 +1946,14 @@ describe('App', () => {
         )
         await user.click(screen.getByRole('button', { name: 'Complete' }))
 
-        expect(await screen.findByText(/^Completed /)).toBeInTheDocument()
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          'Completed "Morning".',
+        )
         expect(requests).toEqual(['GET', 'PUT', 'POST'])
-        expect(
-          screen.getByRole('textbox', { name: 'Fridge temperature' }),
-        ).toHaveValue('3.5')
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/14$/),
+          expect.objectContaining({ body: JSON.stringify({ number: 3.5 }) }),
+        )
       })
 
       it('shows the saved number read-only once the run is complete', async () => {

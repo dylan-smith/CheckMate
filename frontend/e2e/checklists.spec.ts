@@ -464,9 +464,13 @@ test.describe('Checklist management', () => {
       await page.reload()
       await expect(temperature).toHaveValue('-2.75')
 
+      const runUrl = page.url()
       await page.getByRole('button', { name: 'Complete' }).click()
+      await expect(page.getByRole('alert')).toHaveText(
+        'Completed "Fridge check".',
+      )
+      await page.goto(runUrl)
       await expect(page.getByText(/^Completed /)).toBeVisible()
-      await page.reload()
       await expect(temperature).toHaveValue('-2.75')
       await expect(temperature).toBeDisabled()
     })
