@@ -11,7 +11,7 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
 
     public DbSet<ChecklistRun> ChecklistRuns => Set<ChecklistRun>();
 
-    public DbSet<RunStepResponse> RunStepResponses => Set<RunStepResponse>();
+    public DbSet<ChecklistRunStep> ChecklistRunSteps => Set<ChecklistRunStep>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -56,38 +56,38 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
             .Property(run => run.CompletedAt)
             .IsConcurrencyToken();
 
-        modelBuilder.Entity<RunStepResponse>()
+        modelBuilder.Entity<ChecklistRunStep>()
             .HasOne<ChecklistRun>()
-            .WithMany(run => run.Responses)
-            .HasForeignKey(response => response.RunId)
+            .WithMany(run => run.Steps)
+            .HasForeignKey(step => step.RunId)
             .OnDelete(DeleteBehavior.Cascade);
 
         // No cascade in the database (see 0003-CreateChecklistRunsTables.sql), so the app clears StepId itself.
-        modelBuilder.Entity<RunStepResponse>()
+        modelBuilder.Entity<ChecklistRunStep>()
             .HasOne<ChecklistStep>()
             .WithMany()
-            .HasForeignKey(response => response.StepId)
+            .HasForeignKey(step => step.StepId)
             .OnDelete(DeleteBehavior.ClientSetNull);
 
-        modelBuilder.Entity<RunStepResponse>()
-            .HasIndex(response => new { response.RunId, response.SortOrder });
+        modelBuilder.Entity<ChecklistRunStep>()
+            .HasIndex(step => new { step.RunId, step.SortOrder });
 
-        modelBuilder.Entity<RunStepResponse>()
-            .Property(response => response.StepText)
+        modelBuilder.Entity<ChecklistRunStep>()
+            .Property(step => step.StepText)
             .HasMaxLength(500)
             .IsRequired();
 
-        modelBuilder.Entity<RunStepResponse>()
-            .Property(response => response.StepType)
+        modelBuilder.Entity<ChecklistRunStep>()
+            .Property(step => step.StepType)
             .HasConversion<string>()
             .HasMaxLength(20);
 
-        modelBuilder.Entity<RunStepResponse>()
-            .Property(response => response.ResponseText)
+        modelBuilder.Entity<ChecklistRunStep>()
+            .Property(step => step.ResponseText)
             .HasMaxLength(1000);
 
-        modelBuilder.Entity<RunStepResponse>()
-            .Property(response => response.ResponseNumber)
+        modelBuilder.Entity<ChecklistRunStep>()
+            .Property(step => step.ResponseNumber)
             .HasPrecision(18, 6);
     }
 }

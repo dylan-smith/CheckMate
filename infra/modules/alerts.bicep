@@ -450,6 +450,7 @@ resource availabilityTest 'Microsoft.Insights/webtests@2022-06-15' = {
     SyntheticMonitorId: 'checkmate-api-health'
     Name: availabilityTestName
     Kind: 'standard'
+    // CI turns it off while a backend deploy has the API paused (.github/scripts/set-health-check.sh).
     Enabled: true
     Frequency: 900
     // Allows for an F1 cold start, which can take most of a minute.
@@ -477,7 +478,7 @@ resource availabilityTest 'Microsoft.Insights/webtests@2022-06-15' = {
 var metricAlerts = [
   {
     name: 'CheckMate API down'
-    description: 'The API health availability test failed twice in a row.'
+    description: 'The API health availability test failed 3 of its last 4 runs.'
     steps: [
       'On the *Overview* tab of the ${workbookLink}, *Failed health checks* shows the status code or error. ${availabilityLink} has every test result.'
       'Open ${healthEndpointLink} yourself to see whether the API is still down.'
@@ -492,7 +493,9 @@ var metricAlerts = [
     timeAggregation: 'Average'
     operator: 'LessThan'
     threshold: 50
-    windowSize: 'PT30M'
+    // An hour holds 4 runs, so a brief blip of up to 2 failed runs doesn't fire it. Deploy pauses don't count:
+    // CI turns the test off while the API is paused.
+    windowSize: 'PT1H'
     frequency: 'PT5M'
     dimensions: [
       {

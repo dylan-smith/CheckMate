@@ -11,15 +11,15 @@ public record ChecklistRunStepResponse(
     string? ResponseText,
     decimal? ResponseNumber)
 {
-    public static ChecklistRunStepResponse From(RunStepResponse response)
+    public static ChecklistRunStepResponse From(ChecklistRunStep step)
     {
         return new(
-            response.StepId,
-            response.StepText,
-            response.StepType,
-            response.IsDone,
-            response.CompletedAt,
-            response.ResponseText,
-            response.ResponseNumber);
+            step.StepId,
+            step.StepText,
+            step.StepType,
+            step.IsDone,
+            step.CompletedAt,
+            step.ResponseText,
+            step.ResponseNumber);
     }
 }
