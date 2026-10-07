@@ -1085,6 +1085,60 @@ describe('App', () => {
       expect(trackEvent).toHaveBeenCalledWith('RunStarted')
     })
 
+    it('starts a run straight from the checklists page', async () => {
+      const user = userEvent.setup()
+      const fetchMock = mockFetch(async (url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse(run, 201)
+        }
+        if (url.endsWith('/api/runs/5')) {
+          return jsonResponse(run)
+        }
+        return jsonResponse([
+          { id: 2, name: 'Evening' },
+          { id: 3, name: 'Morning' },
+        ])
+      })
+
+      renderAt('/')
+      await user.click(
+        await screen.findByRole('button', { name: 'Fill out "Morning"' }),
+      )
+
+      expect(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeInTheDocument()
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/3\/runs$/),
+        { method: 'POST' },
+      )
+      expect(trackEvent).toHaveBeenCalledWith('RunStarted')
+    })
+
+    it('shows an error on the checklists page when a run cannot be started', async () => {
+      const user = userEvent.setup()
+      mockFetch(async (_url, init) =>
+        init?.method === 'POST'
+          ? new Response(null, { status: 500 })
+          : jsonResponse([{ id: 3, name: 'Morning' }]),
+      )
+
+      renderAt('/')
+      await user.click(
+        await screen.findByRole('button', { name: 'Fill out "Morning"' }),
+      )
+
+      expect(
+        await screen.findByText('Unable to start filling out the checklist.'),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: 'Fill out "Morning"' }),
+      ).toBeEnabled()
+      expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
+        operation: 'startRun',
+      })
+    })
+
     it('shows an error when a run cannot be started', async () => {
       const user = userEvent.setup()
       mockFetch(async (_url, init) =>

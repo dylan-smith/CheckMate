@@ -325,13 +325,14 @@ test.describe('Checklist management', () => {
       page,
       request,
     }) => {
-      const { id } = await createChecklistWithSteps(request, 'Opening up', [
+      await createChecklistWithSteps(request, 'Opening up', [
         'Unlock door',
         'Turn on lights',
       ])
 
-      await page.goto(`/checklists/${id}`)
-      await page.getByRole('button', { name: 'Fill out' }).click()
+      // Filling out starts with one click from the checklists page.
+      await page.reload()
+      await page.getByRole('button', { name: 'Fill out "Opening up"' }).click()
       await expect(page).toHaveURL(/\/runs\/\d+$/)
 
       const unlock = page.getByRole('checkbox', { name: 'Unlock door' })
