@@ -409,10 +409,14 @@ function RunView({ id }: { id: number }) {
                           />
                           {/* A completed run is read-only, so it shows when each step was done. */}
                           {isComplete && step.completedAt && (
+                            // Styled like a text step's helper text, which is greyed out with the field.
                             <Typography
-                              variant="body2"
-                              color="text.secondary"
-                              sx={{ ml: 4 }}
+                              variant="caption"
+                              sx={{
+                                display: 'block',
+                                ml: 4,
+                                color: 'text.disabled',
+                              }}
                             >
                               Done {formatDateTime(step.completedAt)}
                             </Typography>
