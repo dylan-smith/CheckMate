@@ -2,67 +2,47 @@ namespace CheckMate.Api.Models;
 
 public static class StepDependencyGraph
 {
-    private enum VisitState
-    {
-        InProgress,
-        Done
-    }
-
     /// <summary>
-    /// Finds a cycle with a depth-first search over the steps each step depends on.
+    /// Finds a chain of dependencies from one step to another with a depth-first search. A step that would newly
+    /// depend on <paramref name="fromStepId"/> makes a cycle exactly when such a chain leads back to it.
     /// </summary>
     /// <param name="dependsOn">The step IDs each step depends on, keyed by step ID.</param>
     /// <returns>
-    /// The steps of a cycle in order, where each depends on the next and the last depends on the first, or null when
-    /// there's no cycle.
+    /// The steps of the chain in order, starting with <paramref name="fromStepId"/> and ending with
+    /// <paramref name="toStepId"/>, where each depends on the next, or null when there's no such chain.
     /// </returns>
-    public static IReadOnlyList<int>? FindCycle(IReadOnlyDictionary<int, IReadOnlyCollection<int>> dependsOn)
+    public static IReadOnlyList<int>? FindPath(IReadOnlyDictionary<int, IReadOnlyCollection<int>> dependsOn, int fromStepId, int toStepId)
     {
         ArgumentNullException.ThrowIfNull(dependsOn);
 
-        var states = new Dictionary<int, VisitState>();
-        // The steps the search is inside of, so a step found here again closes a cycle.
+        // Steps already searched, so a cycle elsewhere in the graph can't make the search go round forever.
+        var visited = new HashSet<int>();
         var path = new List<int>();
 
-        foreach (var stepId in dependsOn.Keys)
-        {
-            if (!states.ContainsKey(stepId) && Visit(stepId) is { } cycle)
-            {
-                return cycle;
-            }
-        }
+        return Visit(fromStepId) ? path : null;
 
-        return null;
-
-        IReadOnlyList<int>? Visit(int stepId)
+        bool Visit(int stepId)
         {
-            states[stepId] = VisitState.InProgress;
             path.Add(stepId);
 
-            if (dependsOn.TryGetValue(stepId, out var prerequisites))
+            if (stepId == toStepId)
+            {
+                return true;
+            }
+
+            if (visited.Add(stepId) && dependsOn.TryGetValue(stepId, out var prerequisites))
             {
                 foreach (var prerequisite in prerequisites)
                 {
-                    if (states.TryGetValue(prerequisite, out var state))
+                    if (Visit(prerequisite))
                     {
-                        if (state == VisitState.InProgress)
-                        {
-                            return path[path.IndexOf(prerequisite)..];
-                        }
-
-                        continue;
-                    }
-
-                    if (Visit(prerequisite) is { } cycle)
-                    {
-                        return cycle;
+                        return true;
                     }
                 }
             }
 
             path.RemoveAt(path.Count - 1);
-            states[stepId] = VisitState.Done;
-            return null;
+            return false;
         }
     }
 }

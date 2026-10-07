@@ -608,6 +608,9 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                         sx={{
                           display: 'flex',
                           flexDirection: { xs: 'column', sm: 'row' },
+                          // The type and prerequisite fields leave the text too little room on one row until md,
+                          // so below that the text gets a line of its own.
+                          flexWrap: { sm: 'wrap', md: 'nowrap' },
                           gap: 1,
                           width: '100%',
                         }}
@@ -620,7 +623,10 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                           slotProps={{ htmlInput: { maxLength: 500 } }}
                           required
                           size="small"
-                          sx={{ flexGrow: 1 }}
+                          sx={{
+                            flexGrow: 1,
+                            flexBasis: { sm: '100%', md: 'auto' },
+                          }}
                         />
                         <StepTypeField
                           id={`step-${step.id}-type`}

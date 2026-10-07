@@ -501,6 +501,63 @@ public class ChecklistStepsControllerTests
     }
 
     [Fact]
+    public async Task Update_RepairsTwoIndependentCyclesOneStepAtATime()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var a = await AddStepAsync(dbContext, checklist.Id, "A", 0);
+        var b = await AddStepAsync(dbContext, checklist.Id, "B", 1);
+        var c = await AddStepAsync(dbContext, checklist.Id, "C", 2);
+        var d = await AddStepAsync(dbContext, checklist.Id, "D", 3);
+        // Cycles the API rejects, but that two edits saved at the same moment could still leave behind.
+        await AddDependenciesAsync(dbContext, (a.Id, b.Id), (b.Id, a.Id), (c.Id, d.Id), (d.Id, c.Id));
+
+        var first = await CreateController(dbContext).Update(checklist.Id, a.Id, new ChecklistStepRequest { Text = "A", DependsOnStepIds = [] });
+        var second = await CreateController(dbContext).Update(checklist.Id, c.Id, new ChecklistStepRequest { Text = "C", DependsOnStepIds = [] });
+
+        Assert.IsType<OkObjectResult>(first.Result);
+        Assert.IsType<OkObjectResult>(second.Result);
+        Assert.Equal(
+            [(b.Id, a.Id), (d.Id, c.Id)],
+            await dbContext.StepDependencies.OrderBy(item => item.StepId).Select(item => ValueTuple.Create(item.StepId, item.DependsOnStepId)).ToListAsync());
+    }
+
+    [Fact]
+    public async Task Update_AllowsKeepingPrerequisites_WhenACycleIsLeftElsewhere()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var a = await AddStepAsync(dbContext, checklist.Id, "A", 0);
+        var b = await AddStepAsync(dbContext, checklist.Id, "B", 1);
+        var c = await AddStepAsync(dbContext, checklist.Id, "C", 2);
+        var d = await AddStepAsync(dbContext, checklist.Id, "D", 3);
+        await AddDependenciesAsync(dbContext, (b.Id, a.Id), (c.Id, d.Id), (d.Id, c.Id));
+
+        var result = await CreateController(dbContext).Update(checklist.Id, b.Id, new ChecklistStepRequest { Text = "Renamed", DependsOnStepIds = [a.Id] });
+
+        var saved = Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal("Renamed", saved.Text);
+        Assert.Equal([a.Id], saved.DependsOnStepIds);
+    }
+
+    [Fact]
+    public async Task Update_ReturnsValidationProblem_WhenAnAddedPrerequisiteLeadsBackThroughACycleElsewhere()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var a = await AddStepAsync(dbContext, checklist.Id, "A", 0);
+        var b = await AddStepAsync(dbContext, checklist.Id, "B", 1);
+        var c = await AddStepAsync(dbContext, checklist.Id, "C", 2);
+        // B and C already depend on each other, and C depends on A, so A → B would lead back to A.
+        await AddDependenciesAsync(dbContext, (b.Id, c.Id), (c.Id, b.Id), (c.Id, a.Id));
+
+        var result = await CreateController(dbContext).Update(checklist.Id, a.Id, new ChecklistStepRequest { Text = "A", DependsOnStepIds = [b.Id] });
+
+        AssertValidationError(result.Result, "Steps can't depend on each other in a loop: \"A\" depends on \"B\" depends on \"C\" depends on \"A\".");
+        Assert.False(await dbContext.StepDependencies.AnyAsync(item => item.StepId == a.Id));
+    }
+
+    [Fact]
     public async Task Reorder_ReturnsPrerequisites()
     {
         await using var dbContext = CreateDbContext();

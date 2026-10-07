@@ -233,12 +233,19 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
     }
 
     /// <summary>
-    /// Checks that a step's prerequisites are other steps of its checklist and don't make a cycle.
+    /// Checks that a step's prerequisites are other steps of its checklist and that the ones it adds don't make a
+    /// cycle.
     /// </summary>
     /// <param name="stepId">The step being changed, or null for a new step, which nothing can depend on yet.</param>
     /// <returns>A message for the caller when they aren't valid, or null when they are.</returns>
-    private async Task<string?> ValidateDependenciesAsync(int checklistId, int? stepId, IReadOnlyList<int> dependsOnStepIds)
+    private async Task<string?> ValidateDependenciesAsync(int checklistId, int? stepId, List<int> dependsOnStepIds)
     {
+        // No prerequisites can't name a wrong step or make a cycle, so there's nothing to load.
+        if (dependsOnStepIds.Count == 0)
+        {
+            return null;
+        }
+
         if (stepId is int selfId && dependsOnStepIds.Contains(selfId))
         {
             return "A step can't depend on itself.";
@@ -260,22 +267,22 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             return null;
         }
 
-        // The checklist's graph as it would be with the new prerequisites.
+        // Only an added prerequisite can make a cycle, and it does when it already depends on this step. Keeping or
+        // removing prerequisites is always allowed, so a cycle left by two edits saved at once can still be undone.
+        var existing = steps[changedStepId].DependsOn.Select(dependency => dependency.DependsOnStepId).ToHashSet();
         var graph = steps.Values.ToDictionary<ChecklistStep, int, IReadOnlyCollection<int>>(
             step => step.Id,
-            step => step.Id == changedStepId
-                ? dependsOnStepIds
-                : [.. step.DependsOn.Select(dependency => dependency.DependsOnStepId)]);
+            step => [.. step.DependsOn.Select(dependency => dependency.DependsOnStepId)]);
 
-        if (StepDependencyGraph.FindCycle(graph) is not { } cycle)
+        foreach (var added in dependsOnStepIds.Where(dependsOnStepId => !existing.Contains(dependsOnStepId)))
         {
-            return null;
+            if (StepDependencyGraph.FindPath(graph, added, changedStepId) is { } path)
+            {
+                var loop = path.Prepend(changedStepId).Select(id => $"\"{steps[id].Text}\"");
+                return $"Steps can't depend on each other in a loop: {string.Join(" depends on ", loop)}.";
+            }
         }
 
-        // The graph had no cycle before this change, so the cycle goes through the changed step. Start it there.
-        var start = Math.Max(0, cycle.ToList().IndexOf(changedStepId));
-        var path = cycle.Skip(start).Concat(cycle.Take(start + 1)).Select(id => $"\"{steps[id].Text}\"");
-
-        return $"Steps can't depend on each other in a loop: {string.Join(" depends on ", path)}.";
+        return null;
     }
 }
