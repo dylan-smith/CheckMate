@@ -14,33 +14,89 @@ import Typography from '@mui/material/Typography'
 import { Link, useNavigate, useParams } from 'react-router'
 import { ApiError, describeFetchError } from '../api/checklists'
 import { completeRun, getRun, saveRunStep } from '../api/runs'
+import type { StepType } from '../api/checklists'
 import type { ChecklistRun, RunStep, RunStepUpdate } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
 import NotFoundPage from './NotFoundPage'
 import { formatDateTime } from './formatDateTime'
 import { parseId } from './parseId'
 
+// A draft that can be saved, as the field shows it once saved and as it's sent, or why it can't be saved.
+type ParsedDraft = { value: string; update: RunStepUpdate } | { error: string }
+
+// How a step that takes a typed value shows, checks and sends it.
+type InputKind = {
+  inputMode: 'text' | 'decimal'
+  maxLength: number
+  format: (step: RunStep) => string
+  parse: (draft: string) => ParsedDraft
+}
+
+// Matches the API, which keeps numbers with up to 9 digits before the decimal point and 6 after it. That's
+// 15 significant digits, which a JavaScript number holds exactly, so sending it as a number can't round it.
+const numberPattern = /^[-+]?(\d+\.?\d*|\.\d+)$/
+
+function parseNumber(draft: string): ParsedDraft {
+  const trimmed = draft.trim()
+  if (trimmed === '') {
+    return { value: '', update: { number: null } }
+  }
+  if (!numberPattern.test(trimmed)) {
+    return { error: 'Enter a number, like 12 or -3.5.' }
+  }
+  const [whole, fraction = ''] = trimmed.replace(/^[-+]/, '').split('.')
+  if (
+    whole.replace(/^0+/, '').length > 9 ||
+    fraction.replace(/0+$/, '').length > 6
+  ) {
+    return {
+      error: 'Use at most 9 digits before the decimal point and 6 after it.',
+    }
+  }
+  const number = Number(trimmed)
+  return { value: String(number), update: { number } }
+}
+
+const inputKinds: Partial<Record<StepType, InputKind>> = {
+  Text: {
+    inputMode: 'text',
+    maxLength: 1000,
+    format: (step) => step.responseText ?? '',
+    parse: (draft) => ({ value: draft.trim(), update: { text: draft } }),
+  },
+  Number: {
+    inputMode: 'decimal',
+    maxLength: 30,
+    format: (step) =>
+      step.responseNumber === null ? '' : String(step.responseNumber),
+    parse: parseNumber,
+  },
+}
+
 // Saves whatever was typed but isn't saved yet, and resolves to whether it all is saved now.
 type SaveDraft = () => Promise<boolean>
 
-type TextStepFieldProps = {
+type InputStepFieldProps = {
   step: RunStep
+  kind: InputKind
   disabled: boolean
   showSaved: boolean
-  onSave: (text: string) => Promise<RunStep | null>
+  onSave: (update: RunStepUpdate) => Promise<RunStep | null>
   // Lets completing the run save this field first.
   registerSaveDraft: (saveDraft: SaveDraft | null) => void
 }
 
-// Saved when the field loses focus or Enter is pressed, and only if the text changed.
-function TextStepField({
+// Saved when the field loses focus or Enter is pressed, and only if the value changed.
+function InputStepField({
   step,
+  kind,
   disabled,
   showSaved,
   onSave,
   registerSaveDraft,
-}: TextStepFieldProps) {
-  const [draft, setDraft] = useState(step.responseText ?? '')
+}: InputStepFieldProps) {
+  const [draft, setDraft] = useState(() => kind.format(step))
+  const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   // Kept in refs as well, since completing the run can call saveDraft after awaiting other saves, and
   // by then the values from the render that created it are out of date.
@@ -53,21 +109,26 @@ function TextStepField({
     while (inFlightRef.current) {
       await inFlightRef.current
     }
-    const text = draftRef.current
-    if (text.trim() === savedRef.current) {
+    const parsed = kind.parse(draftRef.current)
+    if ('error' in parsed) {
+      setError(parsed.error)
+      return false
+    }
+    setError('')
+    if (parsed.value === savedRef.current) {
       return true
     }
 
     const request = (async () => {
       setSaving(true)
       try {
-        const saved = await onSave(text)
+        const saved = await onSave(parsed.update)
         if (!saved) {
           // Keep what was typed so it can be tried again.
           return false
         }
-        // Show the value as saved, trimmed. The field is read-only while saving, so nothing was typed since.
-        savedRef.current = saved.responseText ?? ''
+        // Show the value as saved, such as trimmed. The field is read-only while saving, so nothing was typed since.
+        savedRef.current = kind.format(saved)
         draftRef.current = savedRef.current
         setDraft(savedRef.current)
         return true
@@ -106,20 +167,30 @@ function TextStepField({
       <TextField
         label={step.text}
         // Once the run is complete, show what was saved.
-        value={showSaved ? (step.responseText ?? '') : draft}
+        value={showSaved ? kind.format(step) : draft}
         onChange={(event) => {
           draftRef.current = event.target.value
           setDraft(event.target.value)
         }}
         onBlur={saveIfEnabled}
         disabled={disabled}
+        error={error !== '' && !disabled}
+        // While editing, why the value can't be saved. Once the run is complete, when the step was done.
         helperText={
-          showSaved && step.completedAt
-            ? `Done ${formatDateTime(step.completedAt)}`
-            : undefined
+          disabled
+            ? showSaved && step.completedAt
+              ? `Done ${formatDateTime(step.completedAt)}`
+              : undefined
+            : error || undefined
         }
         // Read-only rather than disabled while saving, so pressing Enter doesn't lose focus.
-        slotProps={{ htmlInput: { maxLength: 1000, readOnly: saving } }}
+        slotProps={{
+          htmlInput: {
+            inputMode: kind.inputMode,
+            maxLength: kind.maxLength,
+            readOnly: saving,
+          },
+        }}
         size="small"
         fullWidth
       />
@@ -269,11 +340,11 @@ function RunView({ id }: { id: number }) {
     setErrorMessage('')
 
     try {
-      // Let ticks finish saving and save any text typed since, so completing can't drop a change. A failed
+      // Let ticks finish saving and save any value typed since, so completing can't drop a change. A failed
       // save already shows its error, and the run stays open so it can be tried again.
       const ticks = await Promise.all(pendingTicks.current)
       if (ticks.includes(null)) {
-        // Stop before saving text, since a successful text save would clear the tick's error.
+        // Stop before saving typed values, since a successful save of one would clear the tick's error.
         return
       }
       const drafts = await Promise.all(
@@ -367,17 +438,19 @@ function RunView({ id }: { id: number }) {
                   const { stepId } = step
                   // A step deleted from the checklist can't be saved any more.
                   const disabled = isComplete || completing || stepId === null
+                  const kind = inputKinds[step.type]
                   return (
                     <ListItem key={stepId ?? `deleted-${index}`} disableGutters>
-                      {step.type === 'Text' ? (
-                        <TextStepField
+                      {kind ? (
+                        <InputStepField
                           step={step}
+                          kind={kind}
                           disabled={disabled}
                           showSaved={isComplete}
-                          onSave={(text) =>
+                          onSave={(update) =>
                             stepId === null
                               ? Promise.resolve(null)
-                              : handleSave(stepId, { text })
+                              : handleSave(stepId, update)
                           }
                           registerSaveDraft={(saveDraft) => {
                             if (stepId === null) {

@@ -8,7 +8,8 @@ public record ChecklistRunStepResponse(
     StepType Type,
     bool IsDone,
     DateTimeOffset? CompletedAt,
-    string? ResponseText)
+    string? ResponseText,
+    decimal? ResponseNumber)
 {
     public static ChecklistRunStepResponse From(ChecklistRunStep step)
     {
@@ -18,6 +19,7 @@ public record ChecklistRunStepResponse(
             step.StepType,
             step.IsDone,
             step.CompletedAt,
-            step.ResponseText);
+            step.ResponseText,
+            step.ResponseNumber);
     }
 }

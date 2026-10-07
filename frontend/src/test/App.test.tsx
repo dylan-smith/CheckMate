@@ -1791,6 +1791,279 @@ describe('App', () => {
       })
     })
 
+    describe('number steps', () => {
+      const temperatureStep = {
+        stepId: 14,
+        text: 'Fridge temperature',
+        type: 'Number',
+        isDone: false,
+        completedAt: null,
+        responseText: null,
+        responseNumber: null,
+      }
+      const runWithNumber = { ...run, steps: [...run.steps, temperatureStep] }
+
+      function respondWithNumber(fetchInit?: RequestInit) {
+        const { number } = JSON.parse(fetchInit?.body as string) as {
+          number: number | null
+        }
+        return jsonResponse({
+          ...temperatureStep,
+          isDone: number !== null,
+          completedAt: number === null ? null : '2026-10-06T08:10:00Z',
+          responseNumber: number,
+        })
+      }
+
+      it.each([
+        ['-3.5', -3.5],
+        ['  42 ', 42],
+        ['0.000001', 0.000001],
+        ['+.25', 0.25],
+      ])('saves %j as a number', async (typed, number) => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? respondWithNumber(init)
+            : jsonResponse(runWithNumber),
+        )
+
+        renderAt('/runs/5')
+        const field = await screen.findByRole('textbox', {
+          name: 'Fridge temperature',
+        })
+        expect(field).toHaveAttribute('inputmode', 'decimal')
+        await user.type(field, typed)
+        await user.tab()
+
+        expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
+        expect(field).toHaveValue(String(number))
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/14$/),
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({ number }),
+          }),
+        )
+      })
+
+      it.each([
+        ['abc', 'Enter a number, like 12 or -3.5.'],
+        ['1.2.3', 'Enter a number, like 12 or -3.5.'],
+        ['12abc', 'Enter a number, like 12 or -3.5.'],
+        ['-', 'Enter a number, like 12 or -3.5.'],
+        [
+          '1.0000001',
+          'Use at most 9 digits before the decimal point and 6 after it.',
+        ],
+        [
+          '1000000000',
+          'Use at most 9 digits before the decimal point and 6 after it.',
+        ],
+      ])('rejects %j without saving it', async (typed, message) => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async () => jsonResponse(runWithNumber))
+
+        renderAt('/runs/5')
+        const field = await screen.findByRole('textbox', {
+          name: 'Fridge temperature',
+        })
+        await user.type(field, typed)
+        await user.tab()
+
+        expect(await screen.findByText(message)).toBeInTheDocument()
+        expect(field).toHaveAttribute('aria-invalid', 'true')
+        expect(field).toHaveValue(typed)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+
+      it.each(['-999999999.999999', '123456789.123456', '999999999.000001'])(
+        'sends and shows every digit of %s, the most allowed',
+        async (typed) => {
+          const user = userEvent.setup()
+          const bodies: string[] = []
+          mockFetch(async (_url, init) => {
+            if (init?.method === 'PUT') {
+              bodies.push(init.body as string)
+              return respondWithNumber(init)
+            }
+            return jsonResponse(runWithNumber)
+          })
+
+          renderAt('/runs/5')
+          const field = await screen.findByRole('textbox', {
+            name: 'Fridge temperature',
+          })
+          await user.type(field, typed)
+          await user.tab()
+
+          expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
+          // Compared as text, so a value rounded on the way through a JavaScript number would fail.
+          expect(bodies).toEqual([`{"number":${typed}}`])
+          expect(field).toHaveValue(typed)
+        },
+      )
+
+      it('clears the error and saves once the number is fixed', async () => {
+        const user = userEvent.setup()
+        mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? respondWithNumber(init)
+            : jsonResponse(runWithNumber),
+        )
+
+        renderAt('/runs/5')
+        const field = await screen.findByRole('textbox', {
+          name: 'Fridge temperature',
+        })
+        await user.type(field, '4,5{Enter}')
+        expect(
+          await screen.findByText('Enter a number, like 12 or -3.5.'),
+        ).toBeInTheDocument()
+
+        await user.clear(field)
+        await user.type(field, '4.5{Enter}')
+
+        expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
+        expect(
+          screen.queryByText('Enter a number, like 12 or -3.5.'),
+        ).not.toBeInTheDocument()
+        expect(field).not.toHaveAttribute('aria-invalid', 'true')
+      })
+
+      it('saves an emptied field as no number', async () => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? respondWithNumber(init)
+            : jsonResponse({
+                ...run,
+                steps: [
+                  ...run.steps,
+                  { ...temperatureStep, isDone: true, responseNumber: 4 },
+                ],
+              }),
+        )
+
+        renderAt('/runs/5')
+        const field = await screen.findByRole('textbox', {
+          name: 'Fridge temperature',
+        })
+        expect(field).toHaveValue('4')
+        await user.clear(field)
+        await user.tab()
+
+        expect(await screen.findByText('1 of 3 done')).toBeInTheDocument()
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/14$/),
+          expect.objectContaining({ body: JSON.stringify({ number: null }) }),
+        )
+      })
+
+      it('does not save a number that is written differently but the same', async () => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async () =>
+          jsonResponse({
+            ...run,
+            steps: [{ ...temperatureStep, isDone: true, responseNumber: 4.5 }],
+          }),
+        )
+
+        renderAt('/runs/5')
+        const field = await screen.findByRole('textbox', {
+          name: 'Fridge temperature',
+        })
+        await user.clear(field)
+        await user.type(field, '4.50')
+        await user.tab()
+
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+
+      it('does not complete while a number is invalid', async () => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async () => jsonResponse(runWithNumber))
+
+        renderAt('/runs/5')
+        const field = await screen.findByRole('textbox', {
+          name: 'Fridge temperature',
+        })
+        await user.type(field, 'cold')
+        await user.click(screen.getByRole('button', { name: 'Complete' }))
+
+        expect(
+          await screen.findByText('Enter a number, like 12 or -3.5.'),
+        ).toBeInTheDocument()
+        await waitFor(() => {
+          expect(field).toBeEnabled()
+        })
+        expect(field).toHaveValue('cold')
+        expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+
+      it('saves a typed number before completing', async () => {
+        const user = userEvent.setup()
+        const requests: string[] = []
+        const fetchMock = mockFetch(async (url, init) => {
+          if (!url.includes('/api/runs/5')) {
+            // The checklists page, which completing goes back to.
+            return jsonResponse([])
+          }
+          requests.push(init?.method ?? 'GET')
+          if (init?.method === 'PUT') {
+            return respondWithNumber(init)
+          }
+          return init?.method === 'POST'
+            ? jsonResponse({
+                ...runWithNumber,
+                completedAt: '2026-10-06T08:30:00Z',
+                steps: [
+                  ...run.steps,
+                  { ...temperatureStep, isDone: true, responseNumber: 3.5 },
+                ],
+              })
+            : jsonResponse(runWithNumber)
+        })
+
+        renderAt('/runs/5')
+        await user.type(
+          await screen.findByRole('textbox', { name: 'Fridge temperature' }),
+          '3.5',
+        )
+        await user.click(screen.getByRole('button', { name: 'Complete' }))
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          'Completed "Morning".',
+        )
+        expect(requests).toEqual(['GET', 'PUT', 'POST'])
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/14$/),
+          expect.objectContaining({ body: JSON.stringify({ number: 3.5 }) }),
+        )
+      })
+
+      it('shows the saved number read-only once the run is complete', async () => {
+        mockFetch(async () =>
+          jsonResponse({
+            ...run,
+            completedAt: '2026-10-06T08:30:00Z',
+            steps: [
+              { ...temperatureStep, isDone: true, responseNumber: -2.25 },
+            ],
+          }),
+        )
+
+        renderAt('/runs/5')
+
+        const field = await screen.findByRole('textbox', {
+          name: 'Fridge temperature',
+        })
+        expect(field).toHaveValue('-2.25')
+        expect(field).toBeDisabled()
+      })
+    })
+
     it('keeps a deleted step but does not let it be ticked', async () => {
       mockFetch(async () =>
         jsonResponse({
