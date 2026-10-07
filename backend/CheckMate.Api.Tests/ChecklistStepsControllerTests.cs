@@ -299,6 +299,254 @@ public class ChecklistStepsControllerTests
         Assert.IsType<NotFoundResult>(result.Result);
     }
 
+    [Fact]
+    public async Task GetAll_ReturnsEachStepsPrerequisites()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        var third = await AddStepAsync(dbContext, checklist.Id, "Third", 2);
+        await AddDependenciesAsync(dbContext, (third.Id, second.Id), (third.Id, first.Id), (second.Id, first.Id));
+
+        var result = await CreateController(dbContext).GetAll(checklist.Id);
+
+        var steps = Assert.IsAssignableFrom<IEnumerable<ChecklistStepResponse>>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Collection(steps,
+            step => Assert.Empty(step.DependsOnStepIds),
+            step => Assert.Equal([first.Id], step.DependsOnStepIds),
+            step => Assert.Equal([first.Id, second.Id], step.DependsOnStepIds));
+    }
+
+    [Fact]
+    public async Task GetById_ReturnsPrerequisites()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        await AddDependenciesAsync(dbContext, (second.Id, first.Id));
+
+        var result = await CreateController(dbContext).GetById(checklist.Id, second.Id);
+
+        Assert.Equal([first.Id], Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value).DependsOnStepIds);
+    }
+
+    [Fact]
+    public async Task Create_SavesPrerequisites()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Create(
+            checklist.Id,
+            new ChecklistStepRequest { Text = "Third", DependsOnStepIds = [second.Id, first.Id, second.Id] });
+
+        var created = Assert.IsType<ChecklistStepResponse>(Assert.IsType<CreatedAtActionResult>(result.Result).Value);
+        Assert.Equal([first.Id, second.Id], created.DependsOnStepIds);
+        Assert.Equal(
+            [first.Id, second.Id],
+            await dbContext.StepDependencies.Where(item => item.StepId == created.Id).Select(item => item.DependsOnStepId).Order().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Create_ReturnsValidationProblem_WhenPrerequisiteIsNotInTheChecklist()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var other = await AddChecklistAsync(dbContext, "Other");
+        var elsewhere = await AddStepAsync(dbContext, other.Id, "Elsewhere");
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Create(checklist.Id, new ChecklistStepRequest { Text = "Step", DependsOnStepIds = [elsewhere.Id] });
+
+        AssertValidationError(result.Result, "A step can only depend on other steps of the same checklist.");
+        Assert.False(await dbContext.ChecklistSteps.AnyAsync(step => step.ChecklistId == checklist.Id));
+    }
+
+    [Fact]
+    public async Task Update_ReplacesPrerequisites()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        var third = await AddStepAsync(dbContext, checklist.Id, "Third", 2);
+        await AddDependenciesAsync(dbContext, (third.Id, first.Id));
+
+        var result = await CreateController(dbContext).Update(
+            checklist.Id,
+            third.Id,
+            new ChecklistStepRequest { Text = "Third", DependsOnStepIds = [second.Id] });
+
+        Assert.Equal([second.Id], Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value).DependsOnStepIds);
+        Assert.Equal([(third.Id, second.Id)], await dbContext.StepDependencies.Select(item => ValueTuple.Create(item.StepId, item.DependsOnStepId)).ToListAsync());
+    }
+
+    [Fact]
+    public async Task Update_ClearsPrerequisites_WhenGivenAnEmptyList()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        await AddDependenciesAsync(dbContext, (second.Id, first.Id));
+
+        var result = await CreateController(dbContext).Update(checklist.Id, second.Id, new ChecklistStepRequest { Text = "Second", DependsOnStepIds = [] });
+
+        Assert.Empty(Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value).DependsOnStepIds);
+        Assert.False(await dbContext.StepDependencies.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Update_KeepsPrerequisites_WhenTheyAreNotGiven()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        await AddDependenciesAsync(dbContext, (second.Id, first.Id));
+
+        var result = await CreateController(dbContext).Update(checklist.Id, second.Id, new ChecklistStepRequest { Text = "Renamed" });
+
+        Assert.Equal([first.Id], Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value).DependsOnStepIds);
+        Assert.True(await dbContext.StepDependencies.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Update_ReturnsValidationProblem_WhenStepDependsOnItself()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Step");
+
+        var result = await CreateController(dbContext).Update(checklist.Id, step.Id, new ChecklistStepRequest { Text = "Step", DependsOnStepIds = [step.Id] });
+
+        AssertValidationError(result.Result, "A step can't depend on itself.");
+        Assert.False(await dbContext.StepDependencies.AnyAsync());
+    }
+
+    [Theory]
+    [InlineData("other checklist")]
+    [InlineData("unknown")]
+    public async Task Update_ReturnsValidationProblem_AndKeepsTheStep_WhenPrerequisiteIsNotInTheChecklist(string prerequisite)
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var other = await AddChecklistAsync(dbContext, "Other");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Step");
+        var elsewhere = await AddStepAsync(dbContext, other.Id, "Elsewhere");
+        var dependsOnStepId = prerequisite == "unknown" ? 999 : elsewhere.Id;
+
+        var result = await CreateController(dbContext).Update(
+            checklist.Id,
+            step.Id,
+            new ChecklistStepRequest { Text = "Renamed", DependsOnStepIds = [dependsOnStepId] });
+
+        AssertValidationError(result.Result, "A step can only depend on other steps of the same checklist.");
+        Assert.False(await dbContext.StepDependencies.AnyAsync());
+        Assert.Equal("Step", (await dbContext.ChecklistSteps.AsNoTracking().SingleAsync(item => item.Id == step.Id)).Text);
+    }
+
+    [Fact]
+    public async Task Update_ReturnsValidationProblem_WhenTwoStepsWouldDependOnEachOther()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        await AddDependenciesAsync(dbContext, (second.Id, first.Id));
+
+        var result = await CreateController(dbContext).Update(checklist.Id, first.Id, new ChecklistStepRequest { Text = "First", DependsOnStepIds = [second.Id] });
+
+        AssertValidationError(result.Result, "Steps can't depend on each other in a loop: \"First\" depends on \"Second\" depends on \"First\".");
+        Assert.Equal(1, await dbContext.StepDependencies.CountAsync());
+    }
+
+    [Fact]
+    public async Task Update_ReturnsValidationProblem_WhenPrerequisitesWouldMakeAnIndirectCycle()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var a = await AddStepAsync(dbContext, checklist.Id, "A", 0);
+        var b = await AddStepAsync(dbContext, checklist.Id, "B", 1);
+        var c = await AddStepAsync(dbContext, checklist.Id, "C", 2);
+        var d = await AddStepAsync(dbContext, checklist.Id, "D", 3);
+        // A → B → C, so C → A would close the cycle A → B → C → A. D is a fine prerequisite on its own.
+        await AddDependenciesAsync(dbContext, (a.Id, b.Id), (b.Id, c.Id));
+
+        var result = await CreateController(dbContext).Update(checklist.Id, c.Id, new ChecklistStepRequest { Text = "C", DependsOnStepIds = [d.Id, a.Id] });
+
+        AssertValidationError(result.Result, "Steps can't depend on each other in a loop: \"C\" depends on \"A\" depends on \"B\" depends on \"C\".");
+        Assert.False(await dbContext.StepDependencies.AnyAsync(item => item.StepId == c.Id));
+    }
+
+    [Fact]
+    public async Task Update_AllowsADiamond()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var a = await AddStepAsync(dbContext, checklist.Id, "A", 0);
+        var b = await AddStepAsync(dbContext, checklist.Id, "B", 1);
+        var c = await AddStepAsync(dbContext, checklist.Id, "C", 2);
+        var d = await AddStepAsync(dbContext, checklist.Id, "D", 3);
+        await AddDependenciesAsync(dbContext, (b.Id, a.Id), (c.Id, a.Id));
+
+        var result = await CreateController(dbContext).Update(checklist.Id, d.Id, new ChecklistStepRequest { Text = "D", DependsOnStepIds = [b.Id, c.Id] });
+
+        Assert.Equal([b.Id, c.Id], Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value).DependsOnStepIds);
+    }
+
+    [Fact]
+    public async Task Reorder_ReturnsPrerequisites()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        await AddDependenciesAsync(dbContext, (second.Id, first.Id));
+
+        var result = await CreateController(dbContext).Reorder(checklist.Id, new ChecklistStepOrderRequest { StepIds = [second.Id, first.Id] });
+
+        var steps = Assert.IsAssignableFrom<IEnumerable<ChecklistStepResponse>>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal([[first.Id], []], steps.Select(step => step.DependsOnStepIds));
+    }
+
+    [Fact]
+    public async Task Delete_RemovesPrerequisitesInBothDirections()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        await using var setupContext = CreateDbContext(databaseName);
+        var checklist = await AddChecklistAsync(setupContext, "Daily");
+        var first = await AddStepAsync(setupContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(setupContext, checklist.Id, "Second", 1);
+        var third = await AddStepAsync(setupContext, checklist.Id, "Third", 2);
+        await AddDependenciesAsync(setupContext, (second.Id, first.Id), (third.Id, second.Id), (third.Id, first.Id));
+
+        // A fresh context, like a real request, so nothing is tracked yet.
+        await using var dbContext = CreateDbContext(databaseName);
+        var result = await CreateController(dbContext).Delete(checklist.Id, second.Id);
+
+        Assert.IsType<NoContentResult>(result);
+        await using var readContext = CreateDbContext(databaseName);
+        Assert.Equal([(third.Id, first.Id)], await readContext.StepDependencies.Select(item => ValueTuple.Create(item.StepId, item.DependsOnStepId)).ToListAsync());
+    }
+
+    private static void AssertValidationError(IActionResult? result, string message)
+    {
+        var problem = Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result).Value);
+        Assert.Equal([message], problem.Errors[nameof(ChecklistStepRequest.DependsOnStepIds)]);
+    }
+
+    private static async Task AddDependenciesAsync(ChecklistDbContext dbContext, params (int StepId, int DependsOnStepId)[] dependencies)
+    {
+        dbContext.StepDependencies.AddRange(dependencies.Select(item => new StepDependency { StepId = item.StepId, DependsOnStepId = item.DependsOnStepId }));
+        await dbContext.SaveChangesAsync();
+    }
+
     private static ChecklistStepsController CreateController(ChecklistDbContext dbContext)
     {
         return new(dbContext, NullLogger<ChecklistStepsController>.Instance);

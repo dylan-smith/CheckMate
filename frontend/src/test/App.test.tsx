@@ -661,8 +661,20 @@ describe('App', () => {
       id: 1,
       name: 'Morning',
       steps: [
-        { id: 10, text: 'Make coffee', type: 'Checkbox', sortOrder: 0 },
-        { id: 11, text: 'Read email', type: 'Checkbox', sortOrder: 1 },
+        {
+          id: 10,
+          text: 'Make coffee',
+          type: 'Checkbox',
+          sortOrder: 0,
+          dependsOnStepIds: [],
+        },
+        {
+          id: 11,
+          text: 'Read email',
+          type: 'Checkbox',
+          sortOrder: 1,
+          dependsOnStepIds: [],
+        },
       ],
     }
 
@@ -691,7 +703,13 @@ describe('App', () => {
       mockFetch(async (_url, init) => {
         if (init?.method === 'POST') {
           return jsonResponse(
-            { id: 12, text: 'Walk dog', type: 'Checkbox', sortOrder: 2 },
+            {
+              id: 12,
+              text: 'Walk dog',
+              type: 'Checkbox',
+              sortOrder: 2,
+              dependsOnStepIds: [],
+            },
             201,
           )
         }
@@ -769,6 +787,7 @@ describe('App', () => {
             text: 'Make tea',
             type: 'Checkbox',
             sortOrder: 0,
+            dependsOnStepIds: [],
           })
         }
         return jsonResponse(checklistWithSteps)
@@ -793,7 +812,11 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps\/10$/),
         expect.objectContaining({
           method: 'PUT',
-          body: JSON.stringify({ text: 'Make tea', type: 'Checkbox' }),
+          body: JSON.stringify({
+            text: 'Make tea',
+            type: 'Checkbox',
+            dependsOnStepIds: [],
+          }),
         }),
       )
       expect(trackEvent).toHaveBeenCalledWith('StepUpdated')
@@ -929,8 +952,20 @@ describe('App', () => {
       mockFetch(async (_url, init) => {
         if (init?.method === 'PUT') {
           return jsonResponse([
-            { id: 11, text: 'Read email', type: 'Checkbox', sortOrder: 0 },
-            { id: 10, text: 'Make coffee', type: 'Checkbox', sortOrder: 1 },
+            {
+              id: 11,
+              text: 'Read email',
+              type: 'Checkbox',
+              sortOrder: 0,
+              dependsOnStepIds: [],
+            },
+            {
+              id: 10,
+              text: 'Make coffee',
+              type: 'Checkbox',
+              sortOrder: 1,
+              dependsOnStepIds: [],
+            },
           ])
         }
         return jsonResponse(checklistWithSteps)
@@ -1035,7 +1070,13 @@ describe('App', () => {
       mockFetch(async (_url, init) => {
         if (init?.method === 'POST') {
           return jsonResponse(
-            { id: 12, text: 'Notes', type: 'Text', sortOrder: 2 },
+            {
+              id: 12,
+              text: 'Notes',
+              type: 'Text',
+              sortOrder: 2,
+              dependsOnStepIds: [],
+            },
             201,
           )
         }
@@ -1085,6 +1126,7 @@ describe('App', () => {
             text: 'Make coffee',
             type: 'Text',
             sortOrder: 0,
+            dependsOnStepIds: [],
           })
         }
         return jsonResponse(checklistWithSteps)
@@ -1110,9 +1152,197 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps\/10$/),
         expect.objectContaining({
           method: 'PUT',
-          body: JSON.stringify({ text: 'Make coffee', type: 'Text' }),
+          body: JSON.stringify({
+            text: 'Make coffee',
+            type: 'Text',
+            dependsOnStepIds: [],
+          }),
         }),
       )
+    })
+
+    describe('prerequisites', () => {
+      const checklistWithThreeSteps = {
+        id: 1,
+        name: 'Morning',
+        steps: [
+          ...checklistWithSteps.steps,
+          {
+            id: 12,
+            text: 'Walk dog',
+            type: 'Checkbox',
+            sortOrder: 2,
+            dependsOnStepIds: [],
+          },
+        ],
+      }
+
+      it('picks prerequisites in the step editor and lists them', async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'PUT') {
+            return jsonResponse({
+              id: 12,
+              text: 'Walk dog',
+              type: 'Checkbox',
+              sortOrder: 2,
+              dependsOnStepIds: [10, 11],
+            })
+          }
+          return jsonResponse(checklistWithThreeSteps)
+        })
+
+        renderAt('/checklists/1')
+
+        await user.click(
+          await screen.findByRole('button', { name: 'Edit step "Walk dog"' }),
+        )
+        const picker = screen.getByRole('combobox', { name: 'Depends on' })
+        expect(picker).toHaveTextContent('None')
+        await user.click(picker)
+        // A step can't depend on itself, so it isn't offered.
+        expect(
+          screen.queryByRole('option', { name: 'Walk dog' }),
+        ).not.toBeInTheDocument()
+        await user.click(screen.getByRole('option', { name: 'Read email' }))
+        await user.click(screen.getByRole('option', { name: 'Make coffee' }))
+        expect(
+          screen.getByRole('option', { name: 'Make coffee' }),
+        ).toHaveAttribute('aria-selected', 'true')
+        await user.keyboard('{Escape}')
+        // The picker lists them in checklist order, not the order they were picked.
+        expect(picker).toHaveTextContent('Make coffee, Read email')
+        await user.click(screen.getByRole('button', { name: 'Save' }))
+
+        await waitFor(() => {
+          expect(screen.getAllByRole('listitem')[2]).toHaveTextContent(
+            'Walk dogDepends on: Make coffee, Read email',
+          )
+        })
+        expect(fetch).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/checklists\/1\/steps\/12$/),
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({
+              text: 'Walk dog',
+              type: 'Checkbox',
+              dependsOnStepIds: [10, 11],
+            }),
+          }),
+        )
+      })
+
+      it("doesn't offer prerequisites when there's only one step", async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async () =>
+          jsonResponse({
+            ...checklistWithSteps,
+            steps: [checklistWithSteps.steps[0]],
+          }),
+        )
+
+        renderAt('/checklists/1')
+
+        await user.click(
+          await screen.findByRole('button', {
+            name: 'Edit step "Make coffee"',
+          }),
+        )
+        expect(
+          screen.queryByRole('combobox', { name: 'Depends on' }),
+        ).not.toBeInTheDocument()
+      })
+
+      it('shows why the API rejected the prerequisites without reporting it', async () => {
+        const user = userEvent.setup()
+        const message =
+          'Steps can\'t depend on each other in a loop: "Make coffee" depends on "Read email" depends on "Make coffee".'
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'PUT') {
+            return jsonResponse(
+              {
+                title: 'Validation failed',
+                errors: { DependsOnStepIds: [message] },
+              },
+              400,
+            )
+          }
+          return jsonResponse({
+            ...checklistWithSteps,
+            steps: [
+              checklistWithSteps.steps[0],
+              { ...checklistWithSteps.steps[1], dependsOnStepIds: [10] },
+            ],
+          })
+        })
+
+        renderAt('/checklists/1')
+
+        await user.click(
+          await screen.findByRole('button', {
+            name: 'Edit step "Make coffee"',
+          }),
+        )
+        await user.click(screen.getByRole('combobox', { name: 'Depends on' }))
+        await user.click(screen.getByRole('option', { name: 'Read email' }))
+        await user.keyboard('{Escape}')
+        await user.click(screen.getByRole('button', { name: 'Save' }))
+
+        expect(await screen.findByText(message)).toBeInTheDocument()
+        // The editor stays open so the prerequisites can be changed.
+        expect(
+          screen.getByRole('combobox', { name: 'Depends on' }),
+        ).toHaveTextContent('Read email')
+        expect(trackException).not.toHaveBeenCalled()
+      })
+
+      it('drops a deleted step from the prerequisites it was in', async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'DELETE') {
+            return new Response(null, { status: 204 })
+          }
+          return jsonResponse({
+            ...checklistWithThreeSteps,
+            steps: [
+              checklistWithThreeSteps.steps[0],
+              checklistWithThreeSteps.steps[1],
+              {
+                ...checklistWithThreeSteps.steps[2],
+                dependsOnStepIds: [10, 11],
+              },
+            ],
+          })
+        })
+
+        renderAt('/checklists/1')
+
+        const walkDog = (await screen.findAllByRole('listitem'))[2]
+        expect(walkDog).toHaveTextContent('Depends on: Make coffee, Read email')
+        await user.click(
+          screen.getByRole('button', { name: 'Delete step "Make coffee"' }),
+        )
+
+        await waitFor(() => {
+          expect(screen.getAllByRole('listitem')).toHaveLength(2)
+        })
+        expect(screen.getAllByRole('listitem')[1]).toHaveTextContent(
+          'Walk dogDepends on: Read email',
+        )
+        expect(screen.getAllByRole('listitem')[1]).not.toHaveTextContent(
+          'Make coffee',
+        )
+        await user.click(
+          screen.getByRole('button', { name: 'Edit step "Walk dog"' }),
+        )
+        expect(
+          screen.getByRole('combobox', { name: 'Depends on' }),
+        ).toHaveTextContent('Read email')
+      })
     })
 
     it('keeps the steps after renaming the checklist', async () => {

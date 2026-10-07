@@ -13,6 +13,8 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
 
     public DbSet<ChecklistRunStep> ChecklistRunSteps => Set<ChecklistRunStep>();
 
+    public DbSet<StepDependency> StepDependencies => Set<StepDependency>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Checklist>()
@@ -41,6 +43,25 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
         modelBuilder.Entity<ChecklistStep>()
             .Property(step => step.Type)
             .HasColumnName("StepType");
+
+        modelBuilder.Entity<StepDependency>()
+            .HasKey(dependency => new { dependency.StepId, dependency.DependsOnStepId });
+
+        modelBuilder.Entity<StepDependency>()
+            .HasOne<ChecklistStep>()
+            .WithMany(step => step.DependsOn)
+            .HasForeignKey(dependency => dependency.StepId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // No cascade in the database (see 0007-CreateStepDependenciesTable.sql), so the app deletes these rows itself.
+        modelBuilder.Entity<StepDependency>()
+            .HasOne<ChecklistStep>()
+            .WithMany()
+            .HasForeignKey(dependency => dependency.DependsOnStepId)
+            .OnDelete(DeleteBehavior.ClientCascade);
+
+        modelBuilder.Entity<StepDependency>()
+            .HasIndex(dependency => dependency.DependsOnStepId);
 
         modelBuilder.Entity<ChecklistRun>()
             .HasOne<Checklist>()

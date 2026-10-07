@@ -245,6 +245,47 @@ test.describe('Checklist management', () => {
       await expect(steps.nth(2)).toContainText('Wash dishes')
     })
 
+    test('sets prerequisites, rejects a cycle, and they persist', async ({
+      page,
+    }) => {
+      // Picks a step's prerequisites in its editor and saves them.
+      async function setPrerequisites(text: string, prerequisites: string[]) {
+        await page.getByRole('button', { name: `Edit step "${text}"` }).click()
+        await page.getByRole('combobox', { name: 'Depends on' }).click()
+        for (const prerequisite of prerequisites) {
+          await page.getByRole('option', { name: prerequisite }).click()
+        }
+        await page.keyboard.press('Escape')
+        await page.getByRole('button', { name: 'Save', exact: true }).click()
+      }
+
+      await createChecklist(page, 'Deploy')
+      await openChecklist(page, 'Deploy')
+      await addStep(page, 'Build')
+      await addStep(page, 'Test')
+      await addStep(page, 'Release')
+
+      const steps = page.getByRole('listitem')
+      await setPrerequisites('Test', ['Build'])
+      await expect(steps.nth(1)).toContainText('Depends on: Build')
+      await setPrerequisites('Release', ['Test', 'Build'])
+      await expect(steps.nth(2)).toContainText('Depends on: Build, Test')
+
+      // Release already depends on Build, directly and through Test, so this would make a loop.
+      await setPrerequisites('Build', ['Release'])
+      await expect(page.getByRole('alert')).toContainText(
+        'Steps can\'t depend on each other in a loop: "Build" depends on "Release"',
+      )
+      await page.getByRole('button', { name: 'Cancel' }).click()
+
+      await page.reload()
+
+      await expect(steps).toHaveCount(3)
+      await expect(steps.nth(0)).not.toContainText('Depends on')
+      await expect(steps.nth(1)).toContainText('Depends on: Build')
+      await expect(steps.nth(2)).toContainText('Depends on: Build, Test')
+    })
+
     test('rejects a stale list of step ids', async ({ request }) => {
       const response = await request.post(checklistsApiUrl, {
         data: { name: 'Stale order' },

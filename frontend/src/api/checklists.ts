@@ -21,6 +21,8 @@ export type ChecklistStep = {
   text: string
   type: StepType
   sortOrder: number
+  // The other steps of the checklist that must be done before this one.
+  dependsOnStepIds: number[]
 }
 
 // A single checklist comes back with its steps in order.
@@ -30,6 +32,11 @@ export type ChecklistDetail = Checklist & {
 
 type ErrorResponse = {
   message?: string
+}
+
+// The body of a 400 from the API, with the messages for each invalid field.
+type ValidationErrorResponse = {
+  errors?: Record<string, string[]>
 }
 
 // Thrown for a response the caller should show to the user as is, such as a 409 for a duplicate name.
@@ -128,17 +135,22 @@ function stepsUrl(checklistId: number) {
 async function saveStep(
   url: string,
   method: 'POST' | 'PUT',
-  text: string,
-  type: StepType,
+  step: { text: string; type: StepType; dependsOnStepIds?: number[] },
 ) {
   const response = await fetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ text, type }),
+    body: JSON.stringify(step),
   })
 
+  // A 400 explains what's wrong, such as prerequisites that would make a cycle, so pass that on.
+  if (response.status === 400) {
+    const error = (await response.json()) as ValidationErrorResponse
+    const message = Object.values(error.errors ?? {}).flat()[0]
+    throw new ApiError(400, message ?? 'Unable to save step.')
+  }
   if (!response.ok) {
     throw new Error('Unable to save step.')
   }
@@ -146,7 +158,7 @@ async function saveStep(
 }
 
 export function createStep(checklistId: number, text: string, type: StepType) {
-  return saveStep(stepsUrl(checklistId), 'POST', text, type)
+  return saveStep(stepsUrl(checklistId), 'POST', { text, type })
 }
 
 export function updateStep(
@@ -154,8 +166,13 @@ export function updateStep(
   stepId: number,
   text: string,
   type: StepType,
+  dependsOnStepIds: number[],
 ) {
-  return saveStep(`${stepsUrl(checklistId)}/${stepId}`, 'PUT', text, type)
+  return saveStep(`${stepsUrl(checklistId)}/${stepId}`, 'PUT', {
+    text,
+    type,
+    dependsOnStepIds,
+  })
 }
 
 // Takes every step id of the checklist in the new order and returns the steps in that order.

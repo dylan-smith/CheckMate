@@ -46,13 +46,13 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
 
         var steps = await dbContext.ChecklistSteps
             .AsNoTracking()
+            .Include(step => step.DependsOn)
             .Where(step => step.ChecklistId == id)
             .OrderBy(step => step.SortOrder)
             .ThenBy(step => step.Id)
-            .Select(step => new ChecklistStepResponse(step.Id, step.Text, step.Type, step.SortOrder))
             .ToListAsync();
 
-        return Ok(new ChecklistDetailResponse(checklist.Id, checklist.Name, steps));
+        return Ok(new ChecklistDetailResponse(checklist.Id, checklist.Name, [.. steps.Select(ChecklistStepResponse.From)]));
     }
 
     [HttpPost]
@@ -179,11 +179,11 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
             return NotFound();
         }
 
-        // SQL Server cascades the delete to the steps and runs through the foreign keys, but the in-memory provider
+        // SQL Server cascades the delete to the steps, their prerequisites and the runs through the foreign keys, but the in-memory provider
         // only cascades to tracked entities, so load them first there.
         if (!dbContext.Database.IsRelational())
         {
-            await dbContext.ChecklistSteps.Where(step => step.ChecklistId == id).LoadAsync();
+            await dbContext.ChecklistSteps.Where(step => step.ChecklistId == id).Include(step => step.DependsOn).LoadAsync();
             await dbContext.ChecklistRuns.Where(run => run.ChecklistId == id).Include(run => run.Steps).LoadAsync();
         }
 

@@ -128,6 +128,30 @@ public class ChecklistsControllerTests
     }
 
     [Fact]
+    public async Task GetById_ReturnsEachStepsPrerequisites()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = new Checklist { Name = "Daily" };
+        dbContext.Checklists.Add(checklist);
+        await dbContext.SaveChangesAsync();
+
+        var first = new ChecklistStep { ChecklistId = checklist.Id, Text = "First", SortOrder = 0 };
+        var second = new ChecklistStep { ChecklistId = checklist.Id, Text = "Second", SortOrder = 1 };
+        dbContext.ChecklistSteps.AddRange(first, second);
+        await dbContext.SaveChangesAsync();
+        dbContext.StepDependencies.Add(new StepDependency { StepId = second.Id, DependsOnStepId = first.Id });
+        await dbContext.SaveChangesAsync();
+        dbContext.ChangeTracker.Clear();
+
+        var controller = new ChecklistsController(dbContext, NullLogger<ChecklistsController>.Instance);
+
+        var result = await controller.GetById(checklist.Id);
+
+        var returnedChecklist = Assert.IsType<ChecklistDetailResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal([[], [first.Id]], returnedChecklist.Steps.Select(step => step.DependsOnStepIds));
+    }
+
+    [Fact]
     public async Task GetById_ReturnsNotFound_WhenChecklistDoesNotExist()
     {
         await using var dbContext = CreateDbContext();
@@ -176,6 +200,36 @@ public class ChecklistsControllerTests
         Assert.IsType<NoContentResult>(result);
         var remainingStep = await dbContext.ChecklistSteps.SingleAsync();
         Assert.Equal("Kept", remainingStep.Text);
+    }
+
+    [Fact]
+    public async Task Delete_RemovesStepPrerequisites()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = new Checklist { Name = "Daily" };
+        var other = new Checklist { Name = "Other" };
+        dbContext.Checklists.AddRange(checklist, other);
+        await dbContext.SaveChangesAsync();
+
+        var first = new ChecklistStep { ChecklistId = checklist.Id, Text = "First", SortOrder = 0 };
+        var second = new ChecklistStep { ChecklistId = checklist.Id, Text = "Second", SortOrder = 1 };
+        var keptFirst = new ChecklistStep { ChecklistId = other.Id, Text = "Kept first", SortOrder = 0 };
+        var keptSecond = new ChecklistStep { ChecklistId = other.Id, Text = "Kept second", SortOrder = 1 };
+        dbContext.ChecklistSteps.AddRange(first, second, keptFirst, keptSecond);
+        await dbContext.SaveChangesAsync();
+        dbContext.StepDependencies.AddRange(
+            new StepDependency { StepId = second.Id, DependsOnStepId = first.Id },
+            new StepDependency { StepId = keptSecond.Id, DependsOnStepId = keptFirst.Id });
+        await dbContext.SaveChangesAsync();
+        dbContext.ChangeTracker.Clear();
+
+        var controller = new ChecklistsController(dbContext, NullLogger<ChecklistsController>.Instance);
+
+        var result = await controller.Delete(checklist.Id);
+
+        Assert.IsType<NoContentResult>(result);
+        var remaining = await dbContext.StepDependencies.SingleAsync();
+        Assert.Equal((keptSecond.Id, keptFirst.Id), (remaining.StepId, remaining.DependsOnStepId));
     }
 
     [Fact]

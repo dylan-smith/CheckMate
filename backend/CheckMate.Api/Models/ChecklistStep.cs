@@ -15,4 +15,7 @@ public class ChecklistStep
     public StepType Type { get; set; }
 
     public int SortOrder { get; set; }
+
+    /// <summary>The steps of the same checklist that must be done before this one.</summary>
+    public List<StepDependency> DependsOn { get; set; } = [];
 }
