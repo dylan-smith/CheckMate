@@ -490,13 +490,15 @@ jobs:
         env:
           CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
 
-      # App Service can finish applying deploy-infrastructure's site update minutes after the Bicep deployment
-      # reports success, and applying it restarts the deployment (SCM) container, which stops a deployment in
-      # progress ("Deployment has been stopped due to SCM container restart"). So a failed deployment is retried
+      # Pause API's site changes and restart also restart the deployment (SCM) container, but some time after those
+      # calls return, so the restart can land during this deployment and stop it ("Deployment has been stopped due
+      # to SCM container restart"). The action then waits about 20 minutes for Kudu to report the failure, so the
+      # step times out well before that (a good deployment takes under 2 minutes). A failed deployment is retried
       # once, after giving the container time to come back.
       - name: Deploy to Azure App Service
         id: deploy
         continue-on-error: true
+        timeout-minutes: 5
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ vars.AZURE_BACKEND_APP_NAME }}
