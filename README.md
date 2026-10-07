@@ -173,7 +173,7 @@ To put some data on the workbook, run the **Generate Load** workflow (`.github/w
 
 | Alert | Fires when | Sev |
 |-------|------------|-----|
-| API down | The availability test on `{api}/health` (one location, every 15 minutes) fails twice in a row | 1 |
+| API down | The availability test on `{api}/health` (one location, every 15 minutes) fails 3 of its last 4 runs (about 45 minutes down) | 1 |
 | Resource health | Azure reports the App Service, database or storage account unavailable or degraded | 1 |
 | Service health | Azure reports an incident or planned maintenance for App Service, SQL Database, Storage or Monitor in West US/West US 2 | 2 |
 | API server errors | More than 5 HTTP 5xx responses in 15 minutes | 2 |

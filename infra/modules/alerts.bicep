@@ -477,7 +477,7 @@ resource availabilityTest 'Microsoft.Insights/webtests@2022-06-15' = {
 var metricAlerts = [
   {
     name: 'CheckMate API down'
-    description: 'The API health availability test failed twice in a row.'
+    description: 'The API health availability test failed 3 of its last 4 runs.'
     steps: [
       'On the *Overview* tab of the ${workbookLink}, *Failed health checks* shows the status code or error. ${availabilityLink} has every test result.'
       'Open ${healthEndpointLink} yourself to see whether the API is still down.'
@@ -492,7 +492,8 @@ var metricAlerts = [
     timeAggregation: 'Average'
     operator: 'LessThan'
     threshold: 50
-    windowSize: 'PT30M'
+    // An hour holds 4 runs, so a deploy's pause of up to about 25 minutes (2 failed runs) doesn't fire it.
+    windowSize: 'PT1H'
     frequency: 'PT5M'
     dimensions: [
       {
