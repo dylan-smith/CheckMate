@@ -189,6 +189,30 @@ public class ChecklistStepsControllerTests
     }
 
     [Fact]
+    public async Task Reorder_SavesTheWholeOrder_WhenAnotherReorderSavedFirst()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        await using var setupContext = CreateDbContext(databaseName);
+        var checklist = await AddChecklistAsync(setupContext, "Daily");
+        var first = await AddStepAsync(setupContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(setupContext, checklist.Id, "Second", 1);
+        var third = await AddStepAsync(setupContext, checklist.Id, "Third", 2);
+
+        await using var earlierContext = CreateDbContext(databaseName);
+        await using var laterContext = CreateDbContext(databaseName);
+        // Both requests read the steps before either saves.
+        await laterContext.ChecklistSteps.LoadAsync();
+
+        await CreateController(earlierContext).Reorder(checklist.Id, new ChecklistStepOrderRequest { StepIds = [second.Id, first.Id, third.Id] });
+        await CreateController(laterContext).Reorder(checklist.Id, new ChecklistStepOrderRequest { StepIds = [third.Id, second.Id, first.Id] });
+
+        await using var readContext = CreateDbContext(databaseName);
+        var result = await CreateController(readContext).GetAll(checklist.Id);
+        var steps = Assert.IsAssignableFrom<IEnumerable<ChecklistStepResponse>>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal([("Third", 0), ("Second", 1), ("First", 2)], steps.Select(step => (step.Text, step.SortOrder)));
+    }
+
+    [Fact]
     public async Task Reorder_AcceptsEmptyList_WhenChecklistHasNoSteps()
     {
         await using var dbContext = CreateDbContext();
@@ -265,10 +289,10 @@ public class ChecklistStepsControllerTests
         return step;
     }
 
-    private static ChecklistDbContext CreateDbContext()
+    private static ChecklistDbContext CreateDbContext(string? databaseName = null)
     {
         var options = new DbContextOptionsBuilder<ChecklistDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString())
             .Options;
 
         return new ChecklistDbContext(options);

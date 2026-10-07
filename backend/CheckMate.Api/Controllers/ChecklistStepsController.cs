@@ -145,7 +145,11 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
 
         for (var index = 0; index < request.StepIds.Count; index++)
         {
-            steps[request.StepIds[index]].SortOrder = index;
+            var step = steps[request.StepIds[index]];
+            step.SortOrder = index;
+            // Write every position, not just the ones that differ from what this request read, so a reorder
+            // saved in between can't leave a mix of both orders.
+            dbContext.Entry(step).Property(item => item.SortOrder).IsModified = true;
         }
 
         await dbContext.SaveChangesAsync();
