@@ -1,4 +1,9 @@
-import { test, expect, type Page } from '@playwright/test'
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type Page,
+} from '@playwright/test'
 
 // The backend started by playwright.config.ts.
 const checklistsApiUrl = 'http://localhost:5269/api/checklists'
@@ -291,6 +296,122 @@ test.describe('Checklist management', () => {
 
       expect((await request.get(stepsUrl)).status()).toBe(404)
       expect((await request.get(`${stepsUrl}/${stepId}`)).status()).toBe(404)
+    })
+  })
+
+  test.describe('Fill out', () => {
+    // Creates a checklist with steps through the API and returns its id.
+    async function createChecklistWithSteps(
+      request: APIRequestContext,
+      name: string,
+      stepTexts: string[],
+    ) {
+      const response = await request.post(checklistsApiUrl, { data: { name } })
+      expect(response.ok()).toBe(true)
+      const { id } = (await response.json()) as { id: number }
+      const stepIds: number[] = []
+      for (const text of stepTexts) {
+        const stepResponse = await request.post(
+          `${checklistsApiUrl}/${id}/steps`,
+          { data: { text } },
+        )
+        expect(stepResponse.ok()).toBe(true)
+        stepIds.push(((await stepResponse.json()) as { id: number }).id)
+      }
+      return { id, stepIds }
+    }
+
+    test('saves each tick, survives a reload, and completes read-only', async ({
+      page,
+      request,
+    }) => {
+      await createChecklistWithSteps(request, 'Opening up', [
+        'Unlock door',
+        'Turn on lights',
+      ])
+
+      // Filling out starts with one click from the checklists page.
+      await page.reload()
+      await page.getByRole('button', { name: 'Fill out "Opening up"' }).click()
+      await expect(page).toHaveURL(/\/runs\/\d+$/)
+
+      const unlock = page.getByRole('checkbox', { name: 'Unlock door' })
+      await unlock.check()
+      await expect(page.getByText('1 of 2 done')).toBeVisible()
+      // Wait for the save to finish, which enables the checkbox again.
+      await expect(unlock).toBeEnabled()
+
+      await page.reload()
+      await expect(unlock).toBeChecked()
+      await expect(
+        page.getByRole('checkbox', { name: 'Turn on lights' }),
+      ).not.toBeChecked()
+
+      await page.getByRole('button', { name: 'Complete' }).click()
+      await expect(page.getByText(/^Completed /)).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Complete' })).toBeHidden()
+
+      await page.reload()
+      await expect(page.getByText(/^Completed /)).toBeVisible()
+      await expect(unlock).toBeChecked()
+      await expect(unlock).toBeDisabled()
+    })
+
+    test('a completed run rejects changes', async ({ request }) => {
+      const {
+        id,
+        stepIds: [stepId],
+      } = await createChecklistWithSteps(request, 'Locked run', ['Only step'])
+      const runResponse = await request.post(`${checklistsApiUrl}/${id}/runs`)
+      expect(runResponse.status()).toBe(201)
+      const { id: runId } = (await runResponse.json()) as { id: number }
+      const runUrl = `http://localhost:5269/api/runs/${runId}`
+
+      expect((await request.post(`${runUrl}/complete`)).ok()).toBe(true)
+
+      expect(
+        (
+          await request.put(`${runUrl}/steps/${stepId}`, {
+            data: { isDone: true },
+          })
+        ).status(),
+      ).toBe(409)
+      expect((await request.post(`${runUrl}/complete`)).status()).toBe(409)
+    })
+
+    test('a past run keeps the step text after the step is edited or deleted', async ({
+      page,
+      request,
+    }) => {
+      const {
+        id,
+        stepIds: [editedId, deletedId],
+      } = await createChecklistWithSteps(request, 'History', [
+        'Original text',
+        'Removed later',
+      ])
+      const runResponse = await request.post(`${checklistsApiUrl}/${id}/runs`)
+      expect(runResponse.ok()).toBe(true)
+      const { id: runId } = (await runResponse.json()) as { id: number }
+
+      const stepsUrl = `${checklistsApiUrl}/${id}/steps`
+      expect(
+        (
+          await request.put(`${stepsUrl}/${editedId}`, {
+            data: { text: 'New text' },
+          })
+        ).ok(),
+      ).toBe(true)
+      expect((await request.delete(`${stepsUrl}/${deletedId}`)).ok()).toBe(true)
+
+      await page.goto(`/runs/${runId}`)
+      await expect(
+        page.getByRole('checkbox', { name: 'Original text' }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole('checkbox', { name: 'Removed later' }),
+      ).toBeVisible()
+      await expect(page.getByText('New text')).toBeHidden()
     })
   })
 

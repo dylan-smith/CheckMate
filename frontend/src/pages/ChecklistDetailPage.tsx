@@ -17,14 +17,11 @@ import {
   updateChecklist,
 } from '../api/checklists'
 import type { ChecklistDetail as ChecklistDetailData } from '../api/checklists'
+import { startRun } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
 import ChecklistSteps from './ChecklistSteps'
 import NotFoundPage from './NotFoundPage'
-
-// Only positive whole numbers can be checklist ids, so anything else can't match one.
-function parseId(value: string | undefined) {
-  return value && /^[1-9]\d*$/.test(value) ? Number(value) : null
-}
+import { parseId } from './parseId'
 
 function ChecklistDetail({ id }: { id: number }) {
   const navigate = useNavigate()
@@ -34,6 +31,7 @@ function ChecklistDetail({ id }: { id: number }) {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [starting, setStarting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
   useEffect(() => {
@@ -122,12 +120,46 @@ function ChecklistDetail({ id }: { id: number }) {
     }
   }
 
+  async function handleFillOut() {
+    setStarting(true)
+    setErrorMessage('')
+
+    try {
+      const run = await startRun(id)
+      trackEvent('RunStarted')
+      void navigate(`/runs/${run.id}`)
+    } catch (error) {
+      trackException(error, { operation: 'startRun' })
+      setErrorMessage(
+        describeFetchError(error, 'Unable to start filling out the checklist.'),
+      )
+      setStarting(false)
+    }
+  }
+
   return (
     <Stack spacing={2}>
-      <Box>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 1,
+        }}
+      >
         <Button component={Link} to="/">
           ← Back to checklists
         </Button>
+        {checklist && (
+          <Button
+            type="button"
+            variant="contained"
+            disabled={submitting || deleting || starting}
+            onClick={() => void handleFillOut()}
+          >
+            {starting ? 'Starting…' : 'Fill out'}
+          </Button>
+        )}
       </Box>
 
       {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
@@ -164,7 +196,7 @@ function ChecklistDetail({ id }: { id: number }) {
                   <Button
                     type="submit"
                     variant="contained"
-                    disabled={submitting || deleting}
+                    disabled={submitting || deleting || starting}
                   >
                     {submitting ? 'Saving…' : 'Save changes'}
                   </Button>
@@ -172,7 +204,7 @@ function ChecklistDetail({ id }: { id: number }) {
                     type="button"
                     color="error"
                     variant="outlined"
-                    disabled={submitting || deleting}
+                    disabled={submitting || deleting || starting}
                     onClick={() => void handleDelete()}
                   >
                     {deleting ? 'Deleting…' : 'Delete'}

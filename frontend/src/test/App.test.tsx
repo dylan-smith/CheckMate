@@ -1047,6 +1047,350 @@ describe('App', () => {
     })
   })
 
+  describe('filling out a checklist', () => {
+    const run = {
+      id: 5,
+      checklistId: 3,
+      checklistName: 'Morning',
+      startedAt: '2026-10-06T08:00:00Z',
+      completedAt: null,
+      steps: [
+        { stepId: 11, text: 'Make coffee', isDone: false, completedAt: null },
+        { stepId: 12, text: 'Read email', isDone: true, completedAt: null },
+      ],
+    }
+
+    it('starts a run from the checklist page and opens it', async () => {
+      const user = userEvent.setup()
+      const fetchMock = mockFetch(async (url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse(run, 201)
+        }
+        if (url.endsWith('/api/runs/5')) {
+          return jsonResponse(run)
+        }
+        return jsonResponse({ id: 3, name: 'Morning', steps: [] })
+      })
+
+      renderAt('/checklists/3')
+      await user.click(await screen.findByRole('button', { name: 'Fill out' }))
+
+      expect(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      ).not.toBeChecked()
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/3\/runs$/),
+        { method: 'POST' },
+      )
+      expect(trackEvent).toHaveBeenCalledWith('RunStarted')
+    })
+
+    it('starts a run straight from the checklists page', async () => {
+      const user = userEvent.setup()
+      const fetchMock = mockFetch(async (url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse(run, 201)
+        }
+        if (url.endsWith('/api/runs/5')) {
+          return jsonResponse(run)
+        }
+        return jsonResponse([
+          { id: 2, name: 'Evening' },
+          { id: 3, name: 'Morning' },
+        ])
+      })
+
+      renderAt('/')
+      await user.click(
+        await screen.findByRole('button', { name: 'Fill out "Morning"' }),
+      )
+
+      expect(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeInTheDocument()
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/3\/runs$/),
+        { method: 'POST' },
+      )
+      expect(trackEvent).toHaveBeenCalledWith('RunStarted')
+    })
+
+    it('shows an error on the checklists page when a run cannot be started', async () => {
+      const user = userEvent.setup()
+      mockFetch(async (_url, init) =>
+        init?.method === 'POST'
+          ? new Response(null, { status: 500 })
+          : jsonResponse([{ id: 3, name: 'Morning' }]),
+      )
+
+      renderAt('/')
+      await user.click(
+        await screen.findByRole('button', { name: 'Fill out "Morning"' }),
+      )
+
+      expect(
+        await screen.findByText('Unable to start filling out the checklist.'),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: 'Fill out "Morning"' }),
+      ).toBeEnabled()
+      expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
+        operation: 'startRun',
+      })
+    })
+
+    it('shows an error when a run cannot be started', async () => {
+      const user = userEvent.setup()
+      mockFetch(async (_url, init) =>
+        init?.method === 'POST'
+          ? new Response(null, { status: 500 })
+          : jsonResponse({ id: 3, name: 'Morning', steps: [] }),
+      )
+
+      renderAt('/checklists/3')
+      await user.click(await screen.findByRole('button', { name: 'Fill out' }))
+
+      expect(
+        await screen.findByText('Unable to start filling out the checklist.'),
+      ).toBeInTheDocument()
+      expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
+        operation: 'startRun',
+      })
+    })
+
+    it('shows the run with each step and a link back to the checklist', async () => {
+      mockFetch(async () => jsonResponse(run))
+
+      renderAt('/runs/5')
+
+      expect(
+        await screen.findByRole('heading', { level: 2, name: 'Morning' }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: 'Make coffee' }),
+      ).not.toBeChecked()
+      expect(screen.getByRole('checkbox', { name: 'Read email' })).toBeChecked()
+      expect(screen.getByText('1 of 2 done')).toBeInTheDocument()
+      expect(
+        screen.getByRole('link', { name: /Back to checklist/ }),
+      ).toHaveAttribute('href', '/checklists/3')
+    })
+
+    it('saves a tick straight away', async () => {
+      const user = userEvent.setup()
+      const fetchMock = mockFetch(async (_url, init) =>
+        init?.method === 'PUT'
+          ? jsonResponse({
+              stepId: 11,
+              text: 'Make coffee',
+              isDone: true,
+              completedAt: '2026-10-06T08:05:00Z',
+            })
+          : jsonResponse(run),
+      )
+
+      renderAt('/runs/5')
+      await user.click(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      )
+
+      expect(
+        screen.getByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeChecked()
+      expect(await screen.findByText('2 of 2 done')).toBeInTheDocument()
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/runs\/5\/steps\/11$/),
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ isDone: true }),
+        }),
+      )
+    })
+
+    it('undoes a tick that fails to save', async () => {
+      const user = userEvent.setup()
+      mockFetch(async (_url, init) =>
+        init?.method === 'PUT'
+          ? new Response(null, { status: 500 })
+          : jsonResponse(run),
+      )
+
+      renderAt('/runs/5')
+      await user.click(
+        await screen.findByRole('checkbox', { name: 'Read email' }),
+      )
+
+      expect(
+        await screen.findByText('Unable to save step.'),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('checkbox', { name: 'Read email' })).toBeChecked()
+      expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
+        operation: 'saveRunStep',
+      })
+    })
+
+    it('completes the run and makes it read-only', async () => {
+      const user = userEvent.setup()
+      const completed = { ...run, completedAt: '2026-10-06T08:30:00Z' }
+      mockFetch(async (_url, init) =>
+        init?.method === 'POST' ? jsonResponse(completed) : jsonResponse(run),
+      )
+
+      renderAt('/runs/5')
+      await user.click(await screen.findByRole('button', { name: 'Complete' }))
+
+      expect(
+        await screen.findByText(
+          `Completed ${new Date(completed.completedAt).toLocaleString()}`,
+        ),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Complete' }),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeDisabled()
+      expect(trackEvent).toHaveBeenCalledWith('RunCompleted')
+    })
+
+    it('shows the run as complete when it was completed elsewhere', async () => {
+      const user = userEvent.setup()
+      const completed = { ...run, completedAt: '2026-10-06T08:30:00Z' }
+      let loads = 0
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return jsonResponse(
+            { message: "This run is complete and can't be changed." },
+            409,
+          )
+        }
+        loads += 1
+        return jsonResponse(loads === 1 ? run : completed)
+      })
+
+      renderAt('/runs/5')
+      await user.click(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      )
+
+      expect(
+        await screen.findByText("This run is complete and can't be changed."),
+      ).toBeInTheDocument()
+      expect(
+        await screen.findByText(/^Completed /, { selector: 'div' }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: 'Make coffee' }),
+      ).not.toBeChecked()
+      expect(
+        screen.getByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeDisabled()
+      expect(trackException).not.toHaveBeenCalled()
+    })
+
+    it('keeps the run read-only and offers a reload when reloading after a 409 fails', async () => {
+      const user = userEvent.setup()
+      const completed = { ...run, completedAt: '2026-10-06T08:30:00Z' }
+      let loads = 0
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return jsonResponse(
+            { message: "This run is complete and can't be changed." },
+            409,
+          )
+        }
+        loads += 1
+        if (loads === 2) {
+          throw new TypeError('Failed to fetch')
+        }
+        return jsonResponse(loads === 1 ? run : completed)
+      })
+
+      renderAt('/runs/5')
+      await user.click(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      )
+
+      const reload = await screen.findByRole('button', { name: 'Reload' })
+      expect(
+        screen.getByText("This run is complete and can't be changed."),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeDisabled()
+      expect(
+        screen.queryByRole('button', { name: 'Complete' }),
+      ).not.toBeInTheDocument()
+
+      await user.click(reload)
+
+      expect(
+        await screen.findByText(/^Completed /, { selector: 'div' }),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Reload' }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('keeps a deleted step but does not let it be ticked', async () => {
+      mockFetch(async () =>
+        jsonResponse({
+          ...run,
+          steps: [
+            {
+              stepId: null,
+              text: 'Old step',
+              isDone: false,
+              completedAt: null,
+            },
+          ],
+        }),
+      )
+
+      renderAt('/runs/5')
+
+      expect(
+        await screen.findByRole('checkbox', { name: 'Old step' }),
+      ).toBeDisabled()
+    })
+
+    it('shows not found when the run does not exist', async () => {
+      mockFetch(async () => new Response(null, { status: 404 }))
+
+      renderAt('/runs/99')
+
+      expect(
+        await screen.findByText(
+          "That fill-out doesn't exist. Its checklist may have been deleted.",
+        ),
+      ).toBeInTheDocument()
+    })
+
+    it('shows not found without calling the API for an invalid id', () => {
+      mockFetch(async () => jsonResponse(run))
+
+      renderAt('/runs/abc')
+
+      expect(
+        screen.getByRole('heading', { level: 2, name: 'Page not found' }),
+      ).toBeInTheDocument()
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('shows an error when the run cannot be loaded', async () => {
+      mockFetch(async () => new Response(null, { status: 500 }))
+
+      renderAt('/runs/5')
+
+      expect(
+        await screen.findByText('Unable to load this fill-out.'),
+      ).toBeInTheDocument()
+      expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
+        operation: 'loadRun',
+      })
+    })
+  })
+
   describe('unknown routes', () => {
     it('shows a not found page with a link back to the list', () => {
       mockFetch(async () => jsonResponse([]))
