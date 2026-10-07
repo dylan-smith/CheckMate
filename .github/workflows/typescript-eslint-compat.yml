@@ -37,16 +37,7 @@ jobs:
 
       - name: Compare TypeScript versions
         id: versions
-        run: |
-          latest=$(npm view typescript version)
-          current=$(node -p "require('./package-lock.json').packages['node_modules/typescript'].version")
-          echo "Current: $current, latest: $latest"
-          echo "latest=$latest" >> "$GITHUB_OUTPUT"
-          if [ "${latest%%.*}" -gt "${current%%.*}" ]; then
-            echo "newer-major=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "newer-major=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: bash ../.github/scripts/typescript-compat-versions.sh
 
       - name: Install dependencies
         if: steps.versions.outputs.newer-major == 'true'
@@ -55,15 +46,9 @@ jobs:
       - name: Try latest TypeScript with latest typescript-eslint
         id: compat
         if: steps.versions.outputs.newer-major == 'true'
-        run: |
-          # npm install fails on peer dependency conflicts, and eslint fails if typescript-eslint
-          # can't load the compiler API, so both passing means the upgrade is viable.
-          if npm install --save-dev typescript@latest typescript-eslint@latest && npx eslint .; then
-            echo "compatible=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::typescript@${{ steps.versions.outputs.latest }} is not yet compatible with typescript-eslint"
-            echo "compatible=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: bash ../.github/scripts/typescript-compat-try.sh
+        env:
+          LATEST: ${{ steps.versions.outputs.latest }}
 
       - name: Open PR to allow TypeScript major updates
         if: steps.compat.outputs.compatible == 'true'
@@ -71,32 +56,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.TS_COMPAT_PR_TOKEN }}
           LATEST: ${{ steps.versions.outputs.latest }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::typescript@$LATEST works with typescript-eslint, but the TS_COMPAT_PR_TOKEN secret isn't set so the PR can't be created."
-            exit 1
-          fi
-
-          if [ "$(gh pr list --head "$BRANCH" --state open --json number --jq length)" != "0" ]; then
-            echo "PR already open, nothing to do."
-            exit 0
-          fi
-
-          git checkout -- frontend
-          sed -i '/# BEGIN typescript-major-ignore/,/# END typescript-major-ignore/d' .github/dependabot.yml
-          git rm -q .github/workflows/typescript-eslint-compat.yml
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
-          git commit -am "Allow dependabot TypeScript major updates" \
-            -m "typescript@$LATEST now works with the latest typescript-eslint."
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$BRANCH"
-
-          gh pr create --base main --head "$BRANCH" \
-            --title "Allow dependabot TypeScript major updates" \
-            --body "The nightly TypeScript/ESLint compatibility check found that \`typescript@$LATEST\` now installs and lints cleanly with the latest \`typescript-eslint\`.
-
-          This PR:
-          - removes the dependabot ignore rule for TypeScript major updates, so dependabot will open the upgrade PR
-          - deletes the nightly \`typescript-eslint-compat\` workflow, which is no longer needed"
+        run: bash .github/scripts/typescript-compat-open-pr.sh
