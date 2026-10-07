@@ -520,7 +520,10 @@ jobs:
         env:
           AZURE_STORAGE_ACCOUNT_NAME: ${{ steps.infra.outputs['storage-account-name'] }}
 
+      # It normally takes under a minute, but its system package download has hung for good, so it times out
+      # instead of holding the job until the job's own timeout.
       - name: Install Playwright browser
+        timeout-minutes: 5
         run: npx playwright install chromium --with-deps
         working-directory: frontend
 
