@@ -6,11 +6,12 @@ export type Checklist = {
 }
 
 // What a step asks for when the checklist is filled out.
-export type StepType = 'Checkbox' | 'Text'
+export type StepType = 'Checkbox' | 'Text' | 'Number'
 
 export const stepTypeLabels: Record<StepType, string> = {
   Checkbox: 'Checkbox',
   Text: 'Text input',
+  Number: 'Number',
 }
 
 export type ChecklistStep = {

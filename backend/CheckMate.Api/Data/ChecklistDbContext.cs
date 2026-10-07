@@ -85,5 +85,9 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
         modelBuilder.Entity<RunStepResponse>()
             .Property(response => response.ResponseText)
             .HasMaxLength(1000);
+
+        modelBuilder.Entity<RunStepResponse>()
+            .Property(response => response.ResponseNumber)
+            .HasPrecision(18, 6);
     }
 }

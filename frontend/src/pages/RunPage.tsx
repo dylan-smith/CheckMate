@@ -14,6 +14,7 @@ import Typography from '@mui/material/Typography'
 import { Link, useParams } from 'react-router'
 import { ApiError, describeFetchError } from '../api/checklists'
 import { completeRun, getRun, saveRunStep } from '../api/runs'
+import type { StepType } from '../api/checklists'
 import type { ChecklistRun, RunStep, RunStepUpdate } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
 import NotFoundPage from './NotFoundPage'
@@ -23,25 +24,93 @@ function formatDateTime(value: string) {
   return new Date(value).toLocaleString()
 }
 
-type TextStepFieldProps = {
-  step: RunStep
-  disabled: boolean
-  saving: boolean
-  onSave: (text: string) => Promise<RunStep | null>
+// A draft that can be saved, as the field shows it once saved and as it's sent, or why it can't be saved.
+type ParsedDraft = { value: string; update: RunStepUpdate } | { error: string }
+
+// How a step that takes a typed value shows, checks and sends it.
+type InputKind = {
+  inputMode: 'text' | 'decimal'
+  maxLength: number
+  format: (step: RunStep) => string
+  parse: (draft: string) => ParsedDraft
 }
 
-// Saved when the field loses focus or Enter is pressed, and only if the text changed.
-function TextStepField({ step, disabled, saving, onSave }: TextStepFieldProps) {
-  const [draft, setDraft] = useState(step.responseText ?? '')
+// Matches the API, which keeps numbers with up to 12 digits before the decimal point and 6 after it.
+const numberPattern = /^[-+]?(\d+\.?\d*|\.\d+)$/
+
+function parseNumber(draft: string): ParsedDraft {
+  const trimmed = draft.trim()
+  if (trimmed === '') {
+    return { value: '', update: { number: null } }
+  }
+  if (!numberPattern.test(trimmed)) {
+    return { error: 'Enter a number, like 12 or -3.5.' }
+  }
+  const [whole, fraction = ''] = trimmed.replace(/^[-+]/, '').split('.')
+  if (
+    whole.replace(/^0+/, '').length > 12 ||
+    fraction.replace(/0+$/, '').length > 6
+  ) {
+    return {
+      error: 'Use at most 12 digits before the decimal point and 6 after it.',
+    }
+  }
+  const number = Number(trimmed)
+  return { value: String(number), update: { number } }
+}
+
+const inputKinds: Partial<Record<StepType, InputKind>> = {
+  Text: {
+    inputMode: 'text',
+    maxLength: 1000,
+    format: (step) => step.responseText ?? '',
+    parse: (draft) => ({ value: draft.trim(), update: { text: draft } }),
+  },
+  Number: {
+    inputMode: 'decimal',
+    maxLength: 30,
+    format: (step) =>
+      step.responseNumber === null ? '' : String(step.responseNumber),
+    parse: parseNumber,
+  },
+}
+
+type InputStepFieldProps = {
+  step: RunStep
+  kind: InputKind
+  disabled: boolean
+  saving: boolean
+  onSave: (update: RunStepUpdate) => Promise<RunStep | null>
+}
+
+// Saved when the field loses focus or Enter is pressed, and only if the value changed.
+function InputStepField({
+  step,
+  kind,
+  disabled,
+  saving,
+  onSave,
+}: InputStepFieldProps) {
+  const [draft, setDraft] = useState(kind.format(step))
+  const [error, setError] = useState('')
 
   async function save() {
-    if (disabled || saving || draft.trim() === (step.responseText ?? '')) {
+    if (disabled || saving) {
       return
     }
-    const saved = await onSave(draft)
-    // Show the value as saved, trimmed. A failed save keeps what was typed so it can be tried again.
+    const parsed = kind.parse(draft)
+    if ('error' in parsed) {
+      setError(parsed.error)
+      return
+    }
+    setError('')
+    if (parsed.value === kind.format(step)) {
+      return
+    }
+    const saved = await onSave(parsed.update)
+    // Show the value as saved, such as trimmed. A failed save keeps what was typed so it can be tried again.
     if (saved) {
-      setDraft(saved.responseText ?? '')
+      setDraft(kind.format(saved))
     }
   }
 
@@ -57,12 +126,20 @@ function TextStepField({ step, disabled, saving, onSave }: TextStepFieldProps) {
       <TextField
         label={step.text}
         // Once the run is read-only, show what was saved rather than anything typed since.
-        value={disabled ? (step.responseText ?? '') : draft}
+        value={disabled ? kind.format(step) : draft}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => void save()}
         disabled={disabled}
+        error={error !== '' && !disabled}
+        helperText={disabled ? undefined : error || undefined}
         // Read-only rather than disabled while saving, so pressing Enter doesn't lose focus.
-        slotProps={{ htmlInput: { maxLength: 1000, readOnly: saving } }}
+        slotProps={{
+          htmlInput: {
+            inputMode: kind.inputMode,
+            maxLength: kind.maxLength,
+            readOnly: saving,
+          },
+        }}
         size="small"
         fullWidth
       />
@@ -283,17 +360,19 @@ function RunView({ id }: { id: number }) {
                   const { stepId } = step
                   // A step deleted from the checklist can't be saved any more.
                   const disabled = isComplete || completing || stepId === null
+                  const kind = inputKinds[step.type]
                   return (
                     <ListItem key={stepId ?? `deleted-${index}`} disableGutters>
-                      {step.type === 'Text' ? (
-                        <TextStepField
+                      {kind ? (
+                        <InputStepField
                           step={step}
+                          kind={kind}
                           disabled={disabled}
                           saving={stepId !== null && savingStepIds.has(stepId)}
-                          onSave={(text) =>
+                          onSave={(update) =>
                             stepId === null
                               ? Promise.resolve(null)
-                              : handleSave(stepId, { text })
+                              : handleSave(stepId, update)
                           }
                         />
                       ) : (

@@ -10,5 +10,8 @@ public enum StepType
     Checkbox,
 
     /// <summary>Done once some text has been entered.</summary>
-    Text
+    Text,
+
+    /// <summary>Done once a number has been entered.</summary>
+    Number
 }
