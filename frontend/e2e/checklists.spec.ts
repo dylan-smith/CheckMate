@@ -339,20 +339,20 @@ test.describe('Checklist management', () => {
   })
 
   test.describe('Fill out', () => {
-    // Creates a checklist with steps through the API and returns its id.
+    // Creates a checklist with steps through the API and returns its id. A step is its text, or its text and type.
     async function createChecklistWithSteps(
       request: APIRequestContext,
       name: string,
-      stepTexts: string[],
+      steps: (string | { text: string; type: string })[],
     ) {
       const response = await request.post(checklistsApiUrl, { data: { name } })
       expect(response.ok()).toBe(true)
       const { id } = (await response.json()) as { id: number }
       const stepIds: number[] = []
-      for (const text of stepTexts) {
+      for (const step of steps) {
         const stepResponse = await request.post(
           `${checklistsApiUrl}/${id}/steps`,
-          { data: { text } },
+          { data: typeof step === 'string' ? { text: step } : step },
         )
         expect(stepResponse.ok()).toBe(true)
         stepIds.push(((await stepResponse.json()) as { id: number }).id)
@@ -415,6 +415,130 @@ test.describe('Checklist management', () => {
       await expect(page.getByRole('button', { name: 'Complete' })).toBeHidden()
       await expect(unlock).toBeChecked()
       await expect(unlock).toBeDisabled()
+    })
+
+    test('a text step is saved, resumes after a reload, and shows once complete', async ({
+      page,
+    }) => {
+      await createChecklist(page, 'Closing up')
+      await openChecklist(page, 'Closing up')
+      await page.getByLabel('New step').fill('Lock door')
+      await page.getByRole('button', { name: 'Add step' }).click()
+      await expect(page.getByText('Lock door')).toBeVisible()
+      await page.getByLabel('New step').fill('Cash in till')
+      await page.getByRole('combobox', { name: 'Type' }).click()
+      await page.getByRole('option', { name: 'Text input' }).click()
+      await page.getByRole('button', { name: 'Add step' }).click()
+      await expect(page.getByRole('listitem').nth(1)).toContainText(
+        'Cash in tillText input',
+      )
+
+      await page.reload()
+      await expect(page.getByRole('listitem').nth(1)).toContainText(
+        'Cash in tillText input',
+      )
+
+      await page.getByRole('button', { name: 'Fill out' }).click()
+      await expect(page).toHaveURL(/\/runs\/\d+$/)
+      const cash = page.getByRole('textbox', { name: 'Cash in till' })
+      await cash.fill('  $250  ')
+      await cash.press('Enter')
+      await expect(page.getByText('1 of 2 done')).toBeVisible()
+      await expect(cash).toHaveValue('$250')
+
+      await page.reload()
+      await expect(cash).toHaveValue('$250')
+      await expect(page.getByText('1 of 2 done')).toBeVisible()
+
+      // Clearing the text marks the step not done again.
+      await cash.fill('')
+      await cash.blur()
+      await expect(page.getByText('0 of 2 done')).toBeVisible()
+      await cash.fill('$300')
+      await cash.blur()
+      await expect(page.getByText('1 of 2 done')).toBeVisible()
+
+      const runUrl = page.url()
+      await page.getByRole('button', { name: 'Complete' }).click()
+      await expect(page.getByRole('alert')).toHaveText(
+        'Completed "Closing up".',
+      )
+      await page.goto(runUrl)
+      await expect(page.getByText(/^Completed /)).toBeVisible()
+      await expect(cash).toHaveValue('$300')
+      await expect(cash).toBeDisabled()
+    })
+
+    test('a number step accepts decimals and negatives and rejects anything else', async ({
+      page,
+      request,
+    }) => {
+      await createChecklistWithSteps(request, 'Fridge check', [
+        { text: 'Fridge temperature', type: 'Number' },
+      ])
+
+      await page.reload()
+      await page
+        .getByRole('button', { name: 'Fill out "Fridge check"' })
+        .click()
+      await expect(page).toHaveURL(/\/runs\/\d+$/)
+      const temperature = page.getByRole('textbox', {
+        name: 'Fridge temperature',
+      })
+
+      await temperature.fill('cold')
+      await temperature.blur()
+      await expect(
+        page.getByText('Enter a number, like 12 or -3.5.'),
+      ).toBeVisible()
+      await expect(page.getByText('0 of 1 done')).toBeVisible()
+
+      await temperature.fill('-2.75')
+      await temperature.press('Enter')
+      await expect(page.getByText('1 of 1 done')).toBeVisible()
+      await expect(
+        page.getByText('Enter a number, like 12 or -3.5.'),
+      ).toBeHidden()
+
+      await page.reload()
+      await expect(temperature).toHaveValue('-2.75')
+
+      const runUrl = page.url()
+      await page.getByRole('button', { name: 'Complete' }).click()
+      await expect(page.getByRole('alert')).toHaveText(
+        'Completed "Fridge check".',
+      )
+      await page.goto(runUrl)
+      await expect(page.getByText(/^Completed /)).toBeVisible()
+      await expect(temperature).toHaveValue('-2.75')
+      await expect(temperature).toBeDisabled()
+    })
+
+    test('the API rejects a number step value that is not a number', async ({
+      request,
+    }) => {
+      const {
+        id,
+        stepIds: [stepId],
+      } = await createChecklistWithSteps(request, 'Numbers only', [
+        { text: 'Count', type: 'Number' },
+      ])
+      const runResponse = await request.post(`${checklistsApiUrl}/${id}/runs`)
+      expect(runResponse.status()).toBe(201)
+      const { id: runId } = (await runResponse.json()) as { id: number }
+      const stepUrl = `http://localhost:5269/api/runs/${runId}/steps/${stepId}`
+
+      for (const number of ['abc', true, 1.0000001, 1e9, 1e13]) {
+        const response = await request.put(stepUrl, { data: { number } })
+        expect(response.status(), `${String(number)}`).toBe(400)
+      }
+
+      const saved = await request.put(stepUrl, { data: { number: -0.5 } })
+      expect(saved.ok()).toBe(true)
+      expect(await saved.json()).toMatchObject({
+        isDone: true,
+        responseNumber: -0.5,
+      })
     })
 
     test('a completed run rejects changes', async ({ request }) => {

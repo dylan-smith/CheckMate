@@ -67,6 +67,22 @@ public class ChecklistStepsControllerTests
     }
 
     [Fact]
+    public async Task Create_DefaultsToCheckbox_AndSavesTheGivenType()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+
+        var checkbox = await controller.Create(checklist.Id, new ChecklistStepRequest { Text = "Tick" });
+        var text = await controller.Create(checklist.Id, new ChecklistStepRequest { Text = "Notes", Type = StepType.Text });
+
+        Assert.Equal(StepType.Checkbox, Assert.IsType<ChecklistStepResponse>(Assert.IsType<CreatedAtActionResult>(checkbox.Result).Value).Type);
+        Assert.Equal(StepType.Text, Assert.IsType<ChecklistStepResponse>(Assert.IsType<CreatedAtActionResult>(text.Result).Value).Type);
+        var savedTypes = await dbContext.ChecklistSteps.OrderBy(step => step.SortOrder).Select(step => step.Type).ToListAsync();
+        Assert.Equal([StepType.Checkbox, StepType.Text], savedTypes);
+    }
+
+    [Fact]
     public async Task Create_ReturnsValidationProblem_WhenTextIsWhitespace()
     {
         await using var dbContext = CreateDbContext();
@@ -104,6 +120,21 @@ public class ChecklistStepsControllerTests
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         Assert.Equal("New", Assert.IsType<ChecklistStepResponse>(okResult.Value).Text);
         Assert.Equal("New", (await dbContext.ChecklistSteps.SingleAsync()).Text);
+    }
+
+    [Fact]
+    public async Task Update_ChangesType()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Notes");
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Update(checklist.Id, step.Id, new ChecklistStepRequest { Text = "Notes", Type = StepType.Text });
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(StepType.Text, Assert.IsType<ChecklistStepResponse>(okResult.Value).Type);
+        Assert.Equal(StepType.Text, (await dbContext.ChecklistSteps.SingleAsync()).Type);
     }
 
     [Fact]

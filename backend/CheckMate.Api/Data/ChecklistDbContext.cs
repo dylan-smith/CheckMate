@@ -38,6 +38,10 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
             .HasMaxLength(500)
             .IsRequired();
 
+        modelBuilder.Entity<ChecklistStep>()
+            .Property(step => step.Type)
+            .HasColumnName("StepType");
+
         modelBuilder.Entity<ChecklistRun>()
             .HasOne<Checklist>()
             .WithMany()
@@ -70,5 +74,13 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
             .Property(step => step.StepText)
             .HasMaxLength(500)
             .IsRequired();
+
+        modelBuilder.Entity<ChecklistRunStep>()
+            .Property(step => step.ResponseText)
+            .HasMaxLength(1000);
+
+        modelBuilder.Entity<ChecklistRunStep>()
+            .Property(step => step.ResponseNumber)
+            .HasPrecision(15, 6);
     }
 }

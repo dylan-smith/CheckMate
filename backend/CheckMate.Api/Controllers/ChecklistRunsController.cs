@@ -16,6 +16,11 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 {
     private const string CompletedRunMessage = "This run is complete and can't be changed.";
 
+    private const string NumberLimitsMessage =
+        "The number must have at most 9 digits before the decimal point and 6 after it.";
+
+    private const decimal MaxResponseNumber = 1_000_000_000m;
+
     [HttpPost("~/api/checklists/{checklistId:int}/runs")]
     public async Task<ActionResult<ChecklistRunResponse>> Start(int checklistId)
     {
@@ -36,7 +41,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             .ThenBy(step => step.Id)
             .ToListAsync();
 
-        // Copy each step's text and position into the run, so later edits to the checklist don't change it.
+        // Copy each step's text, type and position into the run, so later edits to the checklist don't change it.
         var run = new ChecklistRun
         {
             ChecklistId = checklistId,
@@ -45,6 +50,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             {
                 StepId = step.Id,
                 StepText = step.Text,
+                StepType = step.Type,
                 SortOrder = index
             })]
         };
@@ -102,11 +108,15 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return Conflict(new { message = CompletedRunMessage });
         }
 
-        if (runStep.IsDone != request.IsDone)
+        // A value that isn't a number at all is already rejected when the request is read.
+        if (runStep.StepType == StepType.Number && request.Number is decimal number && !FitsResponseNumber(number))
         {
-            runStep.IsDone = request.IsDone;
-            runStep.CompletedAt = request.IsDone ? DateTimeOffset.UtcNow : null;
+            logger.LogWarning("Rejected number for step {StepId} in run {RunId} that doesn't fit", stepId, runId);
+            ModelState.AddModelError(nameof(request.Number), NumberLimitsMessage);
+            return ValidationProblem(ModelState);
         }
+
+        ApplyResponse(runStep, request);
 
         // Write the run's CompletedAt back unchanged, so the save checks the run is still open in the same
         // transaction (see IsConcurrencyToken in ChecklistDbContext) and can't change a run completed since it was read.
@@ -162,6 +172,40 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         logger.LogInformation("Completed run {RunId}", runId);
 
         return Ok(ToResponse(run, await GetChecklistNameAsync(run.ChecklistId)));
+    }
+
+    // Matches the DECIMAL(15, 6) ResponseNumber column, which would otherwise round or overflow.
+    private static bool FitsResponseNumber(decimal number)
+    {
+        return Math.Abs(number) < MaxResponseNumber && decimal.Round(number, 6) == number;
+    }
+
+    // Each step type reads its own field of the request and decides from it whether the step is done.
+    private static void ApplyResponse(ChecklistRunStep runStep, RunStepRequest request)
+    {
+        bool isDone;
+
+        switch (runStep.StepType)
+        {
+            case StepType.Text:
+                var trimmedText = request.Text?.Trim();
+                runStep.ResponseText = string.IsNullOrEmpty(trimmedText) ? null : trimmedText;
+                isDone = runStep.ResponseText is not null;
+                break;
+            case StepType.Number:
+                runStep.ResponseNumber = request.Number;
+                isDone = runStep.ResponseNumber is not null;
+                break;
+            default:
+                isDone = request.IsDone;
+                break;
+        }
+
+        if (runStep.IsDone != isDone)
+        {
+            runStep.IsDone = isDone;
+            runStep.CompletedAt = isDone ? DateTimeOffset.UtcNow : null;
+        }
     }
 
     private async Task<string> GetChecklistNameAsync(int checklistId)
