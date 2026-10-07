@@ -12,7 +12,7 @@ param sqlServerName = 'checkmate-preview-sql'
 
 // The checkmate-preview-deploy managed identity (see README, Identities & Permissions)
 param sqlEntraAdminLogin = 'checkmate-preview-deploy'
-param sqlEntraAdminObjectId = '00000000-0000-0000-0000-000000000000'
+param sqlEntraAdminObjectId = '48ab6f58-454d-4a88-870f-18d071bf38ff'
 
 // The free offer covers 10 databases per subscription, one of which is production's. Turn this off if a
 // deployment fails because they're used up (an existing database keeps the setting it was created with).
