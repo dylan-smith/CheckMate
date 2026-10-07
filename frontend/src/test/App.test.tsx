@@ -661,8 +661,20 @@ describe('App', () => {
       id: 1,
       name: 'Morning',
       steps: [
-        { id: 10, text: 'Make coffee', type: 'Checkbox', sortOrder: 0 },
-        { id: 11, text: 'Read email', type: 'Checkbox', sortOrder: 1 },
+        {
+          id: 10,
+          text: 'Make coffee',
+          type: 'Checkbox',
+          sortOrder: 0,
+          options: [],
+        },
+        {
+          id: 11,
+          text: 'Read email',
+          type: 'Checkbox',
+          sortOrder: 1,
+          options: [],
+        },
       ],
     }
 
@@ -691,7 +703,13 @@ describe('App', () => {
       mockFetch(async (_url, init) => {
         if (init?.method === 'POST') {
           return jsonResponse(
-            { id: 12, text: 'Walk dog', type: 'Checkbox', sortOrder: 2 },
+            {
+              id: 12,
+              text: 'Walk dog',
+              type: 'Checkbox',
+              sortOrder: 2,
+              options: [],
+            },
             201,
           )
         }
@@ -713,7 +731,11 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps$/),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ text: 'Walk dog', type: 'Checkbox' }),
+          body: JSON.stringify({
+            text: 'Walk dog',
+            type: 'Checkbox',
+            options: [],
+          }),
         }),
       )
       expect(trackEvent).toHaveBeenCalledWith('StepAdded')
@@ -769,6 +791,7 @@ describe('App', () => {
             text: 'Make tea',
             type: 'Checkbox',
             sortOrder: 0,
+            options: [],
           })
         }
         return jsonResponse(checklistWithSteps)
@@ -793,7 +816,11 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps\/10$/),
         expect.objectContaining({
           method: 'PUT',
-          body: JSON.stringify({ text: 'Make tea', type: 'Checkbox' }),
+          body: JSON.stringify({
+            text: 'Make tea',
+            type: 'Checkbox',
+            options: [],
+          }),
         }),
       )
       expect(trackEvent).toHaveBeenCalledWith('StepUpdated')
@@ -929,8 +956,20 @@ describe('App', () => {
       mockFetch(async (_url, init) => {
         if (init?.method === 'PUT') {
           return jsonResponse([
-            { id: 11, text: 'Read email', type: 'Checkbox', sortOrder: 0 },
-            { id: 10, text: 'Make coffee', type: 'Checkbox', sortOrder: 1 },
+            {
+              id: 11,
+              text: 'Read email',
+              type: 'Checkbox',
+              sortOrder: 0,
+              options: [],
+            },
+            {
+              id: 10,
+              text: 'Make coffee',
+              type: 'Checkbox',
+              sortOrder: 1,
+              options: [],
+            },
           ])
         }
         return jsonResponse(checklistWithSteps)
@@ -1035,7 +1074,7 @@ describe('App', () => {
       mockFetch(async (_url, init) => {
         if (init?.method === 'POST') {
           return jsonResponse(
-            { id: 12, text: 'Notes', type: 'Text', sortOrder: 2 },
+            { id: 12, text: 'Notes', type: 'Text', sortOrder: 2, options: [] },
             201,
           )
         }
@@ -1070,7 +1109,7 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps$/),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ text: 'Notes', type: 'Text' }),
+          body: JSON.stringify({ text: 'Notes', type: 'Text', options: [] }),
         }),
       )
     })
@@ -1085,6 +1124,7 @@ describe('App', () => {
             text: 'Make coffee',
             type: 'Text',
             sortOrder: 0,
+            options: [],
           })
         }
         return jsonResponse(checklistWithSteps)
@@ -1110,7 +1150,157 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps\/10$/),
         expect.objectContaining({
           method: 'PUT',
-          body: JSON.stringify({ text: 'Make coffee', type: 'Text' }),
+          body: JSON.stringify({
+            text: 'Make coffee',
+            type: 'Text',
+            options: [],
+          }),
+        }),
+      )
+    })
+
+    it('adds a multiple choice step with its options in order', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse(
+            {
+              id: 12,
+              text: 'Weather',
+              type: 'Choice',
+              sortOrder: 2,
+              options: [
+                { id: 1, text: 'Rainy' },
+                { id: 2, text: 'Sunny' },
+                { id: 3, text: 'Snowy' },
+              ],
+            },
+            201,
+          )
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      await user.type(await screen.findByLabelText('New step'), 'Weather')
+      await user.click(screen.getByRole('combobox', { name: 'Type' }))
+      await user.click(screen.getByRole('option', { name: 'Multiple choice' }))
+      // A choice step starts with two blank options, which can't be removed below two.
+      expect(
+        screen.getByRole('button', { name: 'Remove option 1' }),
+      ).toBeDisabled()
+      await user.type(screen.getByLabelText('Option 1'), ' Sunny ')
+      await user.type(screen.getByLabelText('Option 2'), 'Rainy')
+      await user.click(screen.getByRole('button', { name: 'Add option' }))
+      // The new option's field takes focus.
+      await user.keyboard('Snowy')
+      await user.click(screen.getByRole('button', { name: 'Move option 2 up' }))
+      expect(screen.getByLabelText('Option 1')).toHaveValue('Rainy')
+      await user.click(screen.getByRole('button', { name: 'Add step' }))
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('listitem')).toHaveLength(3)
+      })
+      expect(screen.getAllByRole('listitem')[2]).toHaveTextContent(
+        'WeatherMultiple choice: Rainy, Sunny, Snowy',
+      )
+      // The options go away with the type, ready for the next step.
+      expect(screen.queryByLabelText('Option 1')).not.toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/1\/steps$/),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            text: 'Weather',
+            type: 'Choice',
+            options: [{ text: 'Rainy' }, { text: 'Sunny' }, { text: 'Snowy' }],
+          }),
+        }),
+      )
+    })
+
+    it.each([
+      ['an option is blank', 'Sunny', ' ', 'Option text is required.'],
+      ['two options match', 'Sunny', 'sunny', 'Each option must be different.'],
+    ])(
+      "doesn't add a multiple choice step when %s",
+      async (_case, first, second, message) => {
+        const user = userEvent.setup()
+        mockFetch(async () => jsonResponse(checklistWithSteps))
+
+        renderAt('/checklists/1')
+
+        await user.type(await screen.findByLabelText('New step'), 'Weather')
+        await user.click(screen.getByRole('combobox', { name: 'Type' }))
+        await user.click(
+          screen.getByRole('option', { name: 'Multiple choice' }),
+        )
+        await user.type(screen.getByLabelText('Option 1'), first)
+        await user.type(screen.getByLabelText('Option 2'), second)
+        await user.click(screen.getByRole('button', { name: 'Add step' }))
+
+        expect(await screen.findByText(message)).toBeInTheDocument()
+        expect(fetch).toHaveBeenCalledTimes(1)
+      },
+    )
+
+    it("edits a multiple choice step's options, keeping their ids", async () => {
+      const user = userEvent.setup()
+      const choiceStep = {
+        id: 10,
+        text: 'Weather',
+        type: 'Choice',
+        sortOrder: 0,
+        options: [
+          { id: 1, text: 'Sunny' },
+          { id: 2, text: 'Rainy' },
+          { id: 3, text: 'Snowy' },
+        ],
+      }
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return jsonResponse({
+            ...choiceStep,
+            options: [
+              { id: 1, text: 'Bright' },
+              { id: 3, text: 'Snowy' },
+            ],
+          })
+        }
+        return jsonResponse({ id: 1, name: 'Morning', steps: [choiceStep] })
+      })
+
+      renderAt('/checklists/1')
+
+      await user.click(
+        await screen.findByRole('button', { name: 'Edit step "Weather"' }),
+      )
+      const first = screen.getByLabelText('Option 1')
+      await user.clear(first)
+      await user.type(first, 'Bright')
+      await user.click(screen.getByRole('button', { name: 'Remove option 2' }))
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
+          'WeatherMultiple choice: Bright, Snowy',
+        )
+      })
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/1\/steps\/10$/),
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({
+            text: 'Weather',
+            type: 'Choice',
+            options: [
+              { id: 1, text: 'Bright' },
+              { id: 3, text: 'Snowy' },
+            ],
+          }),
         }),
       )
     })
@@ -2046,6 +2236,169 @@ describe('App', () => {
         })
         expect(field).toHaveValue('-2.25')
         expect(field).toBeDisabled()
+      })
+    })
+
+    describe('multiple choice steps', () => {
+      const weather = {
+        stepId: 13,
+        text: 'Weather',
+        type: 'Choice',
+        isDone: false,
+        completedAt: null,
+        responseText: null,
+        responseNumber: null,
+        options: [
+          { id: 1, text: 'Sunny' },
+          { id: 2, text: 'Rainy' },
+        ],
+        selectedOptionId: null,
+        selectedOptionText: null,
+      }
+      const choiceRun = { ...run, steps: [weather] }
+      const picked = {
+        ...weather,
+        isDone: true,
+        completedAt: '2026-10-06T08:05:00Z',
+        selectedOptionId: 2,
+        selectedOptionText: 'Rainy',
+      }
+
+      it('saves a picked option straight away and can clear it', async () => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async (_url, init) => {
+          if (init?.method === 'PUT') {
+            const body = JSON.parse(init.body as string) as {
+              optionId: number | null
+            }
+            return jsonResponse(body.optionId === null ? weather : picked)
+          }
+          return jsonResponse(choiceRun)
+        })
+
+        renderAt('/runs/5')
+        const group = await screen.findByRole('group', { name: 'Weather' })
+        expect(group).toBeInTheDocument()
+        await user.click(screen.getByRole('radio', { name: 'Rainy' }))
+
+        expect(screen.getByRole('radio', { name: 'Rainy' })).toBeChecked()
+        expect(await screen.findByText('1 of 1 done')).toBeInTheDocument()
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({ optionId: 2 }),
+          }),
+        )
+
+        await user.click(
+          await screen.findByRole('button', { name: 'Clear "Weather"' }),
+        )
+
+        expect(await screen.findByText('0 of 1 done')).toBeInTheDocument()
+        expect(screen.getByRole('radio', { name: 'Rainy' })).not.toBeChecked()
+        expect(fetchMock).toHaveBeenLastCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
+          expect.objectContaining({
+            body: JSON.stringify({ optionId: null }),
+          }),
+        )
+      })
+
+      it('undoes a pick that fails to save', async () => {
+        const user = userEvent.setup()
+        mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? new Response(null, { status: 500 })
+            : jsonResponse(choiceRun),
+        )
+
+        renderAt('/runs/5')
+        await user.click(await screen.findByRole('radio', { name: 'Sunny' }))
+
+        expect(
+          await screen.findByText('Unable to save step.'),
+        ).toBeInTheDocument()
+        expect(screen.getByRole('radio', { name: 'Sunny' })).not.toBeChecked()
+      })
+
+      it('shows a dropdown when there are many options', async () => {
+        const user = userEvent.setup()
+        const options = ['A', 'B', 'C', 'D', 'E', 'F'].map((text, index) => ({
+          id: index + 1,
+          text,
+        }))
+        const fetchMock = mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? jsonResponse({
+                ...weather,
+                options,
+                isDone: true,
+                selectedOptionId: 6,
+                selectedOptionText: 'F',
+              })
+            : jsonResponse({ ...run, steps: [{ ...weather, options }] }),
+        )
+
+        renderAt('/runs/5')
+        await user.click(
+          await screen.findByRole('combobox', { name: 'Weather' }),
+        )
+        await user.click(screen.getByRole('option', { name: 'F' }))
+
+        expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+        expect(await screen.findByText('1 of 1 done')).toBeInTheDocument()
+        expect(
+          screen.getByRole('combobox', { name: 'Weather' }),
+        ).toHaveTextContent('F')
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
+          expect.objectContaining({ body: JSON.stringify({ optionId: 6 }) }),
+        )
+      })
+
+      it('says when the picked option has since been removed', async () => {
+        mockFetch(async () =>
+          jsonResponse({
+            ...run,
+            steps: [{ ...picked, selectedOptionId: null }],
+          }),
+        )
+
+        renderAt('/runs/5')
+
+        expect(
+          await screen.findByText(
+            `"Rainy" was picked, but it's no longer an option.`,
+          ),
+        ).toBeInTheDocument()
+        expect(screen.getByRole('radio', { name: 'Rainy' })).not.toBeChecked()
+      })
+
+      it('shows the option picked when the run was filled out once complete', async () => {
+        mockFetch(async () =>
+          jsonResponse({
+            ...run,
+            completedAt: '2026-10-06T08:30:00Z',
+            // The option was renamed since, which doesn't change the run.
+            steps: [
+              {
+                ...picked,
+                options: [
+                  { id: 1, text: 'Sunny' },
+                  { id: 2, text: 'Raining' },
+                ],
+              },
+            ],
+          }),
+        )
+
+        renderAt('/runs/5')
+
+        const field = await screen.findByRole('textbox', { name: 'Weather' })
+        expect(field).toHaveValue('Rainy')
+        expect(field).toBeDisabled()
+        expect(screen.queryByRole('radio')).not.toBeInTheDocument()
       })
     })
 

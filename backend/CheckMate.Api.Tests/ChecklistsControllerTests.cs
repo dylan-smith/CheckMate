@@ -109,7 +109,14 @@ public class ChecklistsControllerTests
         await dbContext.SaveChangesAsync();
 
         dbContext.ChecklistSteps.AddRange(
-            new ChecklistStep { ChecklistId = checklist.Id, Text = "Second", Type = StepType.Text, SortOrder = 1 },
+            new ChecklistStep
+            {
+                ChecklistId = checklist.Id,
+                Text = "Second",
+                Type = StepType.Choice,
+                SortOrder = 1,
+                Options = [new StepOption { Text = "B", SortOrder = 1 }, new StepOption { Text = "A", SortOrder = 0 }]
+            },
             new ChecklistStep { ChecklistId = checklist.Id, Text = "First", SortOrder = 0 },
             new ChecklistStep { ChecklistId = other.Id, Text = "Elsewhere", SortOrder = 0 });
         await dbContext.SaveChangesAsync();
@@ -124,7 +131,11 @@ public class ChecklistsControllerTests
         Assert.Equal("Daily", returnedChecklist.Name);
         Assert.Collection(returnedChecklist.Steps,
             step => Assert.Equal(("First", StepType.Checkbox), (step.Text, step.Type)),
-            step => Assert.Equal(("Second", StepType.Text), (step.Text, step.Type)));
+            step =>
+            {
+                Assert.Equal(("Second", StepType.Choice), (step.Text, step.Type));
+                Assert.Equal(["A", "B"], step.Options.Select(option => option.Text));
+            });
     }
 
     [Fact]
@@ -187,7 +198,14 @@ public class ChecklistsControllerTests
         dbContext.Checklists.AddRange(checklist, other);
         await dbContext.SaveChangesAsync();
 
-        var step = new ChecklistStep { ChecklistId = checklist.Id, Text = "Step", SortOrder = 0 };
+        var step = new ChecklistStep
+        {
+            ChecklistId = checklist.Id,
+            Text = "Step",
+            Type = StepType.Choice,
+            SortOrder = 0,
+            Options = [new StepOption { Text = "Yes", SortOrder = 0 }, new StepOption { Text = "No", SortOrder = 1 }]
+        };
         dbContext.ChecklistSteps.Add(step);
         await dbContext.SaveChangesAsync();
 
@@ -195,7 +213,14 @@ public class ChecklistsControllerTests
             new ChecklistRun
             {
                 ChecklistId = checklist.Id,
-                Steps = [new ChecklistRunStep { StepId = step.Id, StepText = step.Text }]
+                Steps = [new ChecklistRunStep
+                {
+                    StepId = step.Id,
+                    StepText = step.Text,
+                    StepType = StepType.Choice,
+                    SelectedOptionId = step.Options[0].Id,
+                    SelectedOptionText = "Yes"
+                }]
             },
             new ChecklistRun { ChecklistId = other.Id });
         await dbContext.SaveChangesAsync();
@@ -208,6 +233,7 @@ public class ChecklistsControllerTests
         Assert.IsType<NoContentResult>(result);
         Assert.Equal(other.Id, (await dbContext.ChecklistRuns.SingleAsync()).ChecklistId);
         Assert.False(await dbContext.ChecklistRunSteps.AnyAsync());
+        Assert.False(await dbContext.StepOptions.AnyAsync());
     }
 
     [Fact]

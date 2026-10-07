@@ -22,7 +22,11 @@ import {
   stepTypes,
   updateStep,
 } from '../api/checklists'
-import type { ChecklistStep, StepType } from '../api/checklists'
+import type {
+  ChecklistStep,
+  StepOptionInput,
+  StepType,
+} from '../api/checklists'
 import { trackEvent, trackException } from '../telemetry'
 
 type ChecklistStepsProps = {
@@ -68,13 +72,167 @@ function StepTypeField({ id, value, onChange }: StepTypeFieldProps) {
   )
 }
 
+// An option being edited. key tells the fields apart, including new options that have no id yet.
+type OptionDraft = StepOptionInput & { key: number }
+
+// Matches the API.
+const minOptions = 2
+const maxOptions = 50
+
+let nextOptionKey = 0
+
+function toDraft(option: StepOptionInput): OptionDraft {
+  nextOptionKey += 1
+  return { ...option, key: nextOptionKey }
+}
+
+function blankOptions() {
+  return Array.from({ length: minOptions }, () => toDraft({ text: '' }))
+}
+
+// The options trimmed, ready to send, or why they can't be saved.
+function checkOptions(
+  options: OptionDraft[],
+): { options: StepOptionInput[] } | { error: string } {
+  const trimmed = options.map(({ id, text }) => ({ id, text: text.trim() }))
+  if (trimmed.length < minOptions) {
+    return {
+      error: `A multiple choice step needs at least ${minOptions} options.`,
+    }
+  }
+  if (trimmed.some((option) => !option.text)) {
+    return { error: 'Option text is required.' }
+  }
+  const distinct = new Set(trimmed.map((option) => option.text.toLowerCase()))
+  if (distinct.size !== trimmed.length) {
+    return { error: 'Each option must be different.' }
+  }
+  return { options: trimmed }
+}
+
+type OptionsEditorProps = {
+  idPrefix: string
+  options: OptionDraft[]
+  onChange: (options: OptionDraft[]) => void
+}
+
+// Lists a choice step's options, each of which can be edited, moved or removed, and adds new ones.
+function OptionsEditor({ idPrefix, options, onChange }: OptionsEditorProps) {
+  // A new option's field takes focus once it renders.
+  const focusKey = useRef<number | null>(null)
+
+  function move(index: number, targetIndex: number) {
+    const reordered = [...options]
+    ;[reordered[index], reordered[targetIndex]] = [
+      reordered[targetIndex],
+      reordered[index],
+    ]
+    onChange(reordered)
+  }
+
+  function add() {
+    const option = toDraft({ text: '' })
+    focusKey.current = option.key
+    onChange([...options, option])
+  }
+
+  return (
+    <Box
+      component="fieldset"
+      sx={{ border: 0, m: 0, p: 0, display: 'grid', gap: 1 }}
+    >
+      <Typography component="legend" variant="subtitle2" sx={{ mb: 1 }}>
+        Options
+      </Typography>
+      {options.map((option, index) => {
+        const label = `Option ${index + 1}`
+        return (
+          <Box
+            key={option.key}
+            sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
+          >
+            <TextField
+              id={`${idPrefix}-option-${option.key}`}
+              label={label}
+              value={option.text}
+              onChange={(event) =>
+                onChange(
+                  options.map((item) =>
+                    item.key === option.key
+                      ? { ...item, text: event.target.value }
+                      : item,
+                  ),
+                )
+              }
+              inputRef={(element: HTMLInputElement | null) => {
+                if (element && focusKey.current === option.key) {
+                  focusKey.current = null
+                  element.focus()
+                }
+              }}
+              slotProps={{ htmlInput: { maxLength: 200 } }}
+              size="small"
+              sx={{ flexGrow: 1 }}
+            />
+            <IconButton
+              size="small"
+              color="primary"
+              sx={{ fontWeight: 'bold' }}
+              disabled={index === 0}
+              aria-label={`Move ${label.toLowerCase()} up`}
+              onClick={() => move(index, index - 1)}
+            >
+              <span aria-hidden="true">↑</span>
+            </IconButton>
+            <IconButton
+              size="small"
+              color="primary"
+              sx={{ fontWeight: 'bold' }}
+              disabled={index === options.length - 1}
+              aria-label={`Move ${label.toLowerCase()} down`}
+              onClick={() => move(index, index + 1)}
+            >
+              <span aria-hidden="true">↓</span>
+            </IconButton>
+            <Button
+              type="button"
+              size="small"
+              color="error"
+              // A choice step always needs at least two options.
+              disabled={options.length <= minOptions}
+              aria-label={`Remove ${label.toLowerCase()}`}
+              onClick={() =>
+                onChange(options.filter((item) => item.key !== option.key))
+              }
+            >
+              Remove
+            </Button>
+          </Box>
+        )
+      })}
+      <Box>
+        <Button
+          type="button"
+          size="small"
+          disabled={options.length >= maxOptions}
+          onClick={add}
+        >
+          Add option
+        </Button>
+      </Box>
+    </Box>
+  )
+}
+
 function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
   const [steps, setSteps] = useState(initialSteps)
   const [newText, setNewText] = useState('')
   const [newType, setNewType] = useState<StepType>('Checkbox')
+  const [newOptions, setNewOptions] = useState<OptionDraft[]>([])
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editText, setEditText] = useState('')
   const [editType, setEditType] = useState<StepType>('Checkbox')
+  const [editOptions, setEditOptions] = useState<OptionDraft[]>([])
   // Only one change runs at a time, so the list can't get out of step with the API.
   const [busy, setBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -101,6 +259,34 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     button?.focus()
   }, [busy])
 
+  // Only a choice step sends options. Returns null after showing why they can't be saved.
+  function optionsToSave(type: StepType, options: OptionDraft[]) {
+    if (type !== 'Choice') {
+      return []
+    }
+    const checked = checkOptions(options)
+    if ('error' in checked) {
+      setErrorMessage(checked.error)
+      return null
+    }
+    return checked.options
+  }
+
+  // A step switched to multiple choice starts with blank options to fill in.
+  function changeNewType(type: StepType) {
+    setNewType(type)
+    if (type === 'Choice' && newOptions.length === 0) {
+      setNewOptions(blankOptions())
+    }
+  }
+
+  function changeEditType(type: StepType) {
+    setEditType(type)
+    if (type === 'Choice' && editOptions.length === 0) {
+      setEditOptions(blankOptions())
+    }
+  }
+
   async function handleAdd(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
 
@@ -109,16 +295,26 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
       setErrorMessage('Step text is required.')
       return
     }
+    const options = optionsToSave(newType, newOptions)
+    if (!options) {
+      return
+    }
 
     setBusy(true)
     setErrorMessage('')
 
     try {
-      const created = await createStep(checklistId, trimmedText, newType)
+      const created = await createStep(
+        checklistId,
+        trimmedText,
+        newType,
+        options,
+      )
       trackEvent('StepAdded')
       setSteps((current) => [...current, created])
       setNewText('')
       setNewType('Checkbox')
+      setNewOptions([])
     } catch (error) {
       trackException(error, { operation: 'addStep' })
       setErrorMessage(describeFetchError(error, 'Unable to save step.'))
@@ -131,6 +327,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     setEditingId(step.id)
     setEditText(step.text)
     setEditType(step.type)
+    setEditOptions(step.options.map(toDraft))
     setErrorMessage('')
   }
 
@@ -151,12 +348,22 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
       setErrorMessage('Step text is required.')
       return
     }
+    const options = optionsToSave(editType, editOptions)
+    if (!options) {
+      return
+    }
 
     setBusy(true)
     setErrorMessage('')
 
     try {
-      const saved = await updateStep(checklistId, stepId, trimmedText, editType)
+      const saved = await updateStep(
+        checklistId,
+        stepId,
+        trimmedText,
+        editType,
+        options,
+      )
       trackEvent('StepUpdated')
       setSteps((current) =>
         current.map((step) => (step.id === saved.id ? saved : step)),
@@ -265,40 +472,50 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                 <Box
                   component="form"
                   onSubmit={(event) => void handleUpdate(event, step.id)}
-                  sx={{
-                    display: 'flex',
-                    flexDirection: { xs: 'column', sm: 'row' },
-                    gap: 1,
-                    width: '100%',
-                  }}
+                  sx={{ display: 'grid', gap: 1, width: '100%' }}
                 >
-                  <TextField
-                    id={`step-${step.id}-text`}
-                    label="Step text"
-                    value={editText}
-                    onChange={(event) => setEditText(event.target.value)}
-                    slotProps={{ htmlInput: { maxLength: 500 } }}
-                    required
-                    size="small"
-                    sx={{ flexGrow: 1 }}
-                  />
-                  <StepTypeField
-                    id={`step-${step.id}-type`}
-                    value={editType}
-                    onChange={setEditType}
-                  />
-                  <Stack direction="row" spacing={1}>
-                    <Button type="submit" variant="contained" disabled={busy}>
-                      Save
-                    </Button>
-                    <Button
-                      type="button"
-                      disabled={busy}
-                      onClick={cancelEditing}
-                    >
-                      Cancel
-                    </Button>
-                  </Stack>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      flexDirection: { xs: 'column', sm: 'row' },
+                      gap: 1,
+                    }}
+                  >
+                    <TextField
+                      id={`step-${step.id}-text`}
+                      label="Step text"
+                      value={editText}
+                      onChange={(event) => setEditText(event.target.value)}
+                      slotProps={{ htmlInput: { maxLength: 500 } }}
+                      required
+                      size="small"
+                      sx={{ flexGrow: 1 }}
+                    />
+                    <StepTypeField
+                      id={`step-${step.id}-type`}
+                      value={editType}
+                      onChange={changeEditType}
+                    />
+                    <Stack direction="row" spacing={1}>
+                      <Button type="submit" variant="contained" disabled={busy}>
+                        Save
+                      </Button>
+                      <Button
+                        type="button"
+                        disabled={busy}
+                        onClick={cancelEditing}
+                      >
+                        Cancel
+                      </Button>
+                    </Stack>
+                  </Box>
+                  {editType === 'Choice' && (
+                    <OptionsEditor
+                      idPrefix={`step-${step.id}`}
+                      options={editOptions}
+                      onChange={setEditOptions}
+                    />
+                  )}
                 </Box>
               ) : (
                 <Box
@@ -315,7 +532,9 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                     secondary={
                       step.type === 'Checkbox'
                         ? undefined
-                        : stepTypeLabels[step.type]
+                        : step.type === 'Choice'
+                          ? `${stepTypeLabels.Choice}: ${step.options.map((option) => option.text).join(', ')}`
+                          : stepTypeLabels[step.type]
                     }
                     sx={{ overflowWrap: 'anywhere' }}
                   />
@@ -372,29 +591,40 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
       <Box
         component="form"
         onSubmit={(event) => void handleAdd(event)}
-        sx={{
-          display: 'flex',
-          flexDirection: { xs: 'column', sm: 'row' },
-          gap: 1,
-        }}
+        sx={{ display: 'grid', gap: 1 }}
       >
-        <TextField
-          id="new-step"
-          label="New step"
-          value={newText}
-          onChange={(event) => setNewText(event.target.value)}
-          slotProps={{ htmlInput: { maxLength: 500 } }}
-          size="small"
-          sx={{ flexGrow: 1 }}
-        />
-        <StepTypeField
-          id="new-step-type"
-          value={newType}
-          onChange={setNewType}
-        />
-        <Button type="submit" variant="contained" disabled={busy}>
-          Add step
-        </Button>
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            gap: 1,
+          }}
+        >
+          <TextField
+            id="new-step"
+            label="New step"
+            value={newText}
+            onChange={(event) => setNewText(event.target.value)}
+            slotProps={{ htmlInput: { maxLength: 500 } }}
+            size="small"
+            sx={{ flexGrow: 1 }}
+          />
+          <StepTypeField
+            id="new-step-type"
+            value={newType}
+            onChange={changeNewType}
+          />
+          <Button type="submit" variant="contained" disabled={busy}>
+            Add step
+          </Button>
+        </Box>
+        {newType === 'Choice' && (
+          <OptionsEditor
+            idPrefix="new-step"
+            options={newOptions}
+            onChange={setNewOptions}
+          />
+        )}
       </Box>
     </Paper>
   )

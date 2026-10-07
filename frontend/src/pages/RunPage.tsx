@@ -4,10 +4,16 @@ import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Checkbox from '@mui/material/Checkbox'
 import CircularProgress from '@mui/material/CircularProgress'
+import FormControl from '@mui/material/FormControl'
 import FormControlLabel from '@mui/material/FormControlLabel'
+import FormHelperText from '@mui/material/FormHelperText'
+import FormLabel from '@mui/material/FormLabel'
 import List from '@mui/material/List'
 import ListItem from '@mui/material/ListItem'
+import MenuItem from '@mui/material/MenuItem'
 import Paper from '@mui/material/Paper'
+import Radio from '@mui/material/Radio'
+import RadioGroup from '@mui/material/RadioGroup'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
@@ -194,12 +200,111 @@ function InputStepField({
   )
 }
 
+// More options than this show as a dropdown rather than a radio group.
+const maxRadioOptions = 5
+
+type ChoiceStepFieldProps = {
+  step: RunStep
+  disabled: boolean
+  // Once the run is complete, or the step is deleted, it shows what was picked rather than the options.
+  showSaved: boolean
+  onPick: (optionId: number | null) => void
+}
+
+function ChoiceStepField({
+  step,
+  disabled,
+  showSaved,
+  onPick,
+}: ChoiceStepFieldProps) {
+  if (showSaved || step.options.length === 0) {
+    return (
+      <TextField
+        label={step.text}
+        value={step.selectedOptionText ?? ''}
+        disabled
+        size="small"
+        fullWidth
+      />
+    )
+  }
+
+  const value =
+    step.selectedOptionId === null ? '' : String(step.selectedOptionId)
+  // The picked option was removed from the step since, so say what it was.
+  const removedPick =
+    step.selectedOptionId === null && step.selectedOptionText !== null
+      ? `"${step.selectedOptionText}" was picked, but it's no longer an option.`
+      : undefined
+
+  function pick(optionValue: string) {
+    onPick(optionValue === '' ? null : Number(optionValue))
+  }
+
+  if (step.options.length > maxRadioOptions) {
+    return (
+      <TextField
+        select
+        label={step.text}
+        value={value}
+        onChange={(event) => pick(event.target.value)}
+        disabled={disabled}
+        helperText={removedPick}
+        size="small"
+        fullWidth
+      >
+        <MenuItem value="">
+          <em>None</em>
+        </MenuItem>
+        {step.options.map((option) => (
+          <MenuItem key={option.id} value={String(option.id)}>
+            {option.text}
+          </MenuItem>
+        ))}
+      </TextField>
+    )
+  }
+
+  return (
+    <FormControl component="fieldset" disabled={disabled}>
+      <FormLabel component="legend" sx={{ overflowWrap: 'anywhere' }}>
+        {step.text}
+      </FormLabel>
+      <RadioGroup value={value} onChange={(event) => pick(event.target.value)}>
+        {step.options.map((option) => (
+          <FormControlLabel
+            key={option.id}
+            value={String(option.id)}
+            control={<Radio />}
+            label={option.text}
+            sx={{ overflowWrap: 'anywhere' }}
+          />
+        ))}
+      </RadioGroup>
+      {removedPick && <FormHelperText>{removedPick}</FormHelperText>}
+      {value !== '' && (
+        <Box>
+          <Button
+            type="button"
+            size="small"
+            disabled={disabled}
+            aria-label={`Clear "${step.text}"`}
+            onClick={() => onPick(null)}
+          >
+            Clear
+          </Button>
+        </Box>
+      )}
+    </FormControl>
+  )
+}
+
 function RunView({ id }: { id: number }) {
   const navigate = useNavigate()
   const [run, setRun] = useState<ChecklistRun | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [loading, setLoading] = useState(true)
-  // Steps whose tick is still saving, so each one can only have one save in flight.
+  // Steps whose tick or picked option is still saving, so each one can only have one save in flight.
   const [savingStepIds, setSavingStepIds] = useState<ReadonlySet<number>>(
     new Set(),
   )
@@ -296,9 +401,19 @@ function RunView({ id }: { id: number }) {
   ): Promise<RunStep | null> {
     setErrorMessage('')
     setSavingStepIds((current) => new Set(current).add(stepId))
-    // Show a tick straight away, and undo it if the save fails. A text field already shows what was typed.
+    // Show a tick or a picked option straight away, and undo it if the save fails. A text field already
+    // shows what was typed. The step can't change again while this saves, so this is what to undo to.
+    const previousOptionId =
+      run?.steps.find((step) => step.stepId === stepId)?.selectedOptionId ??
+      null
     if ('isDone' in update) {
       setStep(stepId, (step) => ({ ...step, isDone: update.isDone }))
+    }
+    if ('optionId' in update) {
+      setStep(stepId, (step) => ({
+        ...step,
+        selectedOptionId: update.optionId,
+      }))
     }
 
     try {
@@ -308,6 +423,12 @@ function RunView({ id }: { id: number }) {
     } catch (error) {
       if ('isDone' in update) {
         setStep(stepId, (step) => ({ ...step, isDone: !update.isDone }))
+      }
+      if ('optionId' in update) {
+        setStep(stepId, (step) => ({
+          ...step,
+          selectedOptionId: previousOptionId,
+        }))
       }
       if (error instanceof ApiError) {
         await showCompletedRun(error)
@@ -325,8 +446,9 @@ function RunView({ id }: { id: number }) {
     }
   }
 
-  function handleToggle(stepId: number, isDone: boolean) {
-    const tick = handleSave(stepId, { isDone })
+  // Saves a tick or a picked option straight away.
+  function handleToggle(stepId: number, update: RunStepUpdate) {
+    const tick = handleSave(stepId, update)
     pendingTicks.current.add(tick)
     void tick.finally(() => pendingTicks.current.delete(tick))
   }
@@ -437,7 +559,21 @@ function RunView({ id }: { id: number }) {
                   const kind = inputKinds[step.type]
                   return (
                     <ListItem key={stepId ?? `deleted-${index}`} disableGutters>
-                      {kind ? (
+                      {step.type === 'Choice' ? (
+                        <ChoiceStepField
+                          step={step}
+                          disabled={
+                            disabled ||
+                            (stepId !== null && savingStepIds.has(stepId))
+                          }
+                          showSaved={isComplete || stepId === null}
+                          onPick={(optionId) => {
+                            if (stepId !== null) {
+                              handleToggle(stepId, { optionId })
+                            }
+                          }}
+                        />
+                      ) : kind ? (
                         <InputStepField
                           step={step}
                           kind={kind}
@@ -468,7 +604,9 @@ function RunView({ id }: { id: number }) {
                               disabled={disabled || savingStepIds.has(stepId)}
                               onChange={(event) => {
                                 if (stepId !== null) {
-                                  handleToggle(stepId, event.target.checked)
+                                  handleToggle(stepId, {
+                                    isDone: event.target.checked,
+                                  })
                                 }
                               }}
                             />

@@ -14,6 +14,8 @@ namespace CheckMate.Api.Controllers;
 [Route("api/checklists/{checklistId:int}/steps")]
 public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<ChecklistStepsController> logger) : ControllerBase
 {
+    private const int MinChoiceOptions = 2;
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ChecklistStepResponse>>> GetAll(int checklistId)
     {
@@ -27,13 +29,13 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
 
         var steps = await dbContext.ChecklistSteps
             .AsNoTracking()
+            .Include(step => step.Options)
             .Where(step => step.ChecklistId == checklistId)
             .OrderBy(step => step.SortOrder)
             .ThenBy(step => step.Id)
-            .Select(step => new ChecklistStepResponse(step.Id, step.Text, step.Type, step.SortOrder))
             .ToListAsync();
 
-        return Ok(steps);
+        return Ok(steps.Select(ChecklistStepResponse.From).ToList());
     }
 
     [HttpGet("{stepId:int}")]
@@ -43,6 +45,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
 
         var step = await dbContext.ChecklistSteps
             .AsNoTracking()
+            .Include(item => item.Options)
             .FirstOrDefaultAsync(item => item.Id == stepId && item.ChecklistId == checklistId);
 
         if (step is null)
@@ -71,6 +74,14 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             return ValidationProblem(ModelState);
         }
 
+        // A new step has no options yet, so none of them can name an existing one.
+        var options = ValidateOptions(request, new HashSet<int>());
+
+        if (options is null)
+        {
+            return ValidationProblem(ModelState);
+        }
+
         // New steps go at the end of the checklist.
         var maxSortOrder = await dbContext.ChecklistSteps
             .Where(item => item.ChecklistId == checklistId)
@@ -81,7 +92,8 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             ChecklistId = checklistId,
             Text = trimmedText,
             Type = request.Type,
-            SortOrder = (maxSortOrder ?? -1) + 1
+            SortOrder = (maxSortOrder ?? -1) + 1,
+            Options = [.. options.Select((option, index) => new StepOption { Text = option.Text, SortOrder = index })]
         };
 
         dbContext.ChecklistSteps.Add(step);
@@ -96,6 +108,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
     public async Task<ActionResult<ChecklistStepResponse>> Update(int checklistId, int stepId, [FromBody] ChecklistStepRequest request)
     {
         var step = await dbContext.ChecklistSteps
+            .Include(item => item.Options)
             .FirstOrDefaultAsync(item => item.Id == stepId && item.ChecklistId == checklistId);
 
         if (step is null)
@@ -112,8 +125,16 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             return ValidationProblem(ModelState);
         }
 
+        var options = ValidateOptions(request, step.Options.Select(option => option.Id).ToHashSet());
+
+        if (options is null)
+        {
+            return ValidationProblem(ModelState);
+        }
+
         step.Text = trimmedText;
         step.Type = request.Type;
+        await ReplaceOptionsAsync(step, options);
         await dbContext.SaveChangesAsync();
 
         logger.LogInformation("Updated step {StepId} in checklist {ChecklistId}", stepId, checklistId);
@@ -131,6 +152,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         }
 
         var steps = await dbContext.ChecklistSteps
+            .Include(step => step.Options)
             .Where(step => step.ChecklistId == checklistId)
             .ToDictionaryAsync(step => step.Id);
 
@@ -164,7 +186,9 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
     [HttpDelete("{stepId:int}")]
     public async Task<IActionResult> Delete(int checklistId, int stepId)
     {
+        // The options are loaded so the in-memory provider, which only cascades to tracked entities, deletes them too.
         var step = await dbContext.ChecklistSteps
+            .Include(item => item.Options)
             .FirstOrDefaultAsync(item => item.Id == stepId && item.ChecklistId == checklistId);
 
         if (step is null)
@@ -173,12 +197,14 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             return NotFound();
         }
 
-        // Runs keep their copy of the step text, so they only lose the link to the deleted step.
+        // Runs keep their copy of the step text and of the picked option's text, so they only lose the links to the
+        // deleted step and its options.
         var runSteps = await dbContext.ChecklistRunSteps.Where(runStep => runStep.StepId == stepId).ToListAsync();
 
         foreach (var runStep in runSteps)
         {
             runStep.StepId = null;
+            runStep.SelectedOptionId = null;
         }
 
         dbContext.ChecklistSteps.Remove(step);
@@ -187,6 +213,91 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         logger.LogInformation("Deleted step {StepId} from checklist {ChecklistId}", stepId, checklistId);
 
         return NoContent();
+    }
+
+    // Checks the options suit the step's type and returns them trimmed, or adds the problems to ModelState and
+    // returns null. An option that has an ID must be one the step already has.
+    private List<StepOptionRequest>? ValidateOptions(ChecklistStepRequest request, IReadOnlySet<int> existingOptionIds)
+    {
+        var options = request.Options ?? [];
+
+        if (request.Type != StepType.Choice)
+        {
+            if (options.Count > 0)
+            {
+                ModelState.AddModelError(nameof(request.Options), "Only choice steps have options.");
+                return null;
+            }
+
+            return [];
+        }
+
+        var trimmed = options
+            .Select(option => new StepOptionRequest { Id = option.Id, Text = option.Text.Trim() })
+            .ToList();
+        var ids = trimmed.Where(option => option.Id is not null).Select(option => option.Id!.Value).ToList();
+
+        if (trimmed.Count < MinChoiceOptions)
+        {
+            ModelState.AddModelError(nameof(request.Options), $"A choice step needs at least {MinChoiceOptions} options.");
+        }
+        else if (trimmed.Any(option => option.Text.Length == 0))
+        {
+            ModelState.AddModelError(nameof(request.Options), "Option text is required.");
+        }
+        else if (trimmed.Select(option => option.Text).Distinct(StringComparer.OrdinalIgnoreCase).Count() != trimmed.Count)
+        {
+            ModelState.AddModelError(nameof(request.Options), "Each option must be different.");
+        }
+        else if (ids.Distinct().Count() != ids.Count || !ids.All(existingOptionIds.Contains))
+        {
+            ModelState.AddModelError(nameof(request.Options), "The option IDs must be options of this step.");
+        }
+
+        return ModelState.IsValid ? trimmed : null;
+    }
+
+    // Updates the options that are kept, adds the new ones and removes the rest, so a kept option keeps its ID.
+    private async Task ReplaceOptionsAsync(ChecklistStep step, List<StepOptionRequest> options)
+    {
+        var keptIds = options.Where(option => option.Id is not null).Select(option => option.Id!.Value).ToHashSet();
+        var removed = step.Options.Where(option => !keptIds.Contains(option.Id)).ToList();
+
+        if (removed.Count > 0)
+        {
+            // Runs keep the removed options' text, so they only lose the links to them.
+            var removedIds = removed.Select(option => option.Id).ToList();
+            var runSteps = await dbContext.ChecklistRunSteps
+                .Where(runStep => runStep.SelectedOptionId != null && removedIds.Contains(runStep.SelectedOptionId.Value))
+                .ToListAsync();
+
+            foreach (var runStep in runSteps)
+            {
+                runStep.SelectedOptionId = null;
+            }
+
+            foreach (var option in removed)
+            {
+                step.Options.Remove(option);
+            }
+
+            dbContext.StepOptions.RemoveRange(removed);
+        }
+
+        var kept = step.Options.ToDictionary(option => option.Id);
+
+        for (var index = 0; index < options.Count; index++)
+        {
+            if (options[index].Id is int id)
+            {
+                kept[id].Text = options[index].Text;
+                kept[id].SortOrder = index;
+            }
+            else
+            {
+                step.Options.Add(new StepOption { Text = options[index].Text, SortOrder = index });
+            }
+        }
     }
 
     private Task<bool> ChecklistExistsAsync(int checklistId)

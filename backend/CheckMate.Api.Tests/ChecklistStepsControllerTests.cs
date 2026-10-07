@@ -196,6 +196,145 @@ public class ChecklistStepsControllerTests
     }
 
     [Fact]
+    public async Task Create_SavesTrimmedOptionsInOrder_ForChoiceStep()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Create(checklist.Id, ChoiceRequest("Weather", " Sunny ", "Rainy", "Snowy"));
+
+        var step = Assert.IsType<ChecklistStepResponse>(Assert.IsType<CreatedAtActionResult>(result.Result).Value);
+        Assert.Equal(StepType.Choice, step.Type);
+        Assert.Equal(["Sunny", "Rainy", "Snowy"], step.Options.Select(option => option.Text));
+        var saved = await dbContext.StepOptions.OrderBy(option => option.SortOrder).ToListAsync();
+        Assert.Equal(["Sunny", "Rainy", "Snowy"], saved.Select(option => option.Text));
+        Assert.All(saved, option => Assert.Equal(step.Id, option.StepId));
+        Assert.Equal(saved.Select(option => option.Id), step.Options.Select(option => option.Id));
+    }
+
+    [Theory]
+    [InlineData("Only one")]
+    [InlineData("Sunny", " ")]
+    [InlineData("Sunny", "sunny")]
+    public async Task Create_ReturnsValidationProblem_WhenChoiceOptionsAreInvalid(params string[] options)
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Create(checklist.Id, ChoiceRequest("Weather", options));
+
+        Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result.Result).Value);
+        Assert.False(await dbContext.ChecklistSteps.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Create_ReturnsValidationProblem_WhenOptionsAreGivenForAnotherType()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var request = ChoiceRequest("Notes", "A", "B");
+        request.Type = StepType.Text;
+
+        var result = await controller.Create(checklist.Id, request);
+
+        Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result.Result).Value);
+        Assert.False(await dbContext.ChecklistSteps.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Create_ReturnsValidationProblem_WhenNewStepNamesAnExistingOption()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var existing = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        var request = ChoiceRequest("Copy", "Sunny", "Rainy");
+        request.Options![0].Id = existing.Options[0].Id;
+
+        var result = await controller.Create(checklist.Id, request);
+
+        Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result.Result).Value);
+    }
+
+    [Fact]
+    public async Task Update_EditsKeepsAddsRemovesAndReordersOptions()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var created = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Weather", "Sunny", "Rainy", "Snowy")));
+        var (sunny, rainy) = (created.Options[0].Id, created.Options[1].Id);
+
+        var result = await controller.Update(checklist.Id, created.Id, new ChecklistStepRequest
+        {
+            Text = "Weather",
+            Type = StepType.Choice,
+            Options = [
+                new StepOptionRequest { Id = rainy, Text = "Raining" },
+                new StepOptionRequest { Text = "Cloudy" },
+                new StepOptionRequest { Id = sunny, Text = "Sunny" }
+            ]
+        });
+
+        var step = Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(["Raining", "Cloudy", "Sunny"], step.Options.Select(option => option.Text));
+        Assert.Equal(rainy, step.Options[0].Id);
+        Assert.Equal(sunny, step.Options[2].Id);
+        dbContext.ChangeTracker.Clear();
+        var saved = await dbContext.StepOptions.OrderBy(option => option.SortOrder).ToListAsync();
+        Assert.Equal(["Raining", "Cloudy", "Sunny"], saved.Select(option => option.Text));
+    }
+
+    [Fact]
+    public async Task Update_ReturnsValidationProblem_WhenOptionBelongsToAnotherStep()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var step = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        var other = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Mood", "Happy", "Sad")));
+        var request = ChoiceRequest("Weather", "Sunny", "Happy");
+        request.Options![1].Id = other.Options[0].Id;
+
+        var result = await controller.Update(checklist.Id, step.Id, request);
+
+        Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result.Result).Value);
+        dbContext.ChangeTracker.Clear();
+        Assert.Equal(4, await dbContext.StepOptions.CountAsync());
+    }
+
+    [Fact]
+    public async Task Update_RemovesOptions_WhenChangedToAnotherType()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var step = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Weather", "Sunny", "Rainy")));
+
+        var result = await controller.Update(checklist.Id, step.Id, new ChecklistStepRequest { Text = "Weather", Type = StepType.Text });
+
+        Assert.Empty(Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value).Options);
+        Assert.False(await dbContext.StepOptions.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Delete_RemovesStepOptions()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var step = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        dbContext.ChangeTracker.Clear();
+
+        Assert.IsType<NoContentResult>(await controller.Delete(checklist.Id, step.Id));
+
+        Assert.False(await dbContext.StepOptions.AnyAsync());
+    }
+
+    [Fact]
     public async Task Reorder_SavesNewOrder_AndReturnsStepsInOrder()
     {
         await using var dbContext = CreateDbContext();
@@ -297,6 +436,22 @@ public class ChecklistStepsControllerTests
         var result = await controller.Reorder(999, new ChecklistStepOrderRequest { StepIds = [] });
 
         Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    private static ChecklistStepRequest ChoiceRequest(string text, params string[] options)
+    {
+        return new ChecklistStepRequest
+        {
+            Text = text,
+            Type = StepType.Choice,
+            Options = [.. options.Select(option => new StepOptionRequest { Text = option })]
+        };
+    }
+
+    private static ChecklistStepResponse GetStep(ActionResult<ChecklistStepResponse> result)
+    {
+        var objectResult = Assert.IsAssignableFrom<ObjectResult>(result.Result);
+        return Assert.IsType<ChecklistStepResponse>(objectResult.Value);
     }
 
     private static ChecklistStepsController CreateController(ChecklistDbContext dbContext)

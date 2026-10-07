@@ -15,4 +15,7 @@ public class ChecklistStep
     public StepType Type { get; set; }
 
     public int SortOrder { get; set; }
+
+    /// <summary>The options of a choice step. Other types have none.</summary>
+    public List<StepOption> Options { get; set; } = [];
 }

@@ -273,6 +273,120 @@ public class ChecklistRunsControllerTests
     }
 
     [Fact]
+    public async Task Start_ReturnsChoiceStepsOptionsInOrder()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        await AddChoiceStepAsync(dbContext, checklist.Id, "Weather", "Sunny", "Rainy");
+        await AddStepAsync(dbContext, checklist.Id, "Tick", 1);
+
+        var run = GetRun(await CreateController(dbContext).Start(checklist.Id));
+
+        Assert.Collection(run.Steps,
+            step =>
+            {
+                Assert.Equal(StepType.Choice, step.Type);
+                Assert.Equal(["Sunny", "Rainy"], step.Options.Select(option => option.Text));
+                Assert.Null(step.SelectedOptionId);
+                Assert.Null(step.SelectedOptionText);
+            },
+            step => Assert.Empty(step.Options));
+    }
+
+    [Fact]
+    public async Task UpdateStep_SavesPickedOption_ForChoiceStep_AndClearsItWhenNull()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddChoiceStepAsync(dbContext, checklist.Id, "Weather", "Sunny", "Rainy");
+        var rainy = step.Options[1];
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+
+        // IsDone is ignored for a choice step: only the option decides it.
+        var picked = await controller.UpdateStep(runId, step.Id, new RunStepRequest { OptionId = rainy.Id, IsDone = false });
+
+        var pickedStep = Assert.IsType<ChecklistRunStepResponse>(Assert.IsType<OkObjectResult>(picked.Result).Value);
+        Assert.Equal((rainy.Id, "Rainy", true), (pickedStep.SelectedOptionId, pickedStep.SelectedOptionText, pickedStep.IsDone));
+        Assert.NotNull(pickedStep.CompletedAt);
+        Assert.Equal(2, pickedStep.Options.Count);
+
+        var cleared = await controller.UpdateStep(runId, step.Id, new RunStepRequest { OptionId = null, IsDone = true });
+
+        var clearedStep = Assert.IsType<ChecklistRunStepResponse>(Assert.IsType<OkObjectResult>(cleared.Result).Value);
+        Assert.Equal((null, null, false), (clearedStep.SelectedOptionId, clearedStep.SelectedOptionText, clearedStep.IsDone));
+        Assert.Null(clearedStep.CompletedAt);
+    }
+
+    [Fact]
+    public async Task UpdateStep_ReturnsValidationProblem_WhenOptionBelongsToAnotherStep()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddChoiceStepAsync(dbContext, checklist.Id, "Weather", "Sunny", "Rainy");
+        var other = await AddChoiceStepAsync(dbContext, checklist.Id, "Mood", "Happy", "Sad");
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+
+        var result = await controller.UpdateStep(runId, step.Id, new RunStepRequest { OptionId = other.Options[0].Id });
+
+        Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result.Result).Value);
+        Assert.All(await dbContext.ChecklistRunSteps.ToListAsync(), runStep => Assert.Null(runStep.SelectedOptionId));
+    }
+
+    [Fact]
+    public async Task GetById_KeepsPickedOptionText_AfterOptionIsEditedOrRemoved()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddChoiceStepAsync(dbContext, checklist.Id, "Weather", "Sunny", "Rainy", "Snowy");
+        var (sunny, rainy) = (step.Options[0], step.Options[1]);
+        var controller = CreateController(dbContext);
+        var editedRunId = GetRun(await controller.Start(checklist.Id)).Id;
+        var removedRunId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.UpdateStep(editedRunId, step.Id, new RunStepRequest { OptionId = sunny.Id });
+        await controller.UpdateStep(removedRunId, step.Id, new RunStepRequest { OptionId = rainy.Id });
+        await controller.Complete(editedRunId);
+        await controller.Complete(removedRunId);
+
+        var stepsController = new ChecklistStepsController(dbContext, NullLogger<ChecklistStepsController>.Instance);
+        Assert.IsType<OkObjectResult>((await stepsController.Update(checklist.Id, step.Id, new ChecklistStepRequest
+        {
+            Text = "Weather",
+            Type = StepType.Choice,
+            Options = [new StepOptionRequest { Id = sunny.Id, Text = "Bright" }, new StepOptionRequest { Text = "Foggy" }]
+        })).Result);
+        dbContext.ChangeTracker.Clear();
+
+        var edited = Assert.Single(GetRun(await controller.GetById(editedRunId)).Steps);
+        var removed = Assert.Single(GetRun(await controller.GetById(removedRunId)).Steps);
+
+        Assert.Equal((sunny.Id, "Sunny", true), (edited.SelectedOptionId, edited.SelectedOptionText, edited.IsDone));
+        Assert.Equal((null, "Rainy", true), (removed.SelectedOptionId, removed.SelectedOptionText, removed.IsDone));
+        Assert.Equal(["Bright", "Foggy"], removed.Options.Select(option => option.Text));
+    }
+
+    [Fact]
+    public async Task GetById_KeepsPickedOptionText_AfterChoiceStepIsDeleted()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddChoiceStepAsync(dbContext, checklist.Id, "Weather", "Sunny", "Rainy");
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.UpdateStep(runId, step.Id, new RunStepRequest { OptionId = step.Options[0].Id });
+
+        var stepsController = new ChecklistStepsController(dbContext, NullLogger<ChecklistStepsController>.Instance);
+        Assert.IsType<NoContentResult>(await stepsController.Delete(checklist.Id, step.Id));
+        dbContext.ChangeTracker.Clear();
+
+        var runStep = Assert.Single(GetRun(await controller.GetById(runId)).Steps);
+        Assert.Equal((null, null, "Sunny", true), (runStep.StepId, runStep.SelectedOptionId, runStep.SelectedOptionText, runStep.IsDone));
+        Assert.Empty(runStep.Options);
+        Assert.False(await dbContext.StepOptions.AnyAsync());
+    }
+
+    [Fact]
     public async Task UpdateStep_ReturnsNotFound_WhenStepIsNotInRun()
     {
         await using var dbContext = CreateDbContext();
@@ -454,6 +568,20 @@ public class ChecklistRunsControllerTests
     private static async Task<ChecklistStep> AddStepAsync(ChecklistDbContext dbContext, int checklistId, string text, int sortOrder = 0, StepType type = StepType.Checkbox)
     {
         var step = new ChecklistStep { ChecklistId = checklistId, Text = text, Type = type, SortOrder = sortOrder };
+        dbContext.ChecklistSteps.Add(step);
+        await dbContext.SaveChangesAsync();
+        return step;
+    }
+
+    private static async Task<ChecklistStep> AddChoiceStepAsync(ChecklistDbContext dbContext, int checklistId, string text, params string[] options)
+    {
+        var step = new ChecklistStep
+        {
+            ChecklistId = checklistId,
+            Text = text,
+            Type = StepType.Choice,
+            Options = [.. options.Select((option, index) => new StepOption { Text = option, SortOrder = index })]
+        };
         dbContext.ChecklistSteps.Add(step);
         await dbContext.SaveChangesAsync();
         return step;
