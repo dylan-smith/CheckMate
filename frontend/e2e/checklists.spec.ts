@@ -347,12 +347,17 @@ test.describe('Checklist management', () => {
         page.getByRole('checkbox', { name: 'Turn on lights' }),
       ).not.toBeChecked()
 
+      const runUrl = page.url()
       await page.getByRole('button', { name: 'Complete' }).click()
+      // Completing goes back to the checklists page, with a toast that goes away by itself.
+      await expect(page).toHaveURL(/\/$/)
+      const toast = page.getByRole('alert')
+      await expect(toast).toHaveText('Completed "Opening up".')
+      await expect(toast).toBeHidden({ timeout: 10_000 })
+
+      await page.goto(runUrl)
       await expect(page.getByText(/^Completed /)).toBeVisible()
       await expect(page.getByRole('button', { name: 'Complete' })).toBeHidden()
-
-      await page.reload()
-      await expect(page.getByText(/^Completed /)).toBeVisible()
       await expect(unlock).toBeChecked()
       await expect(unlock).toBeDisabled()
     })

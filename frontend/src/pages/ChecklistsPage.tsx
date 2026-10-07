@@ -9,10 +9,13 @@ import ListItem from '@mui/material/ListItem'
 import ListItemButton from '@mui/material/ListItemButton'
 import ListItemText from '@mui/material/ListItemText'
 import Paper from '@mui/material/Paper'
+import Slide from '@mui/material/Slide'
+import type { SlideProps } from '@mui/material/Slide'
+import Snackbar from '@mui/material/Snackbar'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
-import { Link, useNavigate } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
 import {
   ApiError,
   createChecklist,
@@ -23,19 +26,48 @@ import type { Checklist } from '../api/checklists'
 import { startRun } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
 
+// How long a notice toast stays up, in milliseconds.
+const noticeDuration = 4000
+
+// A page that navigates here can pass { notice } in the location state to show it as a toast.
+function readNotice(state: unknown) {
+  return typeof state === 'object' &&
+    state !== null &&
+    'notice' in state &&
+    typeof state.notice === 'string'
+    ? state.notice
+    : ''
+}
+
+function SlideDown(props: SlideProps) {
+  return <Slide {...props} direction="down" />
+}
+
 function ChecklistsPage() {
   const [checklists, setChecklists] = useState<Checklist[]>([])
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
+  const location = useLocation()
   const [submitting, setSubmitting] = useState(false)
   // The checklist whose fill-out is being started, so its button can say so.
   const [startingId, setStartingId] = useState<number | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
+  // The text is kept after closing so it doesn't vanish while the toast slides away.
+  const [notice] = useState(() => readNotice(location.state))
+  const [noticeOpen, setNoticeOpen] = useState(notice !== '')
 
   useEffect(() => {
     void loadChecklists()
   }, [])
+
+  // Clear the notice from history so a reload or going back doesn't show it again.
+  const hasLocationState = location.state != null
+  useEffect(() => {
+    if (hasLocationState) {
+      void navigate('.', { replace: true, state: null })
+    }
+  }, [hasLocationState, navigate])
 
   async function loadChecklists() {
     setLoading(true)
@@ -97,81 +129,105 @@ function ChecklistsPage() {
   }
 
   return (
-    <Stack spacing={2}>
-      <Paper component="section" elevation={2} sx={{ p: 3 }}>
-        <Typography variant="h5" component="h2" sx={{ mb: 2 }}>
-          Create checklist
-        </Typography>
-        <Box
-          component="form"
-          onSubmit={(event) => void handleSubmit(event)}
-          sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}
-        >
-          <TextField
-            id="checklist-name"
-            label="Checklist name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            slotProps={{ htmlInput: { maxLength: 200 } }}
-            required
-            placeholder="e.g. Daily chores"
-          />
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <Button type="submit" variant="contained" disabled={submitting}>
-              {submitting ? 'Saving…' : 'Create checklist'}
-            </Button>
-          </Stack>
-        </Box>
-      </Paper>
-
-      {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
-
-      <Paper component="section" elevation={2} sx={{ p: 3 }}>
-        <Typography variant="h5" component="h2" sx={{ mb: 2 }}>
-          Checklists
-        </Typography>
-        {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-            <CircularProgress aria-label="Loading" />
+    <>
+      <Stack spacing={2}>
+        <Paper component="section" elevation={2} sx={{ p: 3 }}>
+          <Typography variant="h5" component="h2" sx={{ mb: 2 }}>
+            Create checklist
+          </Typography>
+          <Box
+            component="form"
+            onSubmit={(event) => void handleSubmit(event)}
+            sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+          >
+            <TextField
+              id="checklist-name"
+              label="Checklist name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              slotProps={{ htmlInput: { maxLength: 200 } }}
+              required
+              placeholder="e.g. Daily chores"
+            />
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+              <Button type="submit" variant="contained" disabled={submitting}>
+                {submitting ? 'Saving…' : 'Create checklist'}
+              </Button>
+            </Stack>
           </Box>
-        ) : checklists.length === 0 ? (
-          <Typography color="text.secondary">No checklists yet.</Typography>
-        ) : (
-          <List disablePadding>
-            {checklists.map((checklist) => (
-              <ListItem
-                key={checklist.id}
-                divider
-                disablePadding
-                sx={{ gap: 1 }}
-              >
-                <ListItemButton
-                  component={Link}
-                  to={`/checklists/${checklist.id}`}
+        </Paper>
+
+        {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
+
+        <Paper component="section" elevation={2} sx={{ p: 3 }}>
+          <Typography variant="h5" component="h2" sx={{ mb: 2 }}>
+            Checklists
+          </Typography>
+          {loading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+              <CircularProgress aria-label="Loading" />
+            </Box>
+          ) : checklists.length === 0 ? (
+            <Typography color="text.secondary">No checklists yet.</Typography>
+          ) : (
+            <List disablePadding>
+              {checklists.map((checklist) => (
+                <ListItem
+                  key={checklist.id}
+                  divider
+                  disablePadding
+                  sx={{ gap: 1 }}
                 >
-                  <ListItemText
-                    primary={checklist.name}
-                    sx={{ overflowWrap: 'anywhere' }}
-                  />
-                </ListItemButton>
-                {/* Filling out is the most common thing to do with a checklist, so it's one click from here. */}
-                <Button
-                  type="button"
-                  variant="contained"
-                  size="small"
-                  sx={{ flexShrink: 0 }}
-                  disabled={startingId !== null}
-                  aria-label={`Fill out "${checklist.name}"`}
-                  onClick={() => void handleFillOut(checklist.id)}
-                >
-                  {startingId === checklist.id ? 'Starting…' : 'Fill out'}
-                </Button>
-              </ListItem>
-            ))}
-          </List>
-        )}
-      </Paper>
-    </Stack>
+                  <ListItemButton
+                    component={Link}
+                    to={`/checklists/${checklist.id}`}
+                  >
+                    <ListItemText
+                      primary={checklist.name}
+                      sx={{ overflowWrap: 'anywhere' }}
+                    />
+                  </ListItemButton>
+                  {/* Filling out is the most common thing to do with a checklist, so it's one click from here. */}
+                  <Button
+                    type="button"
+                    variant="contained"
+                    size="small"
+                    sx={{ flexShrink: 0 }}
+                    disabled={startingId !== null}
+                    aria-label={`Fill out "${checklist.name}"`}
+                    onClick={() => void handleFillOut(checklist.id)}
+                  >
+                    {startingId === checklist.id ? 'Starting…' : 'Fill out'}
+                  </Button>
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </Paper>
+      </Stack>
+
+      <Snackbar
+        open={noticeOpen}
+        autoHideDuration={noticeDuration}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+        slots={{ transition: SlideDown }}
+        onClose={(_event, reason) => {
+          // Only the timer or the close button dismisses it, not a click elsewhere on the page.
+          if (reason !== 'clickaway') {
+            setNoticeOpen(false)
+          }
+        }}
+      >
+        <Alert
+          severity="success"
+          variant="filled"
+          onClose={() => setNoticeOpen(false)}
+          sx={{ width: '100%' }}
+        >
+          {notice}
+        </Alert>
+      </Snackbar>
+    </>
   )
 }
 
