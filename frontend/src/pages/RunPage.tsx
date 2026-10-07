@@ -11,7 +11,7 @@ import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
-import { Link, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import { ApiError, describeFetchError } from '../api/checklists'
 import { completeRun, getRun, saveRunStep } from '../api/runs'
 import type { ChecklistRun, RunStep, RunStepUpdate } from '../api/runs'
@@ -126,6 +126,7 @@ function TextStepField({
 }
 
 function RunView({ id }: { id: number }) {
+  const navigate = useNavigate()
   const [run, setRun] = useState<ChecklistRun | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -275,8 +276,12 @@ function RunView({ id }: { id: number }) {
         // The failed save already shows its error, and the run stays open so it can be tried again.
         return
       }
-      setRun(await completeRun(id))
+      const completed = await completeRun(id)
       trackEvent('RunCompleted')
+      // The checklists page shows the notice as a toast.
+      void navigate('/', {
+        state: { notice: `Completed "${completed.checklistName}".` },
+      })
     } catch (error) {
       if (error instanceof ApiError) {
         await showCompletedRun(error)
