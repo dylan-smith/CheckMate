@@ -19,6 +19,7 @@ import {
   describeFetchError,
   reorderSteps,
   stepTypeLabels,
+  stepTypes,
   updateStep,
 } from '../api/checklists'
 import type { ChecklistStep, StepType } from '../api/checklists'
@@ -48,13 +49,19 @@ function StepTypeField({ id, value, onChange }: StepTypeFieldProps) {
       select
       label="Type"
       value={value}
-      onChange={(event) => onChange(event.target.value as StepType)}
+      onChange={(event) => {
+        // The menu only offers stepTypes, so this always finds one.
+        const type = stepTypes.find((item) => item === event.target.value)
+        if (type) {
+          onChange(type)
+        }
+      }}
       size="small"
       sx={{ minWidth: 140 }}
     >
-      {Object.entries(stepTypeLabels).map(([type, label]) => (
+      {stepTypes.map((type) => (
         <MenuItem key={type} value={type}>
-          {label}
+          {stepTypeLabels[type]}
         </MenuItem>
       ))}
     </TextField>

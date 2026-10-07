@@ -267,13 +267,17 @@ function RunView({ id }: { id: number }) {
     setErrorMessage('')
 
     try {
-      // Let ticks finish saving and save any text typed since, so completing can't drop a change.
+      // Let ticks finish saving and save any text typed since, so completing can't drop a change. A failed
+      // save already shows its error, and the run stays open so it can be tried again.
       const ticks = await Promise.all(pendingTicks.current)
+      if (ticks.includes(null)) {
+        // Stop before saving text, since a successful text save would clear the tick's error.
+        return
+      }
       const drafts = await Promise.all(
         [...saveDrafts.current.values()].map((saveDraft) => saveDraft()),
       )
-      if (ticks.includes(null) || drafts.includes(false)) {
-        // The failed save already shows its error, and the run stays open so it can be tried again.
+      if (drafts.includes(false)) {
         return
       }
       const completed = await completeRun(id)

@@ -1695,6 +1695,51 @@ describe('App', () => {
         )
       })
 
+      it("keeps a failed tick's error instead of saving text when completing", async () => {
+        const user = userEvent.setup()
+        let finishTick: (response: Response) => void = () => {}
+        let textPuts = 0
+        const fetchMock = mockFetch(async (url, init) => {
+          if (init?.method === 'PUT' && url.endsWith('/steps/11')) {
+            return new Promise<Response>((resolve) => {
+              finishTick = resolve
+            })
+          }
+          if (init?.method === 'PUT') {
+            textPuts += 1
+            return textPuts === 1
+              ? new Response(null, { status: 500 })
+              : jsonResponse(savedNotes)
+          }
+          return jsonResponse(runWithText)
+        })
+
+        renderAt('/runs/5')
+        await user.type(
+          await screen.findByRole('textbox', { name: 'Notes' }),
+          'All good',
+        )
+        // Leaving the field saves the text, which fails, while the tick's save is still under way.
+        await user.click(screen.getByRole('checkbox', { name: 'Make coffee' }))
+        await screen.findByText('Unable to save step.')
+        await user.click(screen.getByRole('button', { name: 'Complete' }))
+        finishTick(new Response(null, { status: 500 }))
+
+        await waitFor(() => {
+          expect(
+            screen.getByRole('checkbox', { name: 'Make coffee' }),
+          ).not.toBeChecked()
+        })
+        await waitFor(() => {
+          expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
+        })
+        expect(screen.getByText('Unable to save step.')).toBeInTheDocument()
+        expect(textPuts).toBe(1)
+        expect(
+          fetchMock.mock.calls.some(([, init]) => init?.method === 'POST'),
+        ).toBe(false)
+      })
+
       it('does not complete while the text still cannot be saved', async () => {
         const user = userEvent.setup()
         const fetchMock = mockFetch(async (_url, init) =>
