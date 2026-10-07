@@ -164,6 +164,110 @@ public class ChecklistStepsControllerTests
         Assert.True(await dbContext.ChecklistSteps.AnyAsync());
     }
 
+    [Fact]
+    public async Task Reorder_SavesNewOrder_AndReturnsStepsInOrder()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        var third = await AddStepAsync(dbContext, checklist.Id, "Third", 2);
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Reorder(checklist.Id, new ChecklistStepOrderRequest { StepIds = [third.Id, first.Id, second.Id] });
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var steps = Assert.IsAssignableFrom<IEnumerable<ChecklistStepResponse>>(okResult.Value);
+        Assert.Collection(steps,
+            step => Assert.Equal(("Third", 0), (step.Text, step.SortOrder)),
+            step => Assert.Equal(("First", 1), (step.Text, step.SortOrder)),
+            step => Assert.Equal(("Second", 2), (step.Text, step.SortOrder)));
+
+        var getResult = await CreateController(dbContext).GetAll(checklist.Id);
+        var savedSteps = Assert.IsAssignableFrom<IEnumerable<ChecklistStepResponse>>(Assert.IsType<OkObjectResult>(getResult.Result).Value);
+        Assert.Equal(["Third", "First", "Second"], savedSteps.Select(step => step.Text));
+    }
+
+    [Fact]
+    public async Task Reorder_SavesTheWholeOrder_WhenAnotherReorderSavedFirst()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        await using var setupContext = CreateDbContext(databaseName);
+        var checklist = await AddChecklistAsync(setupContext, "Daily");
+        var first = await AddStepAsync(setupContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(setupContext, checklist.Id, "Second", 1);
+        var third = await AddStepAsync(setupContext, checklist.Id, "Third", 2);
+
+        await using var earlierContext = CreateDbContext(databaseName);
+        await using var laterContext = CreateDbContext(databaseName);
+        // Both requests read the steps before either saves.
+        await laterContext.ChecklistSteps.LoadAsync();
+
+        await CreateController(earlierContext).Reorder(checklist.Id, new ChecklistStepOrderRequest { StepIds = [second.Id, first.Id, third.Id] });
+        await CreateController(laterContext).Reorder(checklist.Id, new ChecklistStepOrderRequest { StepIds = [third.Id, second.Id, first.Id] });
+
+        await using var readContext = CreateDbContext(databaseName);
+        var result = await CreateController(readContext).GetAll(checklist.Id);
+        var steps = Assert.IsAssignableFrom<IEnumerable<ChecklistStepResponse>>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal([("Third", 0), ("Second", 1), ("First", 2)], steps.Select(step => (step.Text, step.SortOrder)));
+    }
+
+    [Fact]
+    public async Task Reorder_AcceptsEmptyList_WhenChecklistHasNoSteps()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Reorder(checklist.Id, new ChecklistStepOrderRequest { StepIds = [] });
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Empty(Assert.IsAssignableFrom<IEnumerable<ChecklistStepResponse>>(okResult.Value));
+    }
+
+    public static TheoryData<string> MismatchedStepIds => ["missing", "extra", "duplicate", "unknown", "other checklist"];
+
+    [Theory]
+    [MemberData(nameof(MismatchedStepIds))]
+    public async Task Reorder_ReturnsValidationProblem_AndKeepsOrder_WhenStepIdsDoNotMatch(string mismatch)
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var other = await AddChecklistAsync(dbContext, "Other");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        var elsewhere = await AddStepAsync(dbContext, other.Id, "Elsewhere", 0);
+        var controller = CreateController(dbContext);
+
+        IReadOnlyList<int> stepIds = mismatch switch
+        {
+            "missing" => [second.Id],
+            "extra" => [second.Id, first.Id, 999],
+            "duplicate" => [second.Id, second.Id],
+            "unknown" => [second.Id, 999],
+            "other checklist" => [second.Id, elsewhere.Id],
+            _ => throw new ArgumentOutOfRangeException(nameof(mismatch)),
+        };
+
+        var result = await controller.Reorder(checklist.Id, new ChecklistStepOrderRequest { StepIds = stepIds });
+
+        var objectResult = Assert.IsType<ObjectResult>(result.Result);
+        Assert.IsType<ValidationProblemDetails>(objectResult.Value);
+        Assert.Equal(0, (await dbContext.ChecklistSteps.SingleAsync(step => step.Id == first.Id)).SortOrder);
+        Assert.Equal(1, (await dbContext.ChecklistSteps.SingleAsync(step => step.Id == second.Id)).SortOrder);
+    }
+
+    [Fact]
+    public async Task Reorder_ReturnsNotFound_WhenChecklistDoesNotExist()
+    {
+        await using var dbContext = CreateDbContext();
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Reorder(999, new ChecklistStepOrderRequest { StepIds = [] });
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
     private static ChecklistStepsController CreateController(ChecklistDbContext dbContext)
     {
         return new(dbContext, NullLogger<ChecklistStepsController>.Instance);
@@ -177,18 +281,18 @@ public class ChecklistStepsControllerTests
         return checklist;
     }
 
-    private static async Task<ChecklistStep> AddStepAsync(ChecklistDbContext dbContext, int checklistId, string text)
+    private static async Task<ChecklistStep> AddStepAsync(ChecklistDbContext dbContext, int checklistId, string text, int sortOrder = 0)
     {
-        var step = new ChecklistStep { ChecklistId = checklistId, Text = text, SortOrder = 0 };
+        var step = new ChecklistStep { ChecklistId = checklistId, Text = text, SortOrder = sortOrder };
         dbContext.ChecklistSteps.Add(step);
         await dbContext.SaveChangesAsync();
         return step;
     }
 
-    private static ChecklistDbContext CreateDbContext()
+    private static ChecklistDbContext CreateDbContext(string? databaseName = null)
     {
         var options = new DbContextOptionsBuilder<ChecklistDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString())
             .Options;
 
         return new ChecklistDbContext(options);

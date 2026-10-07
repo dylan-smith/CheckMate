@@ -201,6 +201,76 @@ test.describe('Checklist management', () => {
       await expect(steps.nth(1)).toContainText('Walk dog')
     })
 
+    test('reorders steps with the keyboard, and the order persists', async ({
+      page,
+    }) => {
+      await createChecklist(page, 'Evening routine')
+      await openChecklist(page, 'Evening routine')
+
+      await addStep(page, 'Wash dishes')
+      await addStep(page, 'Brush teeth')
+      await addStep(page, 'Read a book')
+
+      await page
+        .getByRole('button', { name: 'Move step "Read a book" up' })
+        .focus()
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('status')).toHaveText(
+        'Moved step "Read a book" to position 2 of 3.',
+      )
+      // Focus stays on the moved step, so pressing Enter again keeps moving it.
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('status')).toHaveText(
+        'Moved step "Read a book" to position 1 of 3.',
+      )
+
+      await page
+        .getByRole('button', { name: 'Move step "Wash dishes" down' })
+        .click()
+      await expect(page.getByRole('status')).toHaveText(
+        'Moved step "Wash dishes" to position 3 of 3.',
+      )
+
+      await page.reload()
+
+      const steps = page.getByRole('listitem')
+      await expect(steps).toHaveCount(3)
+      await expect(steps.nth(0)).toContainText('Read a book')
+      await expect(steps.nth(1)).toContainText('Brush teeth')
+      await expect(steps.nth(2)).toContainText('Wash dishes')
+    })
+
+    test('rejects a stale list of step ids', async ({ request }) => {
+      const response = await request.post(checklistsApiUrl, {
+        data: { name: 'Stale order' },
+      })
+      expect(response.ok()).toBe(true)
+      const { id } = (await response.json()) as { id: number }
+      const stepsUrl = `${checklistsApiUrl}/${id}/steps`
+
+      const stepIds: number[] = []
+      for (const text of ['One', 'Two']) {
+        const stepResponse = await request.post(stepsUrl, { data: { text } })
+        expect(stepResponse.ok()).toBe(true)
+        stepIds.push(((await stepResponse.json()) as { id: number }).id)
+      }
+
+      // A step added since the list was read makes it stale.
+      expect(
+        (await request.post(stepsUrl, { data: { text: 'Three' } })).ok(),
+      ).toBe(true)
+
+      const reorderResponse = await request.put(`${stepsUrl}/order`, {
+        data: { stepIds: stepIds.toReversed() },
+      })
+      expect(reorderResponse.status()).toBe(400)
+
+      const steps = (await (await request.get(stepsUrl)).json()) as {
+        text: string
+      }[]
+      expect(steps.map((step) => step.text)).toEqual(['One', 'Two', 'Three'])
+    })
+
     test('deleting a checklist deletes its steps', async ({ request }) => {
       const response = await request.post(checklistsApiUrl, {
         data: { name: 'Cascade' },
