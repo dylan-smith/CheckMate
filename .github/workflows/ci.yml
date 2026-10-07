@@ -544,6 +544,12 @@ jobs:
             frontend/playwright-report/smoke-results.xml
           retention-days: 30
 
+      # Adds sample checklists to a preview with none, so there's something to try straight away.
+      - name: Seed sample data
+        run: bash .github/scripts/seed-preview.sh
+        env:
+          API_URL: ${{ steps.infra.outputs['app-service-url'] }}
+
       # Not when cancelled: the newer run for this PR owns the comment then.
       - name: Update preview comment
         if: ${{ !cancelled() }}

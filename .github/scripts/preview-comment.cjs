@@ -55,8 +55,9 @@ module.exports = async ({ github, context }) => {
     }
   }
   body.push(
-    'The preview has an empty database of its own and is deleted when this PR is closed. It runs on a free ' +
-      'plan, so the first request after a while can take a minute while the app and database start.',
+    'The preview has a database of its own, which starts with a few sample checklists, and is deleted when ' +
+      'this PR is closed. It runs on a free plan, so the first request after a while can take a minute while ' +
+      'the app and database start.',
   );
 
   if (existing) {
