@@ -217,7 +217,14 @@ function ChoiceStepField({
   showSaved,
   onPick,
 }: ChoiceStepFieldProps) {
-  if (showSaved || step.options.length === 0) {
+  // The picked option was removed from the step since, so say what it was.
+  const removedPick =
+    step.selectedOptionId === null && step.selectedOptionText !== null
+      ? `"${step.selectedOptionText}" was picked, but it's no longer an option.`
+      : undefined
+
+  // A step with no options left can still have a removed pick to clear, so it only shows as read-only without one.
+  if (showSaved || (step.options.length === 0 && !removedPick)) {
     return (
       <TextField
         label={step.text}
@@ -231,37 +238,51 @@ function ChoiceStepField({
 
   const value =
     step.selectedOptionId === null ? '' : String(step.selectedOptionId)
-  // The picked option was removed from the step since, so say what it was.
-  const removedPick =
-    step.selectedOptionId === null && step.selectedOptionText !== null
-      ? `"${step.selectedOptionText}" was picked, but it's no longer an option.`
-      : undefined
 
   function pick(optionValue: string) {
     onPick(optionValue === '' ? null : Number(optionValue))
   }
 
+  // A removed pick still counts as done, so it can be cleared too.
+  const clearButton = (
+    <Box>
+      <Button
+        type="button"
+        size="small"
+        disabled={disabled}
+        aria-label={`Clear "${step.text}"`}
+        onClick={() => onPick(null)}
+      >
+        Clear
+      </Button>
+    </Box>
+  )
+
   if (step.options.length > maxRadioOptions) {
     return (
-      <TextField
-        select
-        label={step.text}
-        value={value}
-        onChange={(event) => pick(event.target.value)}
-        disabled={disabled}
-        helperText={removedPick}
-        size="small"
-        fullWidth
-      >
-        <MenuItem value="">
-          <em>None</em>
-        </MenuItem>
-        {step.options.map((option) => (
-          <MenuItem key={option.id} value={String(option.id)}>
-            {option.text}
+      <Box sx={{ width: '100%' }}>
+        <TextField
+          select
+          label={step.text}
+          value={value}
+          onChange={(event) => pick(event.target.value)}
+          disabled={disabled}
+          helperText={removedPick}
+          size="small"
+          fullWidth
+        >
+          <MenuItem value="">
+            <em>None</em>
           </MenuItem>
-        ))}
-      </TextField>
+          {step.options.map((option) => (
+            <MenuItem key={option.id} value={String(option.id)}>
+              {option.text}
+            </MenuItem>
+          ))}
+        </TextField>
+        {/* "None" clears a pick, but it's already shown for a removed one, so picking it does nothing. */}
+        {removedPick && clearButton}
+      </Box>
     )
   }
 
@@ -282,20 +303,7 @@ function ChoiceStepField({
         ))}
       </RadioGroup>
       {removedPick && <FormHelperText>{removedPick}</FormHelperText>}
-      {/* A removed pick still counts as done, so it can be cleared too. */}
-      {(value !== '' || removedPick) && (
-        <Box>
-          <Button
-            type="button"
-            size="small"
-            disabled={disabled}
-            aria-label={`Clear "${step.text}"`}
-            onClick={() => onPick(null)}
-          >
-            Clear
-          </Button>
-        </Box>
-      )}
+      {(value !== '' || removedPick) && clearButton}
     </FormControl>
   )
 }

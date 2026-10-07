@@ -322,13 +322,40 @@ public class ChecklistStepsControllerTests
 
         // A fill-out picks the removed option after this request cleared the runs that had, so SQL Server's
         // foreign key fails the save. The in-memory provider has no foreign keys, so the failure is thrown here instead.
-        await using var dbContext = CreateDbContext(databaseName, new FailingSaveInterceptor());
+        await using var otherContext = CreateDbContext(databaseName);
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+        {
+            await AddRunWithPickAsync(otherContext, checklistId, step, step.Options[1].Id);
+            throw new DbUpdateException("FK_ChecklistRunSteps_StepOptions_SelectedOptionId");
+        }));
         var request = ChoiceRequest("Weather", "Sunny", "Cloudy");
         request.Options![0].Id = step.Options[0].Id;
 
         var result = await CreateController(dbContext).Update(checklistId, step.Id, request);
 
         Assert.IsType<ConflictObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task Update_Throws_WhenSaveFailsWhileRemovingOptionsNoRunPicked()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        ChecklistStepResponse step;
+        int checklistId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            checklistId = (await AddChecklistAsync(setupContext, "Daily")).Id;
+            step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        }
+
+        // Some other failure, so it isn't mistaken for a pick of the removed option.
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(() =>
+            throw new DbUpdateException("Something else")));
+        var request = ChoiceRequest("Weather", "Sunny", "Cloudy");
+        request.Options![0].Id = step.Options[0].Id;
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => CreateController(dbContext).Update(checklistId, step.Id, request));
     }
 
     [Fact]
@@ -344,7 +371,8 @@ public class ChecklistStepsControllerTests
             step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
         }
 
-        await using var dbContext = CreateDbContext(databaseName, new FailingSaveInterceptor());
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(() =>
+            throw new DbUpdateException("Something else")));
         var request = ChoiceRequest("Weather", "Sunny", "Rainy");
         request.Options![0].Id = step.Options[0].Id;
         request.Options![1].Id = step.Options[1].Id;
@@ -364,6 +392,37 @@ public class ChecklistStepsControllerTests
 
         Assert.Empty(Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value).Options);
         Assert.False(await dbContext.StepOptions.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Delete_ClearsAPickSavedAfterTheRunsWereRead()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        ChecklistStepResponse step;
+        int checklistId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            checklistId = (await AddChecklistAsync(setupContext, "Daily")).Id;
+            step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
+            await AddRunWithPickAsync(setupContext, checklistId, step, null);
+        }
+
+        // A fill-out picks an option after this request read the run, while it had no pick.
+        await using var otherContext = CreateDbContext(databaseName);
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+        {
+            var runStep = await otherContext.ChecklistRunSteps.SingleAsync();
+            runStep.SelectedOptionId = step.Options[0].Id;
+            await otherContext.SaveChangesAsync();
+        }));
+
+        Assert.IsType<NoContentResult>(await CreateController(dbContext).Delete(checklistId, step.Id));
+
+        await using var checkContext = CreateDbContext(databaseName);
+        var saved = await checkContext.ChecklistRunSteps.SingleAsync();
+        Assert.Null(saved.StepId);
+        Assert.Null(saved.SelectedOptionId);
     }
 
     [Fact]
@@ -531,15 +590,41 @@ public class ChecklistStepsControllerTests
         return new ChecklistDbContext(options);
     }
 
-    // Fails every save the way a foreign key failure in SQL Server would.
-    private sealed class FailingSaveInterceptor : SaveChangesInterceptor
+    // A run of the step, which has picked the given option.
+    private static async Task AddRunWithPickAsync(ChecklistDbContext dbContext, int checklistId, ChecklistStepResponse step, int? optionId)
     {
-        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+        dbContext.ChecklistRuns.Add(new ChecklistRun
+        {
+            ChecklistId = checklistId,
+            Steps = [new ChecklistRunStep
+            {
+                StepId = step.Id,
+                StepText = step.Text,
+                StepType = StepType.Choice,
+                SelectedOptionId = optionId
+            }]
+        });
+        await dbContext.SaveChangesAsync();
+    }
+
+    // Runs another request once, just before this context saves, to make two requests overlap. It can also
+    // throw to fail the save the way SQL Server would.
+    private sealed class BeforeSaveInterceptor(Func<Task> beforeSave) : SaveChangesInterceptor
+    {
+        private bool _ran;
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData eventData,
             InterceptionResult<int> result,
             CancellationToken cancellationToken = default)
         {
-            throw new DbUpdateException("FK_ChecklistRunSteps_StepOptions_SelectedOptionId");
+            if (!_ran)
+            {
+                _ran = true;
+                await beforeSave();
+            }
+
+            return result;
         }
     }
 }

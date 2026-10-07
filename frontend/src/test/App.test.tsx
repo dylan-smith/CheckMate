@@ -2530,6 +2530,46 @@ describe('App', () => {
         )
       })
 
+      it.each([
+        ['no options are left', []],
+        [
+          'the options show as a dropdown',
+          ['A', 'B', 'C', 'D', 'E', 'F'].map((text, index) => ({
+            id: index + 1,
+            text,
+          })),
+        ],
+      ])('can clear a removed pick when %s', async (_case, options) => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? jsonResponse({ ...weather, options })
+            : jsonResponse({
+                ...run,
+                steps: [{ ...picked, options, selectedOptionId: null }],
+              }),
+        )
+
+        renderAt('/runs/5')
+
+        expect(
+          await screen.findByText(
+            `"Rainy" was picked, but it's no longer an option.`,
+          ),
+        ).toBeInTheDocument()
+        await user.click(
+          screen.getByRole('button', { name: 'Clear "Weather"' }),
+        )
+
+        expect(await screen.findByText('0 of 1 done')).toBeInTheDocument()
+        expect(fetchMock).toHaveBeenLastCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
+          expect.objectContaining({
+            body: JSON.stringify({ optionId: null }),
+          }),
+        )
+      })
+
       it('shows the option picked when the run was filled out once complete', async () => {
         mockFetch(async () =>
           jsonResponse({
