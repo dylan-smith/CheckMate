@@ -2273,8 +2273,11 @@ describe('App', () => {
         screen.getByRole('checkbox', { name: 'Read email' }),
       ).toBeDisabled()
       expect(
-        screen.getByText(`Done ${local('2026-10-06T08:05:00Z')}`),
-      ).toBeInTheDocument()
+        screen.getByRole('checkbox', { name: 'Make coffee' }),
+      ).toHaveAccessibleDescription(`Done ${local('2026-10-06T08:05:00Z')}`)
+      expect(
+        screen.getByRole('checkbox', { name: 'Read email' }),
+      ).not.toHaveAccessibleDescription()
       expect(screen.getAllByText(/^Done /)).toHaveLength(1)
       expect(
         screen.getByText(`Completed ${local(completed.completedAt)}`),

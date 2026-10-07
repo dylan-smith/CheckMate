@@ -439,6 +439,11 @@ function RunView({ id }: { id: number }) {
                   // A step deleted from the checklist can't be saved any more.
                   const disabled = isComplete || completing || stepId === null
                   const kind = inputKinds[step.type]
+                  // A completed run is read-only, so it shows when each checkbox step was done.
+                  const doneTimeId =
+                    isComplete && step.completedAt
+                      ? `run-step-${index}-done`
+                      : undefined
                   return (
                     <ListItem key={stepId ?? `deleted-${index}`} disableGutters>
                       {kind ? (
@@ -476,14 +481,18 @@ function RunView({ id }: { id: number }) {
                                     handleToggle(stepId, event.target.checked)
                                   }
                                 }}
+                                // Read out with the checkbox, as a text step's helper text is.
+                                slotProps={{
+                                  input: { 'aria-describedby': doneTimeId },
+                                }}
                               />
                             }
                             label={step.text}
                           />
-                          {/* A completed run is read-only, so it shows when each step was done. */}
-                          {isComplete && step.completedAt && (
+                          {doneTimeId && step.completedAt && (
                             // Styled like a text step's helper text, which is greyed out with the field.
                             <Typography
+                              id={doneTimeId}
                               variant="caption"
                               sx={{
                                 display: 'block',
