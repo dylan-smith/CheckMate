@@ -33,7 +33,7 @@ public class ChecklistRunsControllerTests
         Assert.Collection(run.Steps,
             step => Assert.Equal((first.Id, "First", false), (step.StepId!.Value, step.Text, step.IsDone)),
             step => Assert.Equal((second.Id, "Second", false), (step.StepId!.Value, step.Text, step.IsDone)));
-        Assert.Equal(2, await dbContext.RunStepResponses.CountAsync(response => response.RunId == run.Id));
+        Assert.Equal(2, await dbContext.ChecklistRunSteps.CountAsync(step => step.RunId == run.Id));
     }
 
     [Fact]
@@ -49,7 +49,7 @@ public class ChecklistRunsControllerTests
     }
 
     [Fact]
-    public async Task GetById_ReturnsRunWithSavedResponses()
+    public async Task GetById_ReturnsRunWithSavedSteps()
     {
         var databaseName = Guid.NewGuid().ToString();
         int runId;
@@ -107,7 +107,7 @@ public class ChecklistRunsControllerTests
         var untickedStep = Assert.IsType<ChecklistRunStepResponse>(Assert.IsType<OkObjectResult>(unticked.Result).Value);
         Assert.False(untickedStep.IsDone);
         Assert.Null(untickedStep.CompletedAt);
-        var saved = await dbContext.RunStepResponses.SingleAsync();
+        var saved = await dbContext.ChecklistRunSteps.SingleAsync();
         Assert.False(saved.IsDone);
         Assert.Null(saved.CompletedAt);
     }
@@ -150,7 +150,7 @@ public class ChecklistRunsControllerTests
         var result = await controller.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = true });
 
         Assert.IsType<ConflictObjectResult>(result.Result);
-        Assert.False((await dbContext.RunStepResponses.SingleAsync()).IsDone);
+        Assert.False((await dbContext.ChecklistRunSteps.SingleAsync()).IsDone);
     }
 
     [Fact]
@@ -241,7 +241,7 @@ public class ChecklistRunsControllerTests
 
         Assert.IsType<ConflictObjectResult>(result.Result);
         await using var checkContext = CreateDbContext(databaseName);
-        Assert.False((await checkContext.RunStepResponses.SingleAsync()).IsDone);
+        Assert.False((await checkContext.ChecklistRunSteps.SingleAsync()).IsDone);
         Assert.NotNull((await checkContext.ChecklistRuns.SingleAsync()).CompletedAt);
     }
 

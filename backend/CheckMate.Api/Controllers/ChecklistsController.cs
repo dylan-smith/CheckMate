@@ -184,7 +184,7 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
         if (!dbContext.Database.IsRelational())
         {
             await dbContext.ChecklistSteps.Where(step => step.ChecklistId == id).LoadAsync();
-            await dbContext.ChecklistRuns.Where(run => run.ChecklistId == id).Include(run => run.Responses).LoadAsync();
+            await dbContext.ChecklistRuns.Where(run => run.ChecklistId == id).Include(run => run.Steps).LoadAsync();
         }
 
         dbContext.Checklists.Remove(checklist);
