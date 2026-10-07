@@ -19,7 +19,10 @@ module.exports = async ({ github, context }) => {
   const statusLines = {
     deploying: `⏳ Deploying \`${sha}\`… ([workflow run](${runUrl}))`,
     ready: `✅ Ready. Deployed \`${sha}\` at ${now}.`,
-    failed: `❌ Deploying \`${sha}\` failed ([workflow run](${runUrl})). An earlier deployment, if any, is still running.`,
+    // A deployment updates the preview in place, so after a failure it may be down or only partly updated.
+    failed:
+      `❌ Deploying \`${sha}\` failed ([workflow run](${runUrl})). The preview may be unavailable or only ` +
+      'partly updated until a later deployment succeeds.',
     deleting: '🧹 Deleting the preview environment now that the PR is closed…',
     deleted: `🗑️ The preview environment was deleted at ${now}.`,
     'delete-failed': `⚠️ Deleting the preview environment failed ([workflow run](${runUrl})). The cleanup after the next PR to close retries it.`,

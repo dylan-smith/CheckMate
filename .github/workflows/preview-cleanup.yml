@@ -73,7 +73,8 @@ jobs:
     name: Sweep Orphaned Previews
     runs-on: ubuntu-latest
     needs: delete
-    # Runs whether or not this PR's own deletion succeeded, and retries it if it didn't.
+    # Runs whether or not this PR's own deletion succeeded. It skips this PR, so a failed deletion stays reported
+    # as failed on its comment, and the sweep after the next PR closes retries it.
     if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
     # One sweep at a time, so two PRs closing together don't delete the same leftovers at once.
     concurrency:
@@ -98,6 +99,7 @@ jobs:
       # Every per-PR resource carries a pr-number tag (infra/preview.bicep). A PR that can't be read is kept,
       # since deleting a live preview is worse than keeping a stale one until the next sweep. One failed
       # deletion doesn't stop the others; the step fails at the end if any did.
+      # This PR is left to the delete job (see the job's comment above).
       - name: Delete previews whose PR is closed
         shell: bash
         run: |
@@ -107,6 +109,9 @@ jobs:
             --output tsv)"
           failed=()
           for pr in $(sort -un <<<"${listing}"); do
+            if [ "${pr}" = "${CURRENT_PR}" ]; then
+              continue
+            fi
             state="$(gh pr view "${pr}" --repo "${GITHUB_REPOSITORY}" --json state --jq .state 2>/dev/null || echo UNKNOWN)"
             case "${state}" in
               OPEN)
@@ -130,3 +135,4 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+          CURRENT_PR: ${{ github.event.pull_request.number }}
