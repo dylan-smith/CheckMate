@@ -1,10 +1,4 @@
-import {
-  createEvent,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1035,29 +1029,41 @@ describe('App', () => {
       })
     })
 
-    // jsdom has no DragEvent, so the pointer position is set on the event by hand.
-    function dragStepOnto(source: string, target: string, clientY: number) {
-      const dataTransfer = {
-        effectAllowed: '',
-        dropEffect: '',
-        setData: vi.fn(),
-        setDragImage: vi.fn(),
-      }
-      const targetItem = screen
-        .getAllByRole('listitem')
-        .find((item) => item.textContent?.includes(target))
-      if (!targetItem) {
-        throw new Error(`No step "${target}"`)
-      }
-      fireEvent.dragStart(
-        screen.getByTitle(`Drag to reorder step "${source}"`),
-        { dataTransfer },
-      )
-      for (const type of ['dragOver', 'drop'] as const) {
-        const event = createEvent[type](targetItem, { dataTransfer })
-        Object.defineProperty(event, 'clientY', { value: clientY })
-        fireEvent(targetItem, event)
-      }
+    const rowHeight = 50
+
+    // Drags a step by its handle to the middle of the row at targetIndex.
+    async function dragStep(
+      text: string,
+      fromIndex: number,
+      targetIndex: number,
+    ) {
+      // jsdom has no layout, so each step gets a row stacked from the top. Anything else measured is
+      // the dragged copy, which starts on the dragged step's row.
+      const rows = screen.getAllByRole('listitem')
+      vi.spyOn(
+        HTMLElement.prototype,
+        'getBoundingClientRect',
+      ).mockImplementation(function (this: HTMLElement) {
+        const index = rows.indexOf(this)
+        return DOMRect.fromRect({
+          x: 0,
+          y: (index === -1 ? fromIndex : index) * rowHeight,
+          width: 600,
+          height: rowHeight,
+        })
+      })
+
+      const handle = screen.getByTitle(`Drag to reorder step "${text}"`)
+      const pointer = { isPrimary: true, button: 0, clientX: 10 }
+      const fromY = fromIndex * rowHeight + rowHeight / 2
+      const toY = targetIndex * rowHeight + rowHeight / 2
+      fireEvent.pointerDown(handle, { ...pointer, clientY: fromY })
+      // The first move passes the few pixels a drag needs to start.
+      fireEvent.pointerMove(document, { ...pointer, clientY: fromY + 10 })
+      fireEvent.pointerMove(document, { ...pointer, clientY: toY })
+      // dnd-kit works out where the step is over in an animation frame.
+      await act(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+      fireEvent.pointerUp(document, { ...pointer, clientY: toY })
     }
 
     it('drags a step above another and saves the new order', async () => {
@@ -1074,8 +1080,7 @@ describe('App', () => {
       renderAt('/checklists/1')
       await screen.findByText('Read email')
 
-      // The rows have no size in jsdom, so any pointer above 0 is in a row's top half.
-      dragStepOnto('Read email', 'Make coffee', -1)
+      await dragStep('Read email', 1, 0)
 
       await waitFor(() => {
         expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
@@ -1101,8 +1106,7 @@ describe('App', () => {
       renderAt('/checklists/1')
       await screen.findByText('Read email')
 
-      // Below "Make coffee" is where "Read email" already is.
-      dragStepOnto('Read email', 'Make coffee', 1)
+      await dragStep('Read email', 1, 1)
 
       expect(fetch).not.toHaveBeenCalledWith(
         expect.anything(),
