@@ -261,11 +261,11 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         }
 
         // The checklist's graph as it would be with the new prerequisites.
-        var graph = steps.Values.ToDictionary(
+        var graph = steps.Values.ToDictionary<ChecklistStep, int, IReadOnlyCollection<int>>(
             step => step.Id,
             step => step.Id == changedStepId
                 ? dependsOnStepIds
-                : (IReadOnlyCollection<int>)[.. step.DependsOn.Select(dependency => dependency.DependsOnStepId)]);
+                : [.. step.DependsOn.Select(dependency => dependency.DependsOnStepId)]);
 
         if (StepDependencyGraph.FindCycle(graph) is not { } cycle)
         {

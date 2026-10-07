@@ -1343,6 +1343,60 @@ describe('App', () => {
           screen.getByRole('combobox', { name: 'Depends on' }),
         ).toHaveTextContent('Read email')
       })
+
+      it('drops a step deleted while the editor that picked it is open', async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'DELETE') {
+            return new Response(null, { status: 204 })
+          }
+          if (init?.method === 'PUT') {
+            return jsonResponse({
+              id: 11,
+              text: 'Read email',
+              type: 'Checkbox',
+              sortOrder: 1,
+              dependsOnStepIds: [],
+            })
+          }
+          return jsonResponse({
+            ...checklistWithSteps,
+            steps: [
+              checklistWithSteps.steps[0],
+              { ...checklistWithSteps.steps[1], dependsOnStepIds: [10] },
+            ],
+          })
+        })
+
+        renderAt('/checklists/1')
+
+        await user.click(
+          await screen.findByRole('button', { name: 'Edit step "Read email"' }),
+        )
+        await user.click(
+          screen.getByRole('button', { name: 'Delete step "Make coffee"' }),
+        )
+        await waitFor(() => {
+          expect(screen.getAllByRole('listitem')).toHaveLength(1)
+        })
+        // With only one step left the picker is hidden, so the deleted step can't be left picked in it.
+        await user.click(screen.getByRole('button', { name: 'Save' }))
+
+        await waitFor(() => {
+          expect(fetch).toHaveBeenCalledWith(
+            expect.stringMatching(/\/api\/checklists\/1\/steps\/11$/),
+            expect.objectContaining({
+              method: 'PUT',
+              body: JSON.stringify({
+                text: 'Read email',
+                type: 'Checkbox',
+                dependsOnStepIds: [],
+              }),
+            }),
+          )
+        })
+      })
     })
 
     it('keeps the steps after renaming the checklist', async () => {

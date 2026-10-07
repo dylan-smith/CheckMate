@@ -285,6 +285,8 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
               : step,
           ),
       )
+      // An open editor may have picked it too, and saving it there would be rejected.
+      setEditDependsOn((current) => current.filter((id) => id !== stepId))
       if (editingId === stepId) {
         setEditingId(null)
       }
