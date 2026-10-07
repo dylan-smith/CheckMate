@@ -10,14 +10,14 @@ public record ChecklistRunStepResponse(
     DateTimeOffset? CompletedAt,
     string? ResponseText)
 {
-    public static ChecklistRunStepResponse From(RunStepResponse response)
+    public static ChecklistRunStepResponse From(ChecklistRunStep step)
     {
         return new(
-            response.StepId,
-            response.StepText,
-            response.StepType,
-            response.IsDone,
-            response.CompletedAt,
-            response.ResponseText);
+            step.StepId,
+            step.StepText,
+            step.StepType,
+            step.IsDone,
+            step.CompletedAt,
+            step.ResponseText);
     }
 }

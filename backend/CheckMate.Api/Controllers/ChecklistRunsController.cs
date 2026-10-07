@@ -41,7 +41,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         {
             ChecklistId = checklistId,
             StartedAt = DateTimeOffset.UtcNow,
-            Responses = [.. steps.Select((step, index) => new RunStepResponse
+            Steps = [.. steps.Select((step, index) => new ChecklistRunStep
             {
                 StepId = step.Id,
                 StepText = step.Text,
@@ -65,7 +65,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
         var run = await dbContext.ChecklistRuns
             .AsNoTracking()
-            .Include(item => item.Responses)
+            .Include(item => item.Steps)
             .FirstOrDefaultAsync(item => item.Id == runId);
 
         if (run is null)
@@ -88,10 +88,10 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return NotFound();
         }
 
-        var response = await dbContext.RunStepResponses
+        var runStep = await dbContext.ChecklistRunSteps
             .FirstOrDefaultAsync(item => item.RunId == runId && item.StepId == stepId);
 
-        if (response is null)
+        if (runStep is null)
         {
             logger.LogWarning("Step {StepId} not found in run {RunId}", stepId, runId);
             return NotFound();
@@ -103,7 +103,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return Conflict(new { message = CompletedRunMessage });
         }
 
-        ApplyResponse(response, request);
+        ApplyResponse(runStep, request);
 
         // Write the run's CompletedAt back unchanged, so the save checks the run is still open in the same
         // transaction (see IsConcurrencyToken in ChecklistDbContext) and can't change a run completed since it was read.
@@ -121,14 +121,14 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
         logger.LogInformation("Saved step {StepId} in run {RunId}", stepId, runId);
 
-        return Ok(ChecklistRunStepResponse.From(response));
+        return Ok(ChecklistRunStepResponse.From(runStep));
     }
 
     [HttpPost("{runId:int}/complete")]
     public async Task<ActionResult<ChecklistRunResponse>> Complete(int runId)
     {
         var run = await dbContext.ChecklistRuns
-            .Include(item => item.Responses)
+            .Include(item => item.Steps)
             .FirstOrDefaultAsync(item => item.Id == runId);
 
         if (run is null)
@@ -162,26 +162,26 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
     }
 
     // Each step type reads its own field of the request and decides from it whether the step is done.
-    private static void ApplyResponse(RunStepResponse response, RunStepRequest request)
+    private static void ApplyResponse(ChecklistRunStep runStep, RunStepRequest request)
     {
         bool isDone;
 
-        switch (response.StepType)
+        switch (runStep.StepType)
         {
             case StepType.Text:
                 var trimmedText = request.Text?.Trim();
-                response.ResponseText = string.IsNullOrEmpty(trimmedText) ? null : trimmedText;
-                isDone = response.ResponseText is not null;
+                runStep.ResponseText = string.IsNullOrEmpty(trimmedText) ? null : trimmedText;
+                isDone = runStep.ResponseText is not null;
                 break;
             default:
                 isDone = request.IsDone;
                 break;
         }
 
-        if (response.IsDone != isDone)
+        if (runStep.IsDone != isDone)
         {
-            response.IsDone = isDone;
-            response.CompletedAt = isDone ? DateTimeOffset.UtcNow : null;
+            runStep.IsDone = isDone;
+            runStep.CompletedAt = isDone ? DateTimeOffset.UtcNow : null;
         }
     }
 
@@ -197,9 +197,9 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
     private static ChecklistRunResponse ToResponse(ChecklistRun run, string checklistName)
     {
-        var steps = run.Responses
-            .OrderBy(response => response.SortOrder)
-            .ThenBy(response => response.Id)
+        var steps = run.Steps
+            .OrderBy(step => step.SortOrder)
+            .ThenBy(step => step.Id)
             .Select(ChecklistRunStepResponse.From)
             .ToList();
 
