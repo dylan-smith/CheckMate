@@ -450,6 +450,7 @@ resource availabilityTest 'Microsoft.Insights/webtests@2022-06-15' = {
     SyntheticMonitorId: 'checkmate-api-health'
     Name: availabilityTestName
     Kind: 'standard'
+    // CI turns it off while a backend deploy has the API paused (.github/scripts/set-health-check.sh).
     Enabled: true
     Frequency: 900
     // Allows for an F1 cold start, which can take most of a minute.
@@ -492,7 +493,8 @@ var metricAlerts = [
     timeAggregation: 'Average'
     operator: 'LessThan'
     threshold: 50
-    // An hour holds 4 runs, so a deploy's pause of up to about 25 minutes (2 failed runs) doesn't fire it.
+    // An hour holds 4 runs, so a brief blip of up to 2 failed runs doesn't fire it. Deploy pauses don't count:
+    // CI turns the test off while the API is paused.
     windowSize: 'PT1H'
     frequency: 'PT5M'
     dimensions: [
