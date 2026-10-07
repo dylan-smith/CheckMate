@@ -4,6 +4,7 @@ using CheckMate.Api.Data;
 using CheckMate.Api.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CheckMate.Api.Tests;
@@ -226,6 +227,51 @@ public class ChecklistRunsControllerTests
             });
     }
 
+    [Fact]
+    public async Task UpdateStep_ReturnsConflict_WhenRunIsCompletedWhileSaving()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        var (runId, stepId) = await StartRunWithOneStepAsync(databaseName);
+        await using var otherContext = CreateDbContext(databaseName);
+        // Another request completes the run after this one has checked it is open, but before it saves.
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+            Assert.IsType<OkObjectResult>((await CreateController(otherContext).Complete(runId)).Result)));
+
+        var result = await CreateController(dbContext).UpdateStep(runId, stepId, new RunStepRequest { IsDone = true });
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        await using var checkContext = CreateDbContext(databaseName);
+        Assert.False((await checkContext.RunStepResponses.SingleAsync()).IsDone);
+        Assert.NotNull((await checkContext.ChecklistRuns.SingleAsync()).CompletedAt);
+    }
+
+    [Fact]
+    public async Task Complete_ReturnsConflict_AndKeepsFirstCompletion_WhenAnotherCompletionSavesFirst()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        var (runId, _) = await StartRunWithOneStepAsync(databaseName);
+        await using var otherContext = CreateDbContext(databaseName);
+        DateTimeOffset? firstCompletedAt = null;
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+            firstCompletedAt = GetRun(await CreateController(otherContext).Complete(runId)).CompletedAt));
+
+        var result = await CreateController(dbContext).Complete(runId);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.NotNull(firstCompletedAt);
+        await using var checkContext = CreateDbContext(databaseName);
+        Assert.Equal(firstCompletedAt, (await checkContext.ChecklistRuns.SingleAsync()).CompletedAt);
+    }
+
+    private static async Task<(int RunId, int StepId)> StartRunWithOneStepAsync(string databaseName)
+    {
+        await using var dbContext = CreateDbContext(databaseName);
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Step");
+        var run = GetRun(await CreateController(dbContext).Start(checklist.Id));
+        return (run.Id, step.Id);
+    }
+
     private static ChecklistRunResponse GetRun(ActionResult<ChecklistRunResponse> result)
     {
         var objectResult = Assert.IsAssignableFrom<ObjectResult>(result.Result);
@@ -253,12 +299,33 @@ public class ChecklistRunsControllerTests
         return step;
     }
 
-    private static ChecklistDbContext CreateDbContext(string? databaseName = null)
+    private static ChecklistDbContext CreateDbContext(string? databaseName = null, params IInterceptor[] interceptors)
     {
         var options = new DbContextOptionsBuilder<ChecklistDbContext>()
             .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString())
+            .AddInterceptors(interceptors)
             .Options;
 
         return new ChecklistDbContext(options);
+    }
+
+    // Runs another request once, just before this context saves, to make two requests overlap.
+    private sealed class BeforeSaveInterceptor(Func<Task> beforeSave) : SaveChangesInterceptor
+    {
+        private bool _ran;
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_ran)
+            {
+                _ran = true;
+                await beforeSave();
+            }
+
+            return result;
+        }
     }
 }

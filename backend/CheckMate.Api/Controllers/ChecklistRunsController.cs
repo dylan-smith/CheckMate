@@ -106,7 +106,20 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         {
             response.IsDone = request.IsDone;
             response.CompletedAt = request.IsDone ? DateTimeOffset.UtcNow : null;
+        }
+
+        // Write the run's CompletedAt back unchanged, so the save checks the run is still open in the same
+        // transaction (see IsConcurrencyToken in ChecklistDbContext) and can't change a run completed since it was read.
+        dbContext.Entry(run).Property(item => item.CompletedAt).IsModified = true;
+
+        try
+        {
             await dbContext.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            logger.LogWarning("Rejected step update for run {RunId} completed while saving", runId);
+            return Conflict(new { message = CompletedRunMessage });
         }
 
         logger.LogInformation("Saved step {StepId} in run {RunId}", stepId, runId);
@@ -134,7 +147,17 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         }
 
         run.CompletedAt = DateTimeOffset.UtcNow;
-        await dbContext.SaveChangesAsync();
+
+        // Only saves while CompletedAt is still null, so of two overlapping completions the second gets a 409.
+        try
+        {
+            await dbContext.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            logger.LogWarning("Rejected completion of run {RunId} completed while saving", runId);
+            return Conflict(new { message = CompletedRunMessage });
+        }
 
         logger.LogInformation("Completed run {RunId}", runId);
 

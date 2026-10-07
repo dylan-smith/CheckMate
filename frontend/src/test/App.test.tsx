@@ -1288,6 +1288,50 @@ describe('App', () => {
       expect(trackException).not.toHaveBeenCalled()
     })
 
+    it('keeps the run read-only and offers a reload when reloading after a 409 fails', async () => {
+      const user = userEvent.setup()
+      const completed = { ...run, completedAt: '2026-10-06T08:30:00Z' }
+      let loads = 0
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return jsonResponse(
+            { message: "This run is complete and can't be changed." },
+            409,
+          )
+        }
+        loads += 1
+        if (loads === 2) {
+          throw new TypeError('Failed to fetch')
+        }
+        return jsonResponse(loads === 1 ? run : completed)
+      })
+
+      renderAt('/runs/5')
+      await user.click(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      )
+
+      const reload = await screen.findByRole('button', { name: 'Reload' })
+      expect(
+        screen.getByText("This run is complete and can't be changed."),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeDisabled()
+      expect(
+        screen.queryByRole('button', { name: 'Complete' }),
+      ).not.toBeInTheDocument()
+
+      await user.click(reload)
+
+      expect(
+        await screen.findByText(/^Completed /, { selector: 'div' }),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Reload' }),
+      ).not.toBeInTheDocument()
+    })
+
     it('keeps a deleted step but does not let it be ticked', async () => {
       mockFetch(async () =>
         jsonResponse({

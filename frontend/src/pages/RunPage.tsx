@@ -31,6 +31,9 @@ function RunView({ id }: { id: number }) {
     new Set(),
   )
   const [completing, setCompleting] = useState(false)
+  // Set by a 409, before the reload that fetches the completed run, so the page can't be edited if that fails.
+  const [completedElsewhere, setCompletedElsewhere] = useState(false)
+  const [reloadFailed, setReloadFailed] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
   useEffect(() => {
@@ -76,16 +79,25 @@ function RunView({ id }: { id: number }) {
     )
   }
 
-  // A 409 means the run was completed somewhere else, so show it as it is now: complete and read-only.
+  // A 409 means the run was completed somewhere else. It's read-only from now on, even if reloading it fails.
   async function showCompletedRun(error: ApiError) {
+    setCompletedElsewhere(true)
     setErrorMessage(error.message)
+    await reloadCompletedRun()
+  }
+
+  async function reloadCompletedRun() {
+    setReloadFailed(false)
     try {
       const loaded = await getRun(id)
-      if (loaded) {
+      if (loaded === null) {
+        setNotFound(true)
+      } else {
         setRun(loaded)
       }
     } catch {
-      // The message above already says why the change didn't save.
+      // The run is still shown as read-only, and the error alert offers to try again.
+      setReloadFailed(true)
     }
   }
 
@@ -160,7 +172,7 @@ function RunView({ id }: { id: number }) {
     }
   }
 
-  const isComplete = run?.completedAt != null
+  const isComplete = run?.completedAt != null || completedElsewhere
   const doneCount = run?.steps.filter((step) => step.isDone).length ?? 0
 
   return (
@@ -173,7 +185,24 @@ function RunView({ id }: { id: number }) {
         </Box>
       )}
 
-      {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
+      {errorMessage && (
+        <Alert
+          severity="error"
+          action={
+            reloadFailed && (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => void reloadCompletedRun()}
+              >
+                Reload
+              </Button>
+            )
+          }
+        >
+          {errorMessage}
+        </Alert>
+      )}
 
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>

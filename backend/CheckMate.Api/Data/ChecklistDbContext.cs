@@ -44,6 +44,12 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
             .HasForeignKey(run => run.ChecklistId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        // Saves that must only happen while the run is open include the run with this as the original value, so the
+        // UPDATE only matches while CompletedAt is still null and a run completed in the meantime fails the save.
+        modelBuilder.Entity<ChecklistRun>()
+            .Property(run => run.CompletedAt)
+            .IsConcurrencyToken();
+
         modelBuilder.Entity<RunStepResponse>()
             .HasOne<ChecklistRun>()
             .WithMany(run => run.Responses)
