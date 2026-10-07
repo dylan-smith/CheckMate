@@ -35,7 +35,8 @@ type InputKind = {
   parse: (draft: string) => ParsedDraft
 }
 
-// Matches the API, which keeps numbers with up to 12 digits before the decimal point and 6 after it.
+// Matches the API, which keeps numbers with up to 9 digits before the decimal point and 6 after it. That's
+// 15 significant digits, which a JavaScript number holds exactly, so sending it as a number can't round it.
 const numberPattern = /^[-+]?(\d+\.?\d*|\.\d+)$/
 
 function parseNumber(draft: string): ParsedDraft {
@@ -48,11 +49,11 @@ function parseNumber(draft: string): ParsedDraft {
   }
   const [whole, fraction = ''] = trimmed.replace(/^[-+]/, '').split('.')
   if (
-    whole.replace(/^0+/, '').length > 12 ||
+    whole.replace(/^0+/, '').length > 9 ||
     fraction.replace(/0+$/, '').length > 6
   ) {
     return {
-      error: 'Use at most 12 digits before the decimal point and 6 after it.',
+      error: 'Use at most 9 digits before the decimal point and 6 after it.',
     }
   }
   const number = Number(trimmed)

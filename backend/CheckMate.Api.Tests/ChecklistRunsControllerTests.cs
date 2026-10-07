@@ -191,7 +191,8 @@ public class ChecklistRunsControllerTests
     [InlineData("-3.5")]
     [InlineData("0")]
     [InlineData("0.000001")]
-    [InlineData("-999999999999.999999")]
+    [InlineData("999999999.999999")]
+    [InlineData("-999999999.999999")]
     public async Task UpdateStep_SavesNumber_ForNumberStep_AndMarksItDone(string value)
     {
         var number = decimal.Parse(value, CultureInfo.InvariantCulture);
@@ -232,9 +233,12 @@ public class ChecklistRunsControllerTests
     }
 
     [Theory]
-    [InlineData("1000000000000")]
-    [InlineData("-1000000000000")]
+    [InlineData("1000000000")]
+    [InlineData("-1000000000")]
     [InlineData("1.0000001")]
+    // decimal.MinValue and MaxValue: Math.Abs(decimal) can't overflow, unlike Math.Abs(int.MinValue).
+    [InlineData("-79228162514264337593543950335")]
+    [InlineData("79228162514264337593543950335")]
     public async Task UpdateStep_ReturnsValidationProblem_WhenNumberDoesNotFit(string value)
     {
         var number = decimal.Parse(value, CultureInfo.InvariantCulture);

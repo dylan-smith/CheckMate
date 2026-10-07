@@ -1839,11 +1839,11 @@ describe('App', () => {
         ['-', 'Enter a number, like 12 or -3.5.'],
         [
           '1.0000001',
-          'Use at most 12 digits before the decimal point and 6 after it.',
+          'Use at most 9 digits before the decimal point and 6 after it.',
         ],
         [
-          '1000000000000',
-          'Use at most 12 digits before the decimal point and 6 after it.',
+          '1000000000',
+          'Use at most 9 digits before the decimal point and 6 after it.',
         ],
       ])('rejects %j without saving it', async (typed, message) => {
         const user = userEvent.setup()
@@ -1861,6 +1861,33 @@ describe('App', () => {
         expect(field).toHaveValue(typed)
         expect(fetchMock).toHaveBeenCalledTimes(1)
       })
+
+      it.each(['-999999999.999999', '123456789.123456', '999999999.000001'])(
+        'sends and shows every digit of %s, the most allowed',
+        async (typed) => {
+          const user = userEvent.setup()
+          const bodies: string[] = []
+          mockFetch(async (_url, init) => {
+            if (init?.method === 'PUT') {
+              bodies.push(init.body as string)
+              return respondWithNumber(init)
+            }
+            return jsonResponse(runWithNumber)
+          })
+
+          renderAt('/runs/5')
+          const field = await screen.findByRole('textbox', {
+            name: 'Fridge temperature',
+          })
+          await user.type(field, typed)
+          await user.tab()
+
+          expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
+          // Compared as text, so a value rounded on the way through a JavaScript number would fail.
+          expect(bodies).toEqual([`{"number":${typed}}`])
+          expect(field).toHaveValue(typed)
+        },
+      )
 
       it('clears the error and saves once the number is fixed', async () => {
         const user = userEvent.setup()

@@ -81,6 +81,6 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
 
         modelBuilder.Entity<ChecklistRunStep>()
             .Property(step => step.ResponseNumber)
-            .HasPrecision(18, 6);
+            .HasPrecision(15, 6);
     }
 }

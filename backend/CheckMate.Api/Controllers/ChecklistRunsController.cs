@@ -17,9 +17,9 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
     private const string CompletedRunMessage = "This run is complete and can't be changed.";
 
     private const string NumberLimitsMessage =
-        "The number must have at most 12 digits before the decimal point and 6 after it.";
+        "The number must have at most 9 digits before the decimal point and 6 after it.";
 
-    private const decimal MaxResponseNumber = 1_000_000_000_000m;
+    private const decimal MaxResponseNumber = 1_000_000_000m;
 
     [HttpPost("~/api/checklists/{checklistId:int}/runs")]
     public async Task<ActionResult<ChecklistRunResponse>> Start(int checklistId)
@@ -174,7 +174,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         return Ok(ToResponse(run, await GetChecklistNameAsync(run.ChecklistId)));
     }
 
-    // Matches the DECIMAL(18, 6) ResponseNumber column, which would otherwise round or overflow.
+    // Matches the DECIMAL(15, 6) ResponseNumber column, which would otherwise round or overflow.
     private static bool FitsResponseNumber(decimal number)
     {
         return Math.Abs(number) < MaxResponseNumber && decimal.Round(number, 6) == number;

@@ -489,7 +489,7 @@ test.describe('Checklist management', () => {
       const { id: runId } = (await runResponse.json()) as { id: number }
       const stepUrl = `http://localhost:5269/api/runs/${runId}/steps/${stepId}`
 
-      for (const number of ['abc', true, 1.0000001, 1e13]) {
+      for (const number of ['abc', true, 1.0000001, 1e9, 1e13]) {
         const response = await request.put(stepUrl, { data: { number } })
         expect(response.status(), `${String(number)}`).toBe(400)
       }
