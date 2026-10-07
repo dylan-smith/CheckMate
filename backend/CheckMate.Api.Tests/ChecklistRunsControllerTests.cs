@@ -1,0 +1,264 @@
+using CheckMate.Api.Contracts;
+using CheckMate.Api.Controllers;
+using CheckMate.Api.Data;
+using CheckMate.Api.Models;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace CheckMate.Api.Tests;
+
+public class ChecklistRunsControllerTests
+{
+    [Fact]
+    public async Task Start_CreatesRunWithEveryStepInOrder()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var controller = CreateController(dbContext);
+        var before = DateTimeOffset.UtcNow;
+
+        var result = await controller.Start(checklist.Id);
+
+        var created = Assert.IsType<CreatedAtActionResult>(result.Result);
+        var run = Assert.IsType<ChecklistRunResponse>(created.Value);
+        Assert.Equal(nameof(ChecklistRunsController.GetById), created.ActionName);
+        Assert.Equal(checklist.Id, run.ChecklistId);
+        Assert.Equal("Daily", run.ChecklistName);
+        Assert.InRange(run.StartedAt, before, DateTimeOffset.UtcNow);
+        Assert.Null(run.CompletedAt);
+        Assert.Collection(run.Steps,
+            step => Assert.Equal((first.Id, "First", false), (step.StepId!.Value, step.Text, step.IsDone)),
+            step => Assert.Equal((second.Id, "Second", false), (step.StepId!.Value, step.Text, step.IsDone)));
+        Assert.Equal(2, await dbContext.RunStepResponses.CountAsync(response => response.RunId == run.Id));
+    }
+
+    [Fact]
+    public async Task Start_ReturnsNotFound_WhenChecklistDoesNotExist()
+    {
+        await using var dbContext = CreateDbContext();
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Start(999);
+
+        Assert.IsType<NotFoundResult>(result.Result);
+        Assert.False(await dbContext.ChecklistRuns.AnyAsync());
+    }
+
+    [Fact]
+    public async Task GetById_ReturnsRunWithSavedResponses()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        int runId;
+        int stepId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            var checklist = await AddChecklistAsync(setupContext, "Daily");
+            stepId = (await AddStepAsync(setupContext, checklist.Id, "Make coffee")).Id;
+            var controller = CreateController(setupContext);
+            runId = GetRun(await controller.Start(checklist.Id)).Id;
+            await controller.UpdateStep(runId, stepId, new RunStepRequest { IsDone = true });
+        }
+
+        await using var dbContext = CreateDbContext(databaseName);
+
+        var result = await CreateController(dbContext).GetById(runId);
+
+        var run = Assert.IsType<ChecklistRunResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        var step = Assert.Single(run.Steps);
+        Assert.Equal(stepId, step.StepId);
+        Assert.True(step.IsDone);
+        Assert.NotNull(step.CompletedAt);
+    }
+
+    [Fact]
+    public async Task GetById_ReturnsNotFound_WhenRunDoesNotExist()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var result = await CreateController(dbContext).GetById(999);
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task UpdateStep_SavesTick_AndClearsItWhenUnticked()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Step");
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        var before = DateTimeOffset.UtcNow;
+
+        var ticked = await controller.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = true });
+
+        var tickedStep = Assert.IsType<ChecklistRunStepResponse>(Assert.IsType<OkObjectResult>(ticked.Result).Value);
+        Assert.True(tickedStep.IsDone);
+        Assert.NotNull(tickedStep.CompletedAt);
+        Assert.InRange(tickedStep.CompletedAt.Value, before, DateTimeOffset.UtcNow);
+
+        var unticked = await controller.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = false });
+
+        var untickedStep = Assert.IsType<ChecklistRunStepResponse>(Assert.IsType<OkObjectResult>(unticked.Result).Value);
+        Assert.False(untickedStep.IsDone);
+        Assert.Null(untickedStep.CompletedAt);
+        var saved = await dbContext.RunStepResponses.SingleAsync();
+        Assert.False(saved.IsDone);
+        Assert.Null(saved.CompletedAt);
+    }
+
+    [Fact]
+    public async Task UpdateStep_ReturnsNotFound_WhenStepIsNotInRun()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        // Added after the run started, so the run doesn't include it.
+        var step = await AddStepAsync(dbContext, checklist.Id, "Later");
+
+        var result = await controller.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = true });
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task UpdateStep_ReturnsNotFound_WhenRunDoesNotExist()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var result = await CreateController(dbContext).UpdateStep(999, 1, new RunStepRequest { IsDone = true });
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task UpdateStep_ReturnsConflict_AndKeepsResponse_WhenRunIsComplete()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Step");
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.Complete(runId);
+
+        var result = await controller.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = true });
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.False((await dbContext.RunStepResponses.SingleAsync()).IsDone);
+    }
+
+    [Fact]
+    public async Task Complete_RecordsCompletionTime()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        await AddStepAsync(dbContext, checklist.Id, "Step");
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        var before = DateTimeOffset.UtcNow;
+
+        var result = await controller.Complete(runId);
+
+        var run = Assert.IsType<ChecklistRunResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.NotNull(run.CompletedAt);
+        Assert.InRange(run.CompletedAt.Value, before, DateTimeOffset.UtcNow);
+        Assert.Single(run.Steps);
+        Assert.Equal(run.CompletedAt, (await dbContext.ChecklistRuns.SingleAsync()).CompletedAt);
+    }
+
+    [Fact]
+    public async Task Complete_ReturnsConflict_WhenRunIsAlreadyComplete()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        var first = GetRun(await controller.Complete(runId));
+
+        var result = await controller.Complete(runId);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(first.CompletedAt, (await dbContext.ChecklistRuns.SingleAsync()).CompletedAt);
+    }
+
+    [Fact]
+    public async Task Complete_ReturnsNotFound_WhenRunDoesNotExist()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var result = await CreateController(dbContext).Complete(999);
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task GetById_KeepsStepTextFromWhenRunStarted_AfterStepIsEditedOrDeleted()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var edited = await AddStepAsync(dbContext, checklist.Id, "Original text", 0);
+        var deleted = await AddStepAsync(dbContext, checklist.Id, "Deleted step", 1);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.UpdateStep(runId, deleted.Id, new RunStepRequest { IsDone = true });
+        await controller.Complete(runId);
+
+        var stepsController = new ChecklistStepsController(dbContext, NullLogger<ChecklistStepsController>.Instance);
+        await stepsController.Update(checklist.Id, edited.Id, new ChecklistStepRequest { Text = "New text" });
+        Assert.IsType<NoContentResult>(await stepsController.Delete(checklist.Id, deleted.Id));
+        dbContext.ChangeTracker.Clear();
+
+        var result = await controller.GetById(runId);
+
+        var run = Assert.IsType<ChecklistRunResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Collection(run.Steps,
+            step => Assert.Equal((edited.Id, "Original text", false), (step.StepId!.Value, step.Text, step.IsDone)),
+            step =>
+            {
+                Assert.Null(step.StepId);
+                Assert.Equal("Deleted step", step.Text);
+                Assert.True(step.IsDone);
+            });
+    }
+
+    private static ChecklistRunResponse GetRun(ActionResult<ChecklistRunResponse> result)
+    {
+        var objectResult = Assert.IsAssignableFrom<ObjectResult>(result.Result);
+        return Assert.IsType<ChecklistRunResponse>(objectResult.Value);
+    }
+
+    private static ChecklistRunsController CreateController(ChecklistDbContext dbContext)
+    {
+        return new(dbContext, NullLogger<ChecklistRunsController>.Instance);
+    }
+
+    private static async Task<Checklist> AddChecklistAsync(ChecklistDbContext dbContext, string name)
+    {
+        var checklist = new Checklist { Name = name };
+        dbContext.Checklists.Add(checklist);
+        await dbContext.SaveChangesAsync();
+        return checklist;
+    }
+
+    private static async Task<ChecklistStep> AddStepAsync(ChecklistDbContext dbContext, int checklistId, string text, int sortOrder = 0)
+    {
+        var step = new ChecklistStep { ChecklistId = checklistId, Text = text, SortOrder = sortOrder };
+        dbContext.ChecklistSteps.Add(step);
+        await dbContext.SaveChangesAsync();
+        return step;
+    }
+
+    private static ChecklistDbContext CreateDbContext(string? databaseName = null)
+    {
+        var options = new DbContextOptionsBuilder<ChecklistDbContext>()
+            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString())
+            .Options;
+
+        return new ChecklistDbContext(options);
+    }
+}
