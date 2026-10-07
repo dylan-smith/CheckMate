@@ -837,23 +837,9 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # The connection string isn't a secret (it ships in the public bundle). Read it from the API's app
-      # setting, which Bicep sets from the monitoring module, so the frontend always reports to the same
-      # Application Insights resource as the backend without a copy in a repository variable.
       - name: Resolve Application Insights connection string
         id: resolve-appinsights
-        shell: bash
-        run: |
-          CONNECTION_STRING="$(az webapp config appsettings list \
-            --resource-group "${AZURE_RESOURCE_GROUP}" \
-            --name "${AZURE_BACKEND_APP_NAME}" \
-            --query "[?name=='APPLICATIONINSIGHTS_CONNECTION_STRING'].value | [0]" \
-            --output tsv)"
-          if [ -z "${CONNECTION_STRING}" ]; then
-            echo "::error::APPLICATIONINSIGHTS_CONNECTION_STRING isn't set on ${AZURE_BACKEND_APP_NAME}."
-            exit 1
-          fi
-          echo "connection-string=${CONNECTION_STRING}" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/resolve-appinsights-connection-string.sh
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_BACKEND_APP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
