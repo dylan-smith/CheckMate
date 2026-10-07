@@ -370,7 +370,10 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
       )
       setEditingId(null)
     } catch (error) {
-      trackException(error, { operation: 'updateStep' })
+      // An option picked while saving is the user's to try again, not a failure to report.
+      if (!(error instanceof ApiError)) {
+        trackException(error, { operation: 'updateStep' })
+      }
       setErrorMessage(describeFetchError(error, 'Unable to save step.'))
     } finally {
       setBusy(false)

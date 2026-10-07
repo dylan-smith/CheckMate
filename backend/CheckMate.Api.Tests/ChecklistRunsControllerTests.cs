@@ -335,6 +335,57 @@ public class ChecklistRunsControllerTests
     }
 
     [Fact]
+    public async Task UpdateStep_ReturnsValidationProblem_WhenOptionIsRemovedWhileSaving()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        int runId;
+        ChecklistStep step;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            var checklist = await AddChecklistAsync(setupContext, "Daily");
+            step = await AddChoiceStepAsync(setupContext, checklist.Id, "Weather", "Sunny", "Rainy");
+            runId = GetRun(await CreateController(setupContext).Start(checklist.Id)).Id;
+        }
+
+        var optionId = step.Options[0].Id;
+        await using var otherContext = CreateDbContext(databaseName);
+        // Another request removes the option after this one has checked it, and SQL Server's foreign key then
+        // fails this save. The in-memory provider has no foreign keys, so the failure is thrown here instead.
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+        {
+            otherContext.StepOptions.Remove(await otherContext.StepOptions.SingleAsync(option => option.Id == optionId));
+            await otherContext.SaveChangesAsync();
+            throw new DbUpdateException("FK_ChecklistRunSteps_StepOptions_SelectedOptionId");
+        }));
+
+        var result = await CreateController(dbContext).UpdateStep(runId, step.Id, new RunStepRequest { OptionId = optionId });
+
+        Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result.Result).Value);
+    }
+
+    [Fact]
+    public async Task UpdateStep_Throws_WhenSavingAPickFailsAndTheOptionStillExists()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        int runId;
+        ChecklistStep step;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            var checklist = await AddChecklistAsync(setupContext, "Daily");
+            step = await AddChoiceStepAsync(setupContext, checklist.Id, "Weather", "Sunny", "Rainy");
+            runId = GetRun(await CreateController(setupContext).Start(checklist.Id)).Id;
+        }
+
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(() =>
+            throw new DbUpdateException("Something else")));
+
+        await Assert.ThrowsAsync<DbUpdateException>(() =>
+            CreateController(dbContext).UpdateStep(runId, step.Id, new RunStepRequest { OptionId = step.Options[0].Id }));
+    }
+
+    [Fact]
     public async Task GetById_KeepsPickedOptionText_AfterOptionIsEditedOrRemoved()
     {
         await using var dbContext = CreateDbContext();

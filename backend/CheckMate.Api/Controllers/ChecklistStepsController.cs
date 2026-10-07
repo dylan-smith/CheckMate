@@ -16,6 +16,9 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
 {
     private const int MinChoiceOptions = 2;
 
+    private const string OptionPickedWhileSavingMessage =
+        "A fill-out picked one of the removed options while this was saving. Try saving again.";
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ChecklistStepResponse>>> GetAll(int checklistId)
     {
@@ -134,8 +137,19 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
 
         step.Text = trimmedText;
         step.Type = request.Type;
-        await ReplaceOptionsAsync(step, options);
-        await dbContext.SaveChangesAsync();
+        var removedOptions = await ReplaceOptionsAsync(step, options);
+
+        try
+        {
+            await dbContext.SaveChangesAsync();
+        }
+        catch (DbUpdateException) when (removedOptions)
+        {
+            // A fill-out picked one of the removed options after ReplaceOptionsAsync cleared the runs that had,
+            // so the option's foreign key failed the save. Nothing was saved, and trying again clears that pick too.
+            logger.LogWarning("Rejected update of step {StepId} in checklist {ChecklistId} whose removed option was picked while saving", stepId, checklistId);
+            return Conflict(new { message = OptionPickedWhileSavingMessage });
+        }
 
         logger.LogInformation("Updated step {StepId} in checklist {ChecklistId}", stepId, checklistId);
 
@@ -258,7 +272,8 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
     }
 
     // Updates the options that are kept, adds the new ones and removes the rest, so a kept option keeps its ID.
-    private async Task ReplaceOptionsAsync(ChecklistStep step, List<StepOptionRequest> options)
+    // Returns whether any were removed.
+    private async Task<bool> ReplaceOptionsAsync(ChecklistStep step, List<StepOptionRequest> options)
     {
         var keptIds = options.Where(option => option.Id is not null).Select(option => option.Id!.Value).ToHashSet();
         var removed = step.Options.Where(option => !keptIds.Contains(option.Id)).ToList();
@@ -298,6 +313,8 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
                 step.Options.Add(new StepOption { Text = options[index].Text, SortOrder = index });
             }
         }
+
+        return removed.Count > 0;
     }
 
     private Task<bool> ChecklistExistsAsync(int checklistId)

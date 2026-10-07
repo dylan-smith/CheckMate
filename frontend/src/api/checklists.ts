@@ -154,6 +154,11 @@ async function saveStep(
     body: JSON.stringify({ text, type, options }),
   })
 
+  // A 409 means a fill-out picked an option this removes while it saved, so saving again works.
+  if (response.status === 409) {
+    const error = (await response.json()) as ErrorResponse
+    throw new ApiError(409, error.message ?? 'Unable to save step.')
+  }
   if (!response.ok) {
     throw new Error('Unable to save step.')
   }

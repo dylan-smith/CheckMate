@@ -282,7 +282,8 @@ function ChoiceStepField({
         ))}
       </RadioGroup>
       {removedPick && <FormHelperText>{removedPick}</FormHelperText>}
-      {value !== '' && (
+      {/* A removed pick still counts as done, so it can be cleared too. */}
+      {(value !== '' || removedPick) && (
         <Box>
           <Button
             type="button"

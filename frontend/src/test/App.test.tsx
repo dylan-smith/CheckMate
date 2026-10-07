@@ -1305,6 +1305,40 @@ describe('App', () => {
       )
     })
 
+    it('asks to save again without reporting it when a removed option was picked while saving', async () => {
+      const user = userEvent.setup()
+      const message =
+        'A fill-out picked one of the removed options while this was saving. Try saving again.'
+      const choiceStep = {
+        id: 10,
+        text: 'Weather',
+        type: 'Choice',
+        sortOrder: 0,
+        options: [
+          { id: 1, text: 'Sunny' },
+          { id: 2, text: 'Rainy' },
+          { id: 3, text: 'Snowy' },
+        ],
+      }
+      mockFetch(async (_url, init) =>
+        init?.method === 'PUT'
+          ? jsonResponse({ message }, 409)
+          : jsonResponse({ id: 1, name: 'Morning', steps: [choiceStep] }),
+      )
+
+      renderAt('/checklists/1')
+      await user.click(
+        await screen.findByRole('button', { name: 'Edit step "Weather"' }),
+      )
+      await user.click(screen.getByRole('button', { name: 'Remove option 3' }))
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(await screen.findByText(message)).toBeInTheDocument()
+      // Still editing, so saving again is one click.
+      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+      expect(trackException).not.toHaveBeenCalled()
+    })
+
     it('keeps the steps after renaming the checklist', async () => {
       const user = userEvent.setup()
 
@@ -2357,12 +2391,15 @@ describe('App', () => {
         )
       })
 
-      it('says when the picked option has since been removed', async () => {
-        mockFetch(async () =>
-          jsonResponse({
-            ...run,
-            steps: [{ ...picked, selectedOptionId: null }],
-          }),
+      it('says when the picked option has since been removed, and can clear it', async () => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? jsonResponse(weather)
+            : jsonResponse({
+                ...run,
+                steps: [{ ...picked, selectedOptionId: null }],
+              }),
         )
 
         renderAt('/runs/5')
@@ -2373,6 +2410,25 @@ describe('App', () => {
           ),
         ).toBeInTheDocument()
         expect(screen.getByRole('radio', { name: 'Rainy' })).not.toBeChecked()
+        expect(screen.getByText('1 of 1 done')).toBeInTheDocument()
+
+        await user.click(
+          screen.getByRole('button', { name: 'Clear "Weather"' }),
+        )
+
+        expect(await screen.findByText('0 of 1 done')).toBeInTheDocument()
+        expect(
+          screen.queryByText(
+            `"Rainy" was picked, but it's no longer an option.`,
+          ),
+        ).not.toBeInTheDocument()
+        expect(
+          screen.queryByRole('button', { name: 'Clear "Weather"' }),
+        ).not.toBeInTheDocument()
+        expect(fetchMock).toHaveBeenLastCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
+          expect.objectContaining({ body: JSON.stringify({ optionId: null }) }),
+        )
       })
 
       it('shows the option picked when the run was filled out once complete', async () => {

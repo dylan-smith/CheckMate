@@ -4,6 +4,7 @@ using CheckMate.Api.Data;
 using CheckMate.Api.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CheckMate.Api.Tests;
@@ -307,6 +308,51 @@ public class ChecklistStepsControllerTests
     }
 
     [Fact]
+    public async Task Update_ReturnsConflict_WhenARemovedOptionIsPickedWhileSaving()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        ChecklistStepResponse step;
+        int checklistId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            checklistId = (await AddChecklistAsync(setupContext, "Daily")).Id;
+            step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        }
+
+        // A fill-out picks the removed option after this request cleared the runs that had, so SQL Server's
+        // foreign key fails the save. The in-memory provider has no foreign keys, so the failure is thrown here instead.
+        await using var dbContext = CreateDbContext(databaseName, new FailingSaveInterceptor());
+        var request = ChoiceRequest("Weather", "Sunny", "Cloudy");
+        request.Options![0].Id = step.Options[0].Id;
+
+        var result = await CreateController(dbContext).Update(checklistId, step.Id, request);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task Update_Throws_WhenSaveFailsWithoutRemovingOptions()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        ChecklistStepResponse step;
+        int checklistId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            checklistId = (await AddChecklistAsync(setupContext, "Daily")).Id;
+            step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        }
+
+        await using var dbContext = CreateDbContext(databaseName, new FailingSaveInterceptor());
+        var request = ChoiceRequest("Weather", "Sunny", "Rainy");
+        request.Options![0].Id = step.Options[0].Id;
+        request.Options![1].Id = step.Options[1].Id;
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => CreateController(dbContext).Update(checklistId, step.Id, request));
+    }
+
+    [Fact]
     public async Task Update_RemovesOptions_WhenChangedToAnotherType()
     {
         await using var dbContext = CreateDbContext();
@@ -475,12 +521,25 @@ public class ChecklistStepsControllerTests
         return step;
     }
 
-    private static ChecklistDbContext CreateDbContext(string? databaseName = null)
+    private static ChecklistDbContext CreateDbContext(string? databaseName = null, params IInterceptor[] interceptors)
     {
         var options = new DbContextOptionsBuilder<ChecklistDbContext>()
             .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString())
+            .AddInterceptors(interceptors)
             .Options;
 
         return new ChecklistDbContext(options);
+    }
+
+    // Fails every save the way a foreign key failure in SQL Server would.
+    private sealed class FailingSaveInterceptor : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            throw new DbUpdateException("FK_ChecklistRunSteps_StepOptions_SelectedOptionId");
+        }
     }
 }

@@ -21,6 +21,8 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
     private const decimal MaxResponseNumber = 1_000_000_000m;
 
+    private const string OptionNotOnStepMessage = "The option must be one of this step's options.";
+
     [HttpPost("~/api/checklists/{checklistId:int}/runs")]
     public async Task<ActionResult<ChecklistRunResponse>> Start(int checklistId)
     {
@@ -127,7 +129,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             if (selectedOption is null)
             {
                 logger.LogWarning("Rejected option for step {StepId} in run {RunId} that isn't one of its options", stepId, runId);
-                ModelState.AddModelError(nameof(request.OptionId), "The option must be one of this step's options.");
+                ModelState.AddModelError(nameof(request.OptionId), OptionNotOnStepMessage);
                 return ValidationProblem(ModelState);
             }
         }
@@ -146,6 +148,18 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         {
             logger.LogWarning("Rejected step update for run {RunId} completed while saving", runId);
             return Conflict(new { message = CompletedRunMessage });
+        }
+        catch (DbUpdateException) when (selectedOption is not null)
+        {
+            // The option was removed from the step after it was checked above, so its foreign key failed the save.
+            if (await dbContext.StepOptions.AsNoTracking().AnyAsync(option => option.Id == selectedOption.Id))
+            {
+                throw;
+            }
+
+            logger.LogWarning("Rejected option for step {StepId} in run {RunId} removed while saving", stepId, runId);
+            ModelState.AddModelError(nameof(request.OptionId), OptionNotOnStepMessage);
+            return ValidationProblem(ModelState);
         }
 
         logger.LogInformation("Saved step {StepId} in run {RunId}", stepId, runId);
