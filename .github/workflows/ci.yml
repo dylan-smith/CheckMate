@@ -453,85 +453,9 @@ jobs:
       - name: Check the preview database's migrations
         run: bash .github/scripts/preview-migrations.sh check
 
-      # The deployment has a fixed name per PR, and Azure refuses a deployment while one of the same name is
-      # still running (one whose job timed out, say), so wait for it first. Only a missing deployment counts as
-      # not running; other lookup errors fail the step. The deployment is retried in case two PRs' runs update
-      # the shared App Service plan or SQL server at the same moment.
       - name: Deploy preview infrastructure (Bicep)
         id: infra
-        shell: bash
-        run: |
-          deployment="preview-pr-${PR_NUMBER}"
-          for attempt in $(seq 1 60); do
-            if ! state="$(az deployment group show \
-                --resource-group "${PREVIEW_RESOURCE_GROUP}" \
-                --name "${deployment}" \
-                --query properties.provisioningState \
-                --output tsv 2>&1)"; then
-              if grep -q "DeploymentNotFound" <<<"${state}"; then
-                state=""
-              else
-                echo "::error::Couldn't check deployment ${deployment}: ${state}"
-                exit 1
-              fi
-            fi
-            case "${state}" in
-              Running | Accepted)
-                echo "An earlier deployment is still running (${state}); checking again in 10 seconds"
-                sleep 10
-                ;;
-              *)
-                break
-                ;;
-            esac
-          done
-          for attempt in 1 2 3; do
-            if az deployment group create \
-                --resource-group "${PREVIEW_RESOURCE_GROUP}" \
-                --name "${deployment}" \
-                --template-file infra/preview.bicep \
-                --parameters infra/preview.bicepparam \
-                --only-show-errors \
-                --query properties.outputs \
-                --output json > "${RUNNER_TEMP}/preview-outputs.json"; then
-              break
-            fi
-            if [ "${attempt}" -eq 3 ]; then
-              echo "::error::The preview infrastructure deployment failed"
-              exit 1
-            fi
-            echo "Deployment attempt ${attempt} failed; retrying in 30 seconds"
-            sleep 30
-          done
-          outputs="${RUNNER_TEMP}/preview-outputs.json"
-          frontend_endpoint="$(jq -r '.frontendWebEndpoint.value' "${outputs}")"
-          {
-            echo "app-service-id=$(jq -r '.appServiceId.value' "${outputs}")"
-            echo "app-service-url=$(jq -r '.appServiceUrl.value' "${outputs}")"
-            echo "sql-server-fqdn=$(jq -r '.sqlServerFqdn.value' "${outputs}")"
-            echo "storage-account-name=$(jq -r '.storageAccountName.value' "${outputs}")"
-            # The browser sends the origin without a trailing slash.
-            echo "frontend-origin=${frontend_endpoint%/}"
-          } >> "$GITHUB_OUTPUT"
-
-      # Azure SQL derives an application's SID from its client ID (see preview-db-user.sql), which the Bicep
-      # identity output doesn't include. Resource Manager exposes it without a Microsoft Entra ID lookup.
-      - name: Resolve the API identity's client ID
-        id: identity
-        shell: bash
-        run: |
-          client_id="$(az rest \
-            --method get \
-            --url "https://management.azure.com${APP_SERVICE_ID}/providers/Microsoft.ManagedIdentity/identities/default?api-version=2023-01-31" \
-            --query properties.clientId \
-            --output tsv)"
-          if [ -z "${client_id}" ]; then
-            echo "::error::Couldn't read the client ID of ${PREVIEW_APP_NAME}'s managed identity"
-            exit 1
-          fi
-          echo "client-id=${client_id}" >> "$GITHUB_OUTPUT"
-        env:
-          APP_SERVICE_ID: ${{ steps.infra.outputs['app-service-id'] }}
+        run: bash .github/scripts/deploy-preview-infra.sh
 
       # Until the migrations finish, the database isn't marked as matching any scripts (see the check above).
       - name: Mark the migrations as started
@@ -552,7 +476,7 @@ jobs:
         with:
           connection-string: Server=tcp:${{ steps.infra.outputs['sql-server-fqdn'] }},1433;Initial Catalog=${{ env.PREVIEW_DB_NAME }};Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;
           path: .github/scripts/preview-db-user.sql
-          arguments: -v AppUserName=${{ env.PREVIEW_APP_NAME }} AppSid=${{ steps.identity.outputs['client-id'] }}
+          arguments: -v AppUserName=${{ env.PREVIEW_APP_NAME }} AppSid=${{ steps.infra.outputs['api-client-id'] }}
 
       # The Bicep deployment's app settings restart the site's deployment (SCM) container shortly before this,
       # which can stop the deployment partway (see deploy-backend), so a failed deployment is retried once.
@@ -578,32 +502,10 @@ jobs:
           app-name: ${{ env.PREVIEW_APP_NAME }}
           package: ./backend/publish
 
-      # Static website hosting is a data-plane setting that ARM templates can't manage. The preview identity's
-      # role on the resource group covers the new account, but data-plane calls can be refused for a short while
-      # after an account is created, so this is retried.
       - name: Enable static website hosting
-        shell: bash
-        run: |
-          for attempt in $(seq 1 5); do
-            if az storage blob service-properties update \
-                --account-name "${PREVIEW_STORAGE_ACCOUNT_NAME}" \
-                --auth-mode login \
-                --static-website \
-                --index-document index.html \
-                --404-document index.html \
-                --only-show-errors \
-                --output none; then
-              break
-            fi
-            if [ "${attempt}" -eq 5 ]; then
-              echo "::error::Couldn't enable static website hosting on ${PREVIEW_STORAGE_ACCOUNT_NAME}"
-              exit 1
-            fi
-            echo "Attempt ${attempt} failed; retrying in 15 seconds"
-            sleep 15
-          done
+        run: bash .github/scripts/enable-static-website.sh
         env:
-          PREVIEW_STORAGE_ACCOUNT_NAME: ${{ steps.infra.outputs['storage-account-name'] }}
+          AZURE_STORAGE_ACCOUNT_NAME: ${{ steps.infra.outputs['storage-account-name'] }}
 
       # No Application Insights connection string: the preview doesn't report telemetry.
       - name: Build frontend

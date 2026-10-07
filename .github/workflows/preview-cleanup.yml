@@ -96,43 +96,8 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # Every per-PR resource carries a pr-number tag (infra/preview.bicep). A PR that can't be read is kept,
-      # since deleting a live preview is worse than keeping a stale one until the next sweep. One failed
-      # deletion doesn't stop the others; the step fails at the end if any did.
-      # This PR is left to the delete job (see the job's comment above).
       - name: Delete previews whose PR is closed
-        shell: bash
-        run: |
-          listing="$(az resource list \
-            --resource-group "${PREVIEW_RESOURCE_GROUP}" \
-            --query '[?tags."pr-number"].tags."pr-number"' \
-            --output tsv)"
-          failed=()
-          for pr in $(sort -un <<<"${listing}"); do
-            if [ "${pr}" = "${CURRENT_PR}" ]; then
-              continue
-            fi
-            state="$(gh pr view "${pr}" --repo "${GITHUB_REPOSITORY}" --json state --jq .state 2>/dev/null || echo UNKNOWN)"
-            case "${state}" in
-              OPEN)
-                echo "PR #${pr} is open; keeping its preview"
-                ;;
-              UNKNOWN)
-                echo "::warning::Couldn't read PR #${pr}; keeping its preview"
-                ;;
-              *)
-                echo "PR #${pr} is ${state}; deleting its preview"
-                if ! PR_NUMBER="${pr}" bash .github/scripts/delete-preview.sh; then
-                  echo "::warning::Deleting the preview for PR #${pr} failed"
-                  failed+=("#${pr}")
-                fi
-                ;;
-            esac
-          done
-          if [ "${#failed[@]}" -gt 0 ]; then
-            echo "::error::Couldn't delete the previews for PRs ${failed[*]}"
-            exit 1
-          fi
+        run: bash .github/scripts/sweep-previews.sh
         env:
           GH_TOKEN: ${{ github.token }}
           CURRENT_PR: ${{ github.event.pull_request.number }}
