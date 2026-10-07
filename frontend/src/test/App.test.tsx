@@ -1315,6 +1315,41 @@ describe('App', () => {
       )
     })
 
+    it('waits for a tick to save before completing', async () => {
+      const user = userEvent.setup()
+      const requests: string[] = []
+      let finishTick: (response: Response) => void = () => {}
+      mockFetch(async (_url, init) => {
+        requests.push(init?.method ?? 'GET')
+        if (init?.method === 'PUT') {
+          return new Promise<Response>((resolve) => {
+            finishTick = resolve
+          })
+        }
+        return init?.method === 'POST'
+          ? jsonResponse({ ...run, completedAt: '2026-10-06T08:30:00Z' })
+          : jsonResponse(run)
+      })
+
+      renderAt('/runs/5')
+      await user.click(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      )
+      await user.click(screen.getByRole('button', { name: 'Complete' }))
+      expect(requests).toEqual(['GET', 'PUT'])
+
+      finishTick(
+        jsonResponse({
+          ...run.steps[0],
+          isDone: true,
+          completedAt: '2026-10-06T08:05:00Z',
+        }),
+      )
+
+      expect(await screen.findByText(/^Completed /)).toBeInTheDocument()
+      expect(requests).toEqual(['GET', 'PUT', 'POST'])
+    })
+
     it('undoes a tick that fails to save', async () => {
       const user = userEvent.setup()
       mockFetch(async (_url, init) =>
@@ -1553,6 +1588,114 @@ describe('App', () => {
         const field = await screen.findByRole('textbox', { name: 'Notes' })
         expect(field).toHaveValue('All good')
         expect(field).toBeDisabled()
+      })
+
+      it('saves the text first when Complete is clicked straight from the field', async () => {
+        const user = userEvent.setup()
+        const requests: string[] = []
+        const completed = {
+          ...runWithText,
+          completedAt: '2026-10-06T08:30:00Z',
+          steps: [...run.steps, savedNotes],
+        }
+        mockFetch(async (_url, init) => {
+          requests.push(init?.method ?? 'GET')
+          if (init?.method === 'PUT') {
+            return jsonResponse(savedNotes)
+          }
+          return init?.method === 'POST'
+            ? jsonResponse(completed)
+            : jsonResponse(runWithText)
+        })
+
+        renderAt('/runs/5')
+        await user.type(
+          await screen.findByRole('textbox', { name: 'Notes' }),
+          'All good',
+        )
+        // Leaving the field starts its save, which is still under way when the click lands.
+        await user.click(screen.getByRole('button', { name: 'Complete' }))
+
+        expect(await screen.findByText(/^Completed /)).toBeInTheDocument()
+        expect(requests).toEqual(['GET', 'PUT', 'POST'])
+        expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveValue(
+          'All good',
+        )
+      })
+
+      it('tries a failed save again before completing', async () => {
+        const user = userEvent.setup()
+        let puts = 0
+        const completed = {
+          ...runWithText,
+          completedAt: '2026-10-06T08:30:00Z',
+          steps: [...run.steps, savedNotes],
+        }
+        const fetchMock = mockFetch(async (_url, init) => {
+          if (init?.method === 'PUT') {
+            puts += 1
+            return puts === 1
+              ? new Response(null, { status: 500 })
+              : jsonResponse(savedNotes)
+          }
+          return init?.method === 'POST'
+            ? jsonResponse(completed)
+            : jsonResponse(runWithText)
+        })
+
+        renderAt('/runs/5')
+        await user.type(
+          await screen.findByRole('textbox', { name: 'Notes' }),
+          'All good',
+        )
+        await user.tab()
+        expect(
+          await screen.findByText('Unable to save step.'),
+        ).toBeInTheDocument()
+
+        await user.click(screen.getByRole('button', { name: 'Complete' }))
+
+        expect(await screen.findByText(/^Completed /)).toBeInTheDocument()
+        expect(puts).toBe(2)
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/complete$/),
+          { method: 'POST' },
+        )
+      })
+
+      it('does not complete while the text still cannot be saved', async () => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? new Response(null, { status: 500 })
+            : jsonResponse(runWithText),
+        )
+
+        renderAt('/runs/5')
+        await user.type(
+          await screen.findByRole('textbox', { name: 'Notes' }),
+          'All good',
+        )
+        await user.tab()
+        expect(
+          await screen.findByText('Unable to save step.'),
+        ).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Complete' }))
+
+        await waitFor(() => {
+          expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
+        })
+        expect(screen.getByText('Unable to save step.')).toBeInTheDocument()
+        expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveValue(
+          'All good',
+        )
+        expect(screen.getByRole('textbox', { name: 'Notes' })).toBeEnabled()
+        expect(
+          fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT'),
+        ).toHaveLength(2)
+        expect(
+          fetchMock.mock.calls.some(([, init]) => init?.method === 'POST'),
+        ).toBe(false)
       })
     })
 

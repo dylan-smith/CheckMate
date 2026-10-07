@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -23,25 +23,77 @@ function formatDateTime(value: string) {
   return new Date(value).toLocaleString()
 }
 
+// Saves whatever was typed but isn't saved yet, and resolves to whether it all is saved now.
+type SaveDraft = () => Promise<boolean>
+
 type TextStepFieldProps = {
   step: RunStep
   disabled: boolean
-  saving: boolean
+  showSaved: boolean
   onSave: (text: string) => Promise<RunStep | null>
+  // Lets completing the run save this field first.
+  registerSaveDraft: (saveDraft: SaveDraft | null) => void
 }
 
 // Saved when the field loses focus or Enter is pressed, and only if the text changed.
-function TextStepField({ step, disabled, saving, onSave }: TextStepFieldProps) {
+function TextStepField({
+  step,
+  disabled,
+  showSaved,
+  onSave,
+  registerSaveDraft,
+}: TextStepFieldProps) {
   const [draft, setDraft] = useState(step.responseText ?? '')
+  const [saving, setSaving] = useState(false)
+  // Kept in refs as well, since completing the run can call saveDraft after awaiting other saves, and
+  // by then the values from the render that created it are out of date.
+  const draftRef = useRef(draft)
+  const savedRef = useRef(draft)
+  const inFlightRef = useRef<Promise<boolean> | null>(null)
 
-  async function save() {
-    if (disabled || saving || draft.trim() === (step.responseText ?? '')) {
-      return
+  async function saveDraft(): Promise<boolean> {
+    // One save at a time: wait for the one under way, then check again whether there's more to save.
+    while (inFlightRef.current) {
+      await inFlightRef.current
     }
-    const saved = await onSave(draft)
-    // Show the value as saved, trimmed. A failed save keeps what was typed so it can be tried again.
-    if (saved) {
-      setDraft(saved.responseText ?? '')
+    const text = draftRef.current
+    if (text.trim() === savedRef.current) {
+      return true
+    }
+
+    const request = (async () => {
+      setSaving(true)
+      try {
+        const saved = await onSave(text)
+        if (!saved) {
+          // Keep what was typed so it can be tried again.
+          return false
+        }
+        // Show the value as saved, trimmed. The field is read-only while saving, so nothing was typed since.
+        savedRef.current = saved.responseText ?? ''
+        draftRef.current = savedRef.current
+        setDraft(savedRef.current)
+        return true
+      } finally {
+        setSaving(false)
+      }
+    })()
+    inFlightRef.current = request
+    try {
+      return await request
+    } finally {
+      inFlightRef.current = null
+    }
+  }
+
+  useEffect(() => {
+    registerSaveDraft(saveDraft)
+    return () => registerSaveDraft(null)
+  })
+
+  function saveIfEnabled() {
+    if (!disabled) {
+      void saveDraft()
     }
   }
 
@@ -50,16 +102,19 @@ function TextStepField({ step, disabled, saving, onSave }: TextStepFieldProps) {
       component="form"
       onSubmit={(event) => {
         event.preventDefault()
-        void save()
+        saveIfEnabled()
       }}
       sx={{ width: '100%' }}
     >
       <TextField
         label={step.text}
-        // Once the run is read-only, show what was saved rather than anything typed since.
-        value={disabled ? (step.responseText ?? '') : draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => void save()}
+        // Once the run is complete, show what was saved.
+        value={showSaved ? (step.responseText ?? '') : draft}
+        onChange={(event) => {
+          draftRef.current = event.target.value
+          setDraft(event.target.value)
+        }}
+        onBlur={saveIfEnabled}
         disabled={disabled}
         // Read-only rather than disabled while saving, so pressing Enter doesn't lose focus.
         slotProps={{ htmlInput: { maxLength: 1000, readOnly: saving } }}
@@ -83,6 +138,9 @@ function RunView({ id }: { id: number }) {
   const [completedElsewhere, setCompletedElsewhere] = useState(false)
   const [reloadFailed, setReloadFailed] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
+  // Ticks still saving and each text field's saveDraft, so completing the run can wait for them first.
+  const pendingTicks = useRef(new Set<Promise<RunStep | null>>())
+  const saveDrafts = useRef(new Map<number, SaveDraft>())
 
   useEffect(() => {
     // Ignore a response that arrives after the user has left the page.
@@ -197,11 +255,26 @@ function RunView({ id }: { id: number }) {
     }
   }
 
+  function handleToggle(stepId: number, isDone: boolean) {
+    const tick = handleSave(stepId, { isDone })
+    pendingTicks.current.add(tick)
+    void tick.finally(() => pendingTicks.current.delete(tick))
+  }
+
   async function handleComplete() {
     setCompleting(true)
     setErrorMessage('')
 
     try {
+      // Let ticks finish saving and save any text typed since, so completing can't drop a change.
+      const ticks = await Promise.all(pendingTicks.current)
+      const drafts = await Promise.all(
+        [...saveDrafts.current.values()].map((saveDraft) => saveDraft()),
+      )
+      if (ticks.includes(null) || drafts.includes(false)) {
+        // The failed save already shows its error, and the run stays open so it can be tried again.
+        return
+      }
       setRun(await completeRun(id))
       trackEvent('RunCompleted')
     } catch (error) {
@@ -289,12 +362,22 @@ function RunView({ id }: { id: number }) {
                         <TextStepField
                           step={step}
                           disabled={disabled}
-                          saving={stepId !== null && savingStepIds.has(stepId)}
+                          showSaved={isComplete}
                           onSave={(text) =>
                             stepId === null
                               ? Promise.resolve(null)
                               : handleSave(stepId, { text })
                           }
+                          registerSaveDraft={(saveDraft) => {
+                            if (stepId === null) {
+                              return
+                            }
+                            if (saveDraft) {
+                              saveDrafts.current.set(stepId, saveDraft)
+                            } else {
+                              saveDrafts.current.delete(stepId)
+                            }
+                          }}
                         />
                       ) : (
                         <FormControlLabel
@@ -305,9 +388,7 @@ function RunView({ id }: { id: number }) {
                               disabled={disabled || savingStepIds.has(stepId)}
                               onChange={(event) => {
                                 if (stepId !== null) {
-                                  void handleSave(stepId, {
-                                    isDone: event.target.checked,
-                                  })
+                                  handleToggle(stepId, event.target.checked)
                                 }
                               }}
                             />
@@ -337,7 +418,8 @@ function RunView({ id }: { id: number }) {
                 <Button
                   type="button"
                   variant="contained"
-                  disabled={completing || savingStepIds.size > 0}
+                  // Not disabled while steps save: completing waits for those saves itself.
+                  disabled={completing}
                   onClick={() => void handleComplete()}
                 >
                   {completing ? 'Completing…' : 'Complete'}
