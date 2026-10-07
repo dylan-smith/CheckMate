@@ -17,11 +17,8 @@ import { completeRun, getRun, saveRunStep } from '../api/runs'
 import type { ChecklistRun, RunStep, RunStepUpdate } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
 import NotFoundPage from './NotFoundPage'
+import { formatDateTime } from './formatDateTime'
 import { parseId } from './parseId'
-
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString()
-}
 
 // Saves whatever was typed but isn't saved yet, and resolves to whether it all is saved now.
 type SaveDraft = () => Promise<boolean>
@@ -116,6 +113,11 @@ function TextStepField({
         }}
         onBlur={saveIfEnabled}
         disabled={disabled}
+        helperText={
+          showSaved && step.completedAt
+            ? `Done ${formatDateTime(step.completedAt)}`
+            : undefined
+        }
         // Read-only rather than disabled while saving, so pressing Enter doesn't lose focus.
         slotProps={{ htmlInput: { maxLength: 1000, readOnly: saving } }}
         size="small"
@@ -389,21 +391,33 @@ function RunView({ id }: { id: number }) {
                           }}
                         />
                       ) : (
-                        <FormControlLabel
-                          sx={{ overflowWrap: 'anywhere' }}
-                          control={
-                            <Checkbox
-                              checked={step.isDone}
-                              disabled={disabled || savingStepIds.has(stepId)}
-                              onChange={(event) => {
-                                if (stepId !== null) {
-                                  handleToggle(stepId, event.target.checked)
-                                }
-                              }}
-                            />
-                          }
-                          label={step.text}
-                        />
+                        <Box>
+                          <FormControlLabel
+                            sx={{ overflowWrap: 'anywhere' }}
+                            control={
+                              <Checkbox
+                                checked={step.isDone}
+                                disabled={disabled || savingStepIds.has(stepId)}
+                                onChange={(event) => {
+                                  if (stepId !== null) {
+                                    handleToggle(stepId, event.target.checked)
+                                  }
+                                }}
+                              />
+                            }
+                            label={step.text}
+                          />
+                          {/* A completed run is read-only, so it shows when each step was done. */}
+                          {isComplete && step.completedAt && (
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              sx={{ ml: 4 }}
+                            >
+                              Done {formatDateTime(step.completedAt)}
+                            </Typography>
+                          )}
+                        </Box>
                       )}
                     </ListItem>
                   )

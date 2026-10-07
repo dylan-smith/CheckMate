@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -14,14 +14,26 @@ vi.mock('../telemetry', () => ({
 const unreachableMessage =
   "Can't reach CheckMate right now. It may be updating, so try again in a minute."
 
+// The checklist page also loads the checklist's fill-outs, which runsHandler answers. It returns none
+// unless a test is about them.
 function mockFetch(
   handler: (url: string, init?: RequestInit) => Promise<Response>,
+  runsHandler: () => Promise<Response> = async () => jsonResponse([]),
 ) {
   return vi
     .spyOn(globalThis, 'fetch')
-    .mockImplementation((input: string | URL | Request, init?: RequestInit) =>
-      handler(input instanceof Request ? input.url : input.toString(), init),
-    )
+    .mockImplementation((input: string | URL | Request, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : input.toString()
+      return init?.method === undefined &&
+        /\/api\/checklists\/\d+\/runs$/.test(url)
+        ? runsHandler()
+        : handler(url, init)
+    })
+}
+
+// The checklist page only loaded the checklist and its fill-outs, and sent nothing else.
+function expectOnlyLoaded() {
+  expect(fetch).toHaveBeenCalledTimes(2)
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -561,7 +573,7 @@ describe('App', () => {
       expect(
         await screen.findByText('Checklist name is required.'),
       ).toBeInTheDocument()
-      expect(fetch).toHaveBeenCalledTimes(1)
+      expectOnlyLoaded()
     })
   })
 
@@ -732,7 +744,7 @@ describe('App', () => {
       expect(
         await screen.findByText('Step text is required.'),
       ).toBeInTheDocument()
-      expect(fetch).toHaveBeenCalledTimes(1)
+      expectOnlyLoaded()
     })
 
     it('shows error when adding a step fails', async () => {
@@ -816,7 +828,7 @@ describe('App', () => {
       await user.click(screen.getByRole('button', { name: 'Cancel' }))
 
       expect(screen.getByText('Make coffee')).toBeInTheDocument()
-      expect(fetch).toHaveBeenCalledTimes(1)
+      expectOnlyLoaded()
     })
 
     it('shows error when editing a step to only whitespace', async () => {
@@ -837,7 +849,7 @@ describe('App', () => {
       expect(
         await screen.findByText('Step text is required.'),
       ).toBeInTheDocument()
-      expect(fetch).toHaveBeenCalledTimes(1)
+      expectOnlyLoaded()
 
       // Canceling the edit clears its error along with the field.
       await user.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -1605,6 +1617,9 @@ describe('App', () => {
         const field = await screen.findByRole('textbox', { name: 'Notes' })
         expect(field).toHaveValue('All good')
         expect(field).toBeDisabled()
+        expect(field).toHaveAccessibleDescription(
+          `Done ${new Date('2026-10-06T08:10:00Z').toLocaleString()}`,
+        )
       })
 
       it('saves the text first when Complete is clicked straight from the field', async () => {
@@ -1832,6 +1847,168 @@ describe('App', () => {
       expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
         operation: 'loadRun',
       })
+    })
+  })
+
+  describe('fill-out history', () => {
+    const checklist = { id: 3, name: 'Morning', steps: [] }
+    const inProgress = {
+      id: 6,
+      startedAt: '2026-10-07T08:00:00Z',
+      completedAt: null,
+    }
+    const completed = {
+      id: 5,
+      startedAt: '2026-10-06T08:00:00Z',
+      completedAt: '2026-10-06T08:30:00Z',
+    }
+
+    function local(value: string) {
+      return new Date(value).toLocaleString()
+    }
+
+    it('lists each fill-out newest first, linking to it', async () => {
+      const fetchMock = mockFetch(
+        async () => jsonResponse(checklist),
+        async () => jsonResponse([inProgress, completed]),
+      )
+
+      renderAt('/checklists/3')
+
+      const list = await screen.findByRole('list', { name: 'Fill-outs' })
+      const links = within(list).getAllByRole('link')
+      expect(links).toHaveLength(2)
+      expect(links[0]).toHaveAttribute('href', '/runs/6')
+      expect(links[0]).toHaveTextContent(
+        `Started ${local(inProgress.startedAt)}In progress`,
+      )
+      expect(links[1]).toHaveAttribute('href', '/runs/5')
+      expect(links[1]).toHaveTextContent(
+        `Started ${local(completed.startedAt)}Completed ${local(completed.completedAt)}`,
+      )
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/3\/runs$/),
+      )
+    })
+
+    it('shows "No fill-outs yet." when the checklist has none', async () => {
+      mockFetch(async () => jsonResponse(checklist))
+
+      renderAt('/checklists/3')
+
+      expect(await screen.findByText('No fill-outs yet.')).toBeInTheDocument()
+    })
+
+    it('shows an error when the fill-outs cannot be loaded', async () => {
+      mockFetch(
+        async () => jsonResponse(checklist),
+        async () => new Response(null, { status: 500 }),
+      )
+
+      renderAt('/checklists/3')
+
+      expect(
+        await screen.findByText('Unable to load fill-outs.'),
+      ).toBeInTheDocument()
+      // The rest of the page still works.
+      expect(screen.getByRole('button', { name: 'Fill out' })).toBeEnabled()
+      expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
+        operation: 'loadRuns',
+      })
+    })
+
+    it('resumes a fill-out in progress', async () => {
+      const user = userEvent.setup()
+      mockFetch(
+        async (url) =>
+          url.endsWith('/api/runs/6')
+            ? jsonResponse({
+                id: 6,
+                checklistId: 3,
+                checklistName: 'Morning',
+                startedAt: inProgress.startedAt,
+                completedAt: null,
+                steps: [
+                  {
+                    stepId: 11,
+                    text: 'Make coffee',
+                    type: 'Checkbox',
+                    isDone: true,
+                    completedAt: '2026-10-07T08:05:00Z',
+                    responseText: null,
+                  },
+                ],
+              })
+            : jsonResponse(checklist),
+        async () => jsonResponse([inProgress]),
+      )
+
+      renderAt('/checklists/3')
+      await user.click(await screen.findByRole('link', { name: /Started/ }))
+
+      expect(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeEnabled()
+      expect(
+        screen.getByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeChecked()
+      expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
+      expect(screen.queryByText(/^Done /)).not.toBeInTheDocument()
+    })
+
+    it('opens a completed fill-out read-only, with when each step was done', async () => {
+      const user = userEvent.setup()
+      mockFetch(
+        async (url) =>
+          url.endsWith('/api/runs/5')
+            ? jsonResponse({
+                id: 5,
+                checklistId: 3,
+                checklistName: 'Morning',
+                startedAt: completed.startedAt,
+                completedAt: completed.completedAt,
+                steps: [
+                  {
+                    stepId: 11,
+                    text: 'Make coffee',
+                    type: 'Checkbox',
+                    isDone: true,
+                    completedAt: '2026-10-06T08:05:00Z',
+                    responseText: null,
+                  },
+                  {
+                    stepId: 12,
+                    text: 'Read email',
+                    type: 'Checkbox',
+                    isDone: false,
+                    completedAt: null,
+                    responseText: null,
+                  },
+                ],
+              })
+            : jsonResponse(checklist),
+        async () => jsonResponse([completed]),
+      )
+
+      renderAt('/checklists/3')
+      await user.click(await screen.findByRole('link', { name: /Started/ }))
+
+      expect(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeDisabled()
+      expect(
+        screen.getByRole('checkbox', { name: 'Read email' }),
+      ).toBeDisabled()
+      expect(
+        screen.getByText(`Done ${local('2026-10-06T08:05:00Z')}`),
+      ).toBeInTheDocument()
+      expect(screen.getAllByText(/^Done /)).toHaveLength(1)
+      expect(
+        screen.getByText(`Completed ${local(completed.completedAt)}`),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Complete' }),
+      ).not.toBeInTheDocument()
     })
   })
 

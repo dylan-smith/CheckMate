@@ -86,6 +86,48 @@ public class ChecklistRunsControllerTests
     }
 
     [Fact]
+    public async Task GetForChecklist_ReturnsOnlyThatChecklistsRuns_NewestFirst()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var other = await AddChecklistAsync(dbContext, "Weekly");
+        var startedAt = new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero);
+        dbContext.ChecklistRuns.AddRange(
+            new ChecklistRun { ChecklistId = checklist.Id, StartedAt = startedAt, CompletedAt = startedAt.AddMinutes(5) },
+            new ChecklistRun { ChecklistId = checklist.Id, StartedAt = startedAt.AddDays(1) },
+            new ChecklistRun { ChecklistId = other.Id, StartedAt = startedAt.AddDays(2) });
+        await dbContext.SaveChangesAsync();
+
+        var result = await CreateController(dbContext).GetForChecklist(checklist.Id);
+
+        var runs = Assert.IsType<List<ChecklistRunSummaryResponse>>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Collection(runs,
+            run => Assert.Equal((startedAt.AddDays(1), (DateTimeOffset?)null), (run.StartedAt, run.CompletedAt)),
+            run => Assert.Equal((startedAt, (DateTimeOffset?)startedAt.AddMinutes(5)), (run.StartedAt, run.CompletedAt)));
+    }
+
+    [Fact]
+    public async Task GetForChecklist_ReturnsEmptyList_WhenChecklistHasNoRuns()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+
+        var result = await CreateController(dbContext).GetForChecklist(checklist.Id);
+
+        Assert.Empty(Assert.IsType<List<ChecklistRunSummaryResponse>>(Assert.IsType<OkObjectResult>(result.Result).Value));
+    }
+
+    [Fact]
+    public async Task GetForChecklist_ReturnsNotFound_WhenChecklistDoesNotExist()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var result = await CreateController(dbContext).GetForChecklist(999);
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
     public async Task UpdateStep_SavesTick_AndClearsItWhenUnticked()
     {
         await using var dbContext = CreateDbContext();
