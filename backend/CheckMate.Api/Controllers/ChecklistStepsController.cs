@@ -30,7 +30,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             .Where(step => step.ChecklistId == checklistId)
             .OrderBy(step => step.SortOrder)
             .ThenBy(step => step.Id)
-            .Select(step => new ChecklistStepResponse(step.Id, step.Text, step.SortOrder))
+            .Select(step => new ChecklistStepResponse(step.Id, step.Text, step.Type, step.SortOrder))
             .ToListAsync();
 
         return Ok(steps);
@@ -80,6 +80,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         {
             ChecklistId = checklistId,
             Text = trimmedText,
+            Type = request.Type,
             SortOrder = (maxSortOrder ?? -1) + 1
         };
 
@@ -112,6 +113,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         }
 
         step.Text = trimmedText;
+        step.Type = request.Type;
         await dbContext.SaveChangesAsync();
 
         logger.LogInformation("Updated step {StepId} in checklist {ChecklistId}", stepId, checklistId);

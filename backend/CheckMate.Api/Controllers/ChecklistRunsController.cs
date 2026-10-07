@@ -36,7 +36,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             .ThenBy(step => step.Id)
             .ToListAsync();
 
-        // Copy each step's text and position into the run, so later edits to the checklist don't change it.
+        // Copy each step's text, type and position into the run, so later edits to the checklist don't change it.
         var run = new ChecklistRun
         {
             ChecklistId = checklistId,
@@ -45,6 +45,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             {
                 StepId = step.Id,
                 StepText = step.Text,
+                StepType = step.Type,
                 SortOrder = index
             })]
         };
@@ -102,11 +103,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return Conflict(new { message = CompletedRunMessage });
         }
 
-        if (response.IsDone != request.IsDone)
-        {
-            response.IsDone = request.IsDone;
-            response.CompletedAt = request.IsDone ? DateTimeOffset.UtcNow : null;
-        }
+        ApplyResponse(response, request);
 
         // Write the run's CompletedAt back unchanged, so the save checks the run is still open in the same
         // transaction (see IsConcurrencyToken in ChecklistDbContext) and can't change a run completed since it was read.
@@ -162,6 +159,30 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         logger.LogInformation("Completed run {RunId}", runId);
 
         return Ok(ToResponse(run, await GetChecklistNameAsync(run.ChecklistId)));
+    }
+
+    // Each step type reads its own field of the request and decides from it whether the step is done.
+    private static void ApplyResponse(RunStepResponse response, RunStepRequest request)
+    {
+        bool isDone;
+
+        switch (response.StepType)
+        {
+            case StepType.Text:
+                var trimmedText = request.Text?.Trim();
+                response.ResponseText = string.IsNullOrEmpty(trimmedText) ? null : trimmedText;
+                isDone = response.ResponseText is not null;
+                break;
+            default:
+                isDone = request.IsDone;
+                break;
+        }
+
+        if (response.IsDone != isDone)
+        {
+            response.IsDone = isDone;
+            response.CompletedAt = isDone ? DateTimeOffset.UtcNow : null;
+        }
     }
 
     private async Task<string> GetChecklistNameAsync(int checklistId)

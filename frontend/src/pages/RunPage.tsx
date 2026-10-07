@@ -9,17 +9,65 @@ import List from '@mui/material/List'
 import ListItem from '@mui/material/ListItem'
 import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
+import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import { Link, useParams } from 'react-router'
 import { ApiError, describeFetchError } from '../api/checklists'
 import { completeRun, getRun, saveRunStep } from '../api/runs'
-import type { ChecklistRun } from '../api/runs'
+import type { ChecklistRun, RunStep, RunStepUpdate } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
 import NotFoundPage from './NotFoundPage'
 import { parseId } from './parseId'
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString()
+}
+
+type TextStepFieldProps = {
+  step: RunStep
+  disabled: boolean
+  saving: boolean
+  onSave: (text: string) => Promise<RunStep | null>
+}
+
+// Saved when the field loses focus or Enter is pressed, and only if the text changed.
+function TextStepField({ step, disabled, saving, onSave }: TextStepFieldProps) {
+  const [draft, setDraft] = useState(step.responseText ?? '')
+
+  async function save() {
+    if (disabled || saving || draft.trim() === (step.responseText ?? '')) {
+      return
+    }
+    const saved = await onSave(draft)
+    // Show the value as saved, trimmed. A failed save keeps what was typed so it can be tried again.
+    if (saved) {
+      setDraft(saved.responseText ?? '')
+    }
+  }
+
+  return (
+    <Box
+      component="form"
+      onSubmit={(event) => {
+        event.preventDefault()
+        void save()
+      }}
+      sx={{ width: '100%' }}
+    >
+      <TextField
+        label={step.text}
+        // Once the run is read-only, show what was saved rather than anything typed since.
+        value={disabled ? (step.responseText ?? '') : draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => void save()}
+        disabled={disabled}
+        // Read-only rather than disabled while saving, so pressing Enter doesn't lose focus.
+        slotProps={{ htmlInput: { maxLength: 1000, readOnly: saving } }}
+        size="small"
+        fullWidth
+      />
+    </Box>
+  )
 }
 
 function RunView({ id }: { id: number }) {
@@ -101,47 +149,45 @@ function RunView({ id }: { id: number }) {
     }
   }
 
-  async function handleToggle(stepId: number, isDone: boolean) {
-    setErrorMessage('')
-    setSavingStepIds((current) => new Set(current).add(stepId))
-    // Show the tick straight away, and undo it if the save fails.
+  function setStep(stepId: number, change: (step: RunStep) => RunStep) {
     setRun(
       (current) =>
         current && {
           ...current,
           steps: current.steps.map((step) =>
-            step.stepId === stepId ? { ...step, isDone } : step,
+            step.stepId === stepId ? change(step) : step,
           ),
         },
     )
+  }
+
+  // Returns the saved step, or null when the save failed.
+  async function handleSave(
+    stepId: number,
+    update: RunStepUpdate,
+  ): Promise<RunStep | null> {
+    setErrorMessage('')
+    setSavingStepIds((current) => new Set(current).add(stepId))
+    // Show a tick straight away, and undo it if the save fails. A text field already shows what was typed.
+    if ('isDone' in update) {
+      setStep(stepId, (step) => ({ ...step, isDone: update.isDone }))
+    }
 
     try {
-      const saved = await saveRunStep(id, stepId, isDone)
-      setRun(
-        (current) =>
-          current && {
-            ...current,
-            steps: current.steps.map((step) =>
-              step.stepId === stepId ? saved : step,
-            ),
-          },
-      )
+      const saved = await saveRunStep(id, stepId, update)
+      setStep(stepId, () => saved)
+      return saved
     } catch (error) {
-      setRun(
-        (current) =>
-          current && {
-            ...current,
-            steps: current.steps.map((step) =>
-              step.stepId === stepId ? { ...step, isDone: !isDone } : step,
-            ),
-          },
-      )
+      if ('isDone' in update) {
+        setStep(stepId, (step) => ({ ...step, isDone: !update.isDone }))
+      }
       if (error instanceof ApiError) {
         await showCompletedRun(error)
       } else {
         trackException(error, { operation: 'saveRunStep' })
         setErrorMessage(describeFetchError(error, 'Unable to save step.'))
       }
+      return null
     } finally {
       setSavingStepIds((current) => {
         const next = new Set(current)
@@ -235,29 +281,40 @@ function RunView({ id }: { id: number }) {
               <List aria-label="Steps" sx={{ my: 1 }}>
                 {run.steps.map((step, index) => {
                   const { stepId } = step
+                  // A step deleted from the checklist can't be saved any more.
+                  const disabled = isComplete || completing || stepId === null
                   return (
                     <ListItem key={stepId ?? `deleted-${index}`} disableGutters>
-                      <FormControlLabel
-                        sx={{ overflowWrap: 'anywhere' }}
-                        control={
-                          <Checkbox
-                            checked={step.isDone}
-                            // A step deleted from the checklist can't be saved any more.
-                            disabled={
-                              isComplete ||
-                              completing ||
-                              stepId === null ||
-                              savingStepIds.has(stepId)
-                            }
-                            onChange={(event) => {
-                              if (stepId !== null) {
-                                void handleToggle(stepId, event.target.checked)
-                              }
-                            }}
-                          />
-                        }
-                        label={step.text}
-                      />
+                      {step.type === 'Text' ? (
+                        <TextStepField
+                          step={step}
+                          disabled={disabled}
+                          saving={stepId !== null && savingStepIds.has(stepId)}
+                          onSave={(text) =>
+                            stepId === null
+                              ? Promise.resolve(null)
+                              : handleSave(stepId, { text })
+                          }
+                        />
+                      ) : (
+                        <FormControlLabel
+                          sx={{ overflowWrap: 'anywhere' }}
+                          control={
+                            <Checkbox
+                              checked={step.isDone}
+                              disabled={disabled || savingStepIds.has(stepId)}
+                              onChange={(event) => {
+                                if (stepId !== null) {
+                                  void handleSave(stepId, {
+                                    isDone: event.target.checked,
+                                  })
+                                }
+                              }}
+                            />
+                          }
+                          label={step.text}
+                        />
+                      )}
                     </ListItem>
                   )
                 })}

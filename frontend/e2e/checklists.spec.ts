@@ -357,6 +357,54 @@ test.describe('Checklist management', () => {
       await expect(unlock).toBeDisabled()
     })
 
+    test('a text step is saved, resumes after a reload, and shows once complete', async ({
+      page,
+    }) => {
+      await createChecklist(page, 'Closing up')
+      await openChecklist(page, 'Closing up')
+      await page.getByLabel('New step').fill('Lock door')
+      await page.getByRole('button', { name: 'Add step' }).click()
+      await expect(page.getByText('Lock door')).toBeVisible()
+      await page.getByLabel('New step').fill('Cash in till')
+      await page.getByRole('combobox', { name: 'Type' }).click()
+      await page.getByRole('option', { name: 'Text input' }).click()
+      await page.getByRole('button', { name: 'Add step' }).click()
+      await expect(page.getByRole('listitem').nth(1)).toContainText(
+        'Cash in tillText input',
+      )
+
+      await page.reload()
+      await expect(page.getByRole('listitem').nth(1)).toContainText(
+        'Cash in tillText input',
+      )
+
+      await page.getByRole('button', { name: 'Fill out' }).click()
+      await expect(page).toHaveURL(/\/runs\/\d+$/)
+      const cash = page.getByRole('textbox', { name: 'Cash in till' })
+      await cash.fill('  $250  ')
+      await cash.press('Enter')
+      await expect(page.getByText('1 of 2 done')).toBeVisible()
+      await expect(cash).toHaveValue('$250')
+
+      await page.reload()
+      await expect(cash).toHaveValue('$250')
+      await expect(page.getByText('1 of 2 done')).toBeVisible()
+
+      // Clearing the text marks the step not done again.
+      await cash.fill('')
+      await cash.blur()
+      await expect(page.getByText('0 of 2 done')).toBeVisible()
+      await cash.fill('$300')
+      await cash.blur()
+      await expect(page.getByText('1 of 2 done')).toBeVisible()
+
+      await page.getByRole('button', { name: 'Complete' }).click()
+      await expect(page.getByText(/^Completed /)).toBeVisible()
+      await page.reload()
+      await expect(cash).toHaveValue('$300')
+      await expect(cash).toBeDisabled()
+    })
+
     test('a completed run rejects changes', async ({ request }) => {
       const {
         id,

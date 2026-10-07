@@ -661,8 +661,8 @@ describe('App', () => {
       id: 1,
       name: 'Morning',
       steps: [
-        { id: 10, text: 'Make coffee', sortOrder: 0 },
-        { id: 11, text: 'Read email', sortOrder: 1 },
+        { id: 10, text: 'Make coffee', type: 'Checkbox', sortOrder: 0 },
+        { id: 11, text: 'Read email', type: 'Checkbox', sortOrder: 1 },
       ],
     }
 
@@ -690,7 +690,10 @@ describe('App', () => {
 
       mockFetch(async (_url, init) => {
         if (init?.method === 'POST') {
-          return jsonResponse({ id: 12, text: 'Walk dog', sortOrder: 2 }, 201)
+          return jsonResponse(
+            { id: 12, text: 'Walk dog', type: 'Checkbox', sortOrder: 2 },
+            201,
+          )
         }
         return jsonResponse(checklistWithSteps)
       })
@@ -710,7 +713,7 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps$/),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ text: 'Walk dog' }),
+          body: JSON.stringify({ text: 'Walk dog', type: 'Checkbox' }),
         }),
       )
       expect(trackEvent).toHaveBeenCalledWith('StepAdded')
@@ -761,7 +764,12 @@ describe('App', () => {
 
       mockFetch(async (_url, init) => {
         if (init?.method === 'PUT') {
-          return jsonResponse({ id: 10, text: 'Make tea', sortOrder: 0 })
+          return jsonResponse({
+            id: 10,
+            text: 'Make tea',
+            type: 'Checkbox',
+            sortOrder: 0,
+          })
         }
         return jsonResponse(checklistWithSteps)
       })
@@ -785,7 +793,7 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps\/10$/),
         expect.objectContaining({
           method: 'PUT',
-          body: JSON.stringify({ text: 'Make tea' }),
+          body: JSON.stringify({ text: 'Make tea', type: 'Checkbox' }),
         }),
       )
       expect(trackEvent).toHaveBeenCalledWith('StepUpdated')
@@ -921,8 +929,8 @@ describe('App', () => {
       mockFetch(async (_url, init) => {
         if (init?.method === 'PUT') {
           return jsonResponse([
-            { id: 11, text: 'Read email', sortOrder: 0 },
-            { id: 10, text: 'Make coffee', sortOrder: 1 },
+            { id: 11, text: 'Read email', type: 'Checkbox', sortOrder: 0 },
+            { id: 10, text: 'Make coffee', type: 'Checkbox', sortOrder: 1 },
           ])
         }
         return jsonResponse(checklistWithSteps)
@@ -1021,6 +1029,92 @@ describe('App', () => {
       })
     })
 
+    it('adds a text step with the type picker and labels it', async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'POST') {
+          return jsonResponse(
+            { id: 12, text: 'Notes', type: 'Text', sortOrder: 2 },
+            201,
+          )
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      await user.type(await screen.findByLabelText('New step'), 'Notes')
+      await user.click(screen.getByRole('combobox', { name: 'Type' }))
+      await user.click(screen.getByRole('option', { name: 'Text input' }))
+      await user.click(screen.getByRole('button', { name: 'Add step' }))
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('listitem')).toHaveLength(3)
+      })
+      expect(screen.getAllByRole('listitem')[2]).toHaveTextContent(
+        'NotesText input',
+      )
+      // Checkbox steps aren't labelled with their type.
+      expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
+        /^Make coffee/,
+      )
+      expect(screen.getAllByRole('listitem')[0]).not.toHaveTextContent(
+        'Checkbox',
+      )
+      // The picker goes back to Checkbox for the next step.
+      expect(screen.getByRole('combobox', { name: 'Type' })).toHaveTextContent(
+        'Checkbox',
+      )
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/1\/steps$/),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ text: 'Notes', type: 'Text' }),
+        }),
+      )
+    })
+
+    it("changes a step's type", async () => {
+      const user = userEvent.setup()
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+          return jsonResponse({
+            id: 10,
+            text: 'Make coffee',
+            type: 'Text',
+            sortOrder: 0,
+          })
+        }
+        return jsonResponse(checklistWithSteps)
+      })
+
+      renderAt('/checklists/1')
+
+      await user.click(
+        await screen.findByRole('button', { name: 'Edit step "Make coffee"' }),
+      )
+      const typePicker = screen.getAllByRole('combobox', { name: 'Type' })[0]
+      expect(typePicker).toHaveTextContent('Checkbox')
+      await user.click(typePicker)
+      await user.click(screen.getByRole('option', { name: 'Text input' }))
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(
+          'Make coffeeText input',
+        )
+      })
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/1\/steps\/10$/),
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ text: 'Make coffee', type: 'Text' }),
+        }),
+      )
+    })
+
     it('keeps the steps after renaming the checklist', async () => {
       const user = userEvent.setup()
 
@@ -1055,8 +1149,22 @@ describe('App', () => {
       startedAt: '2026-10-06T08:00:00Z',
       completedAt: null,
       steps: [
-        { stepId: 11, text: 'Make coffee', isDone: false, completedAt: null },
-        { stepId: 12, text: 'Read email', isDone: true, completedAt: null },
+        {
+          stepId: 11,
+          text: 'Make coffee',
+          type: 'Checkbox',
+          isDone: false,
+          completedAt: null,
+          responseText: null,
+        },
+        {
+          stepId: 12,
+          text: 'Read email',
+          type: 'Checkbox',
+          isDone: true,
+          completedAt: null,
+          responseText: null,
+        },
       ],
     }
 
@@ -1330,6 +1438,122 @@ describe('App', () => {
       expect(
         screen.queryByRole('button', { name: 'Reload' }),
       ).not.toBeInTheDocument()
+    })
+
+    describe('text steps', () => {
+      const notesStep = {
+        stepId: 13,
+        text: 'Notes',
+        type: 'Text',
+        isDone: false,
+        completedAt: null,
+        responseText: null,
+      }
+      const runWithText = { ...run, steps: [...run.steps, notesStep] }
+      const savedNotes = {
+        ...notesStep,
+        isDone: true,
+        completedAt: '2026-10-06T08:10:00Z',
+        responseText: 'All good',
+      }
+
+      it('saves the text when the field loses focus', async () => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? jsonResponse(savedNotes)
+            : jsonResponse(runWithText),
+        )
+
+        renderAt('/runs/5')
+        await user.type(
+          await screen.findByRole('textbox', { name: 'Notes' }),
+          '  All good  ',
+        )
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        await user.tab()
+
+        expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
+        expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveValue(
+          'All good',
+        )
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({ text: '  All good  ' }),
+          }),
+        )
+      })
+
+      it('saves the text when Enter is pressed, and not again if unchanged', async () => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? jsonResponse(savedNotes)
+            : jsonResponse(runWithText),
+        )
+
+        renderAt('/runs/5')
+        const field = await screen.findByRole('textbox', { name: 'Notes' })
+        await user.type(field, 'All good{Enter}')
+
+        expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
+        expect(field).toHaveFocus()
+        await user.tab()
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+      })
+
+      it('does not save when the field is left unchanged', async () => {
+        const user = userEvent.setup()
+        const fetchMock = mockFetch(async () => jsonResponse(runWithText))
+
+        renderAt('/runs/5')
+        await user.click(await screen.findByRole('textbox', { name: 'Notes' }))
+        await user.tab()
+
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+
+      it('keeps the typed text when it fails to save', async () => {
+        const user = userEvent.setup()
+        mockFetch(async (_url, init) =>
+          init?.method === 'PUT'
+            ? new Response(null, { status: 500 })
+            : jsonResponse(runWithText),
+        )
+
+        renderAt('/runs/5')
+        await user.type(
+          await screen.findByRole('textbox', { name: 'Notes' }),
+          'All good',
+        )
+        await user.tab()
+
+        expect(
+          await screen.findByText('Unable to save step.'),
+        ).toBeInTheDocument()
+        expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveValue(
+          'All good',
+        )
+        expect(screen.getByText('1 of 3 done')).toBeInTheDocument()
+      })
+
+      it('shows the saved text read-only once the run is complete', async () => {
+        mockFetch(async () =>
+          jsonResponse({
+            ...run,
+            completedAt: '2026-10-06T08:30:00Z',
+            steps: [savedNotes],
+          }),
+        )
+
+        renderAt('/runs/5')
+
+        const field = await screen.findByRole('textbox', { name: 'Notes' })
+        expect(field).toHaveValue('All good')
+        expect(field).toBeDisabled()
+      })
     })
 
     it('keeps a deleted step but does not let it be ticked', async () => {

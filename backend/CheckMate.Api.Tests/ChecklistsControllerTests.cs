@@ -109,7 +109,7 @@ public class ChecklistsControllerTests
         await dbContext.SaveChangesAsync();
 
         dbContext.ChecklistSteps.AddRange(
-            new ChecklistStep { ChecklistId = checklist.Id, Text = "Second", SortOrder = 1 },
+            new ChecklistStep { ChecklistId = checklist.Id, Text = "Second", Type = StepType.Text, SortOrder = 1 },
             new ChecklistStep { ChecklistId = checklist.Id, Text = "First", SortOrder = 0 },
             new ChecklistStep { ChecklistId = other.Id, Text = "Elsewhere", SortOrder = 0 });
         await dbContext.SaveChangesAsync();
@@ -123,8 +123,8 @@ public class ChecklistsControllerTests
         Assert.Equal(checklist.Id, returnedChecklist.Id);
         Assert.Equal("Daily", returnedChecklist.Name);
         Assert.Collection(returnedChecklist.Steps,
-            step => Assert.Equal("First", step.Text),
-            step => Assert.Equal("Second", step.Text));
+            step => Assert.Equal(("First", StepType.Checkbox), (step.Text, step.Type)),
+            step => Assert.Equal(("Second", StepType.Text), (step.Text, step.Type)));
     }
 
     [Fact]

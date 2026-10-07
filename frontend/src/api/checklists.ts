@@ -5,9 +5,18 @@ export type Checklist = {
   name: string
 }
 
+// What a step asks for when the checklist is filled out.
+export type StepType = 'Checkbox' | 'Text'
+
+export const stepTypeLabels: Record<StepType, string> = {
+  Checkbox: 'Checkbox',
+  Text: 'Text input',
+}
+
 export type ChecklistStep = {
   id: number
   text: string
+  type: StepType
   sortOrder: number
 }
 
@@ -113,13 +122,18 @@ function stepsUrl(checklistId: number) {
   return `${checklistsUrl}/${checklistId}/steps`
 }
 
-async function saveStep(url: string, method: 'POST' | 'PUT', text: string) {
+async function saveStep(
+  url: string,
+  method: 'POST' | 'PUT',
+  text: string,
+  type: StepType,
+) {
   const response = await fetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, type }),
   })
 
   if (!response.ok) {
@@ -128,12 +142,17 @@ async function saveStep(url: string, method: 'POST' | 'PUT', text: string) {
   return (await response.json()) as ChecklistStep
 }
 
-export function createStep(checklistId: number, text: string) {
-  return saveStep(stepsUrl(checklistId), 'POST', text)
+export function createStep(checklistId: number, text: string, type: StepType) {
+  return saveStep(stepsUrl(checklistId), 'POST', text, type)
 }
 
-export function updateStep(checklistId: number, stepId: number, text: string) {
-  return saveStep(`${stepsUrl(checklistId)}/${stepId}`, 'PUT', text)
+export function updateStep(
+  checklistId: number,
+  stepId: number,
+  text: string,
+  type: StepType,
+) {
+  return saveStep(`${stepsUrl(checklistId)}/${stepId}`, 'PUT', text, type)
 }
 
 // Takes every step id of the checklist in the new order and returns the steps in that order.

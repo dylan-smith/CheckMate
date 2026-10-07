@@ -12,5 +12,7 @@ public class ChecklistStep
     [MaxLength(500)]
     public string Text { get; set; } = string.Empty;
 
+    public StepType Type { get; set; }
+
     public int SortOrder { get; set; }
 }
