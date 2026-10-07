@@ -30,11 +30,23 @@
         "text": "Announce the release window in the team channel",
         "type": "Checkbox"
       },
-      { "text": "Run the database migrations", "type": "Checkbox" },
-      { "text": "Deploy the new version", "type": "Checkbox" },
+      {
+        "text": "Run the database migrations",
+        "type": "Checkbox",
+        "dependsOn": [
+          "Confirm all CI checks passed on the release commit",
+          "Announce the release window in the team channel"
+        ]
+      },
+      {
+        "text": "Deploy the new version",
+        "type": "Checkbox",
+        "dependsOn": ["Run the database migrations"]
+      },
       {
         "text": "Error rate in the first 15 minutes after deploying (%)",
-        "type": "Number"
+        "type": "Number",
+        "dependsOn": ["Deploy the new version"]
       },
       { "text": "Link to the release notes", "type": "Text" }
     ]
@@ -48,10 +60,19 @@
       },
       { "text": "Order a laptop", "type": "Checkbox" },
       { "text": "Assign an onboarding buddy", "type": "Text" },
-      { "text": "Walk through the architecture overview", "type": "Checkbox" },
+      {
+        "text": "Walk through the architecture overview",
+        "type": "Checkbox",
+        "dependsOn": ["Create their accounts (email, chat, source control)"]
+      },
       {
         "text": "Pair on a first small change and get it merged",
-        "type": "Checkbox"
+        "type": "Checkbox",
+        "dependsOn": [
+          "Order a laptop",
+          "Assign an onboarding buddy",
+          "Walk through the architecture overview"
+        ]
       }
     ]
   },

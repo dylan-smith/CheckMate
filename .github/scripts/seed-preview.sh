@@ -42,9 +42,16 @@ for i in $(seq 0 $((count - 1))); do
   name="$(jq -r ".[${i}].name" "${seed_file}")"
   id="$(jq -c "{name: .[${i}].name}" "${seed_file}" | api -X POST --data @- "${API_URL}/api/checklists" | jq -r .id)"
   steps="$(jq ".[${i}].steps | length" "${seed_file}")"
+  # The IDs of the checklist's steps so far, by text. A step's dependsOn names its prerequisites by text, and they
+  # come earlier in the list, so they've been created by the time it is.
+  step_ids='{}'
   for j in $(seq 0 $((steps - 1))); do
-    jq -c ".[${i}].steps[${j}]" "${seed_file}" |
-      api -X POST --data @- "${API_URL}/api/checklists/${id}/steps" --output /dev/null
+    step="$(jq -c ".[${i}].steps[${j}]" "${seed_file}")"
+    body="$(jq -c --argjson ids "${step_ids}" \
+      '{text, type, dependsOnStepIds: [(.dependsOn // [])[] | $ids[.] // error("No earlier step \"\(.)\"")]}' \
+      <<<"${step}")"
+    step_id="$(api -X POST --data "${body}" "${API_URL}/api/checklists/${id}/steps" | jq -r .id)"
+    step_ids="$(jq -c --argjson step "${step}" --argjson id "${step_id}" '. + {($step.text): $id}' <<<"${step_ids}")"
   done
   echo "Added checklist ${id}, \"${name}\", with ${steps} step(s)"
 done
