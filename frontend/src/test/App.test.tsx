@@ -978,9 +978,12 @@ describe('App', () => {
           body: JSON.stringify({ stepIds: [11, 10] }),
         }),
       )
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'Moved step "Make coffee" to position 2 of 2.',
-      )
+      // The list moves the step straight away, but this is only announced once the order is saved.
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(
+          'Moved step "Make coffee" to position 2 of 2.',
+        )
+      })
       // The step is now last, so focus moves to its other button.
       await waitFor(() => {
         expect(
@@ -1113,9 +1116,12 @@ describe('App', () => {
           body: JSON.stringify({ stepIds: [11, 10] }),
         }),
       )
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'Moved step "Read email" to position 1 of 2.',
-      )
+      // The list moves the step straight away, but this is only announced once the order is saved.
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(
+          'Moved step "Read email" to position 1 of 2.',
+        )
+      })
       expect(trackEvent).toHaveBeenCalledWith('StepsReordered')
     })
 

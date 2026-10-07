@@ -7,28 +7,13 @@
 # takes for that step's type (null to leave it blank), and is completed if it says so. They're filled out in the
 # order listed, so the last is the newest, and all of them get the time of the seed itself.
 #
-# The database's seeded tag records a seed that finished, so redeploying a PR keeps whatever reviewers changed
-# and never duplicates the samples. A new or recreated database has no tags, so it's seeded. A seed that stopped
-# partway left no tag, so the next deployment seeds again, first deleting any sample checklists it had added
-# (by name), and their fill-outs with them, so none is left half seeded; other checklists are left alone.
-# Requires API_URL, PREVIEW_RESOURCE_GROUP and PR_NUMBER, and runs from the repository root.
+# Every deployment starts the preview over: it deletes every checklist first, and their steps and fill-outs with
+# them, so whatever reviewers changed is gone and the samples are never duplicated. A seed that stops partway is
+# redone in full by the next deployment.
+# Requires API_URL, and runs from the repository root.
 set -euo pipefail
 
 seed_file=.github/scripts/preview-seed-data.json
-
-database="$(az resource list \
-  --resource-group "${PREVIEW_RESOURCE_GROUP}" \
-  --query "[?tags.\"pr-number\" == '${PR_NUMBER}' && type == 'Microsoft.Sql/servers/databases'] | [0].{id: id, seeded: tags.seeded}" \
-  --output tsv)"
-read -r database_id seeded <<<"${database}" || true
-if [ -z "${database_id}" ]; then
-  echo "::error::PR #${PR_NUMBER} has no preview database"
-  exit 1
-fi
-if [ "${seeded}" = "true" ]; then
-  echo "The preview has already been seeded; leaving its data as it is"
-  exit 0
-fi
 
 api() {
   curl --fail-with-body --silent --show-error --max-time 60 -H 'Content-Type: application/json' "$@"
@@ -36,10 +21,12 @@ api() {
 
 # Only reads are retried: a retried POST or DELETE whose first attempt did go through would fail or duplicate.
 existing="$(api --retry 3 --retry-all-errors "${API_URL}/api/checklists")"
-for id in $(jq -r --slurpfile seed "${seed_file}" '.[] | select(.name | IN($seed[0][].name)) | .id' <<<"${existing}"); do
-  echo "Deleting sample checklist ${id}, left by a seed that didn't finish"
+deleted=0
+for id in $(jq -r '.[].id' <<<"${existing}"); do
   api -X DELETE "${API_URL}/api/checklists/${id}" --output /dev/null
+  deleted=$((deleted + 1))
 done
+echo "Deleted the preview's ${deleted} checklist(s)"
 
 count="$(jq length "${seed_file}")"
 for i in $(seq 0 $((count - 1))); do
@@ -67,10 +54,4 @@ for i in $(seq 0 $((count - 1))); do
   echo "Added checklist ${id}, \"${name}\", with ${steps} step(s) and ${runs} fill-out(s)"
 done
 
-az tag update \
-  --resource-id "${database_id}" \
-  --operation Merge \
-  --tags seeded=true \
-  --only-show-errors \
-  --output none
 echo "Seeded the preview with ${count} checklists"

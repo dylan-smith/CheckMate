@@ -26,7 +26,7 @@ param sqlServerName string
 @description('Use the Azure SQL free offer for the database. The offer covers a limited number of databases per subscription, and can\'t be turned on for an existing database.')
 param useFreeLimit bool = true
 
-@description('The database\'s current tags. A deployment replaces a resource\'s tags with the ones it declares, so CI passes these in to keep the ones its scripts set (migrations, seeded) through the deployment.')
+@description('The database\'s current tags. A deployment replaces a resource\'s tags with the ones it declares, so CI passes these in to keep the one its scripts set (migrations) through the deployment.')
 param existingDatabaseTags object = {}
 
 var appServiceName = 'checkmate-pr-${prNumber}'
