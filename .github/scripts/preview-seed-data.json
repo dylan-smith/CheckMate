@@ -16,6 +16,34 @@
         "type": "Checkbox"
       },
       { "text": "Notes for the on-call engineer", "type": "Text" }
+    ],
+    "runs": [
+      {
+        "complete": true,
+        "responses": [
+          { "isDone": true },
+          { "number": 61 },
+          { "number": 182 },
+          { "isDone": true },
+          { "text": "All quiet overnight." }
+        ]
+      },
+      {
+        "complete": true,
+        "responses": [
+          { "isDone": true },
+          { "number": 64.5 },
+          { "number": 240 },
+          { "isDone": true },
+          {
+            "text": "Response times went up after the 2 AM batch job. Keeping an eye on it."
+          }
+        ]
+      },
+      {
+        "complete": false,
+        "responses": [{ "isDone": true }, { "number": 66 }, null, null, null]
+      }
     ]
   },
   {
@@ -37,6 +65,20 @@
         "type": "Number"
       },
       { "text": "Link to the release notes", "type": "Text" }
+    ],
+    "runs": [
+      {
+        "complete": true,
+        "responses": [
+          { "text": "2.4.0" },
+          { "isDone": true },
+          { "isDone": true },
+          { "isDone": true },
+          { "isDone": true },
+          { "number": 0.2 },
+          { "text": "https://example.com/releases/2.4.0" }
+        ]
+      }
     ]
   },
   {
@@ -53,6 +95,18 @@
         "text": "Pair on a first small change and get it merged",
         "type": "Checkbox"
       }
+    ],
+    "runs": [
+      {
+        "complete": false,
+        "responses": [
+          { "isDone": true },
+          { "isDone": true },
+          { "text": "Sam from the platform team" },
+          null,
+          null
+        ]
+      }
     ]
   },
   {
@@ -62,6 +116,21 @@
       { "text": "Budget for this week ($)", "type": "Number" },
       { "text": "Anything special to pick up", "type": "Text" },
       { "text": "Bring reusable bags", "type": "Checkbox" }
+    ],
+    "runs": [
+      {
+        "complete": true,
+        "responses": [
+          { "isDone": true },
+          { "number": 150 },
+          { "text": "Birthday cake for Saturday" },
+          { "isDone": true }
+        ]
+      },
+      {
+        "complete": false,
+        "responses": [{ "isDone": true }, { "number": 140 }, null, null]
+      }
     ]
   },
   {
