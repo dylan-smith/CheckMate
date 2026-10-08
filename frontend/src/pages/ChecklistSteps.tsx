@@ -698,7 +698,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
         sx={{
           display: 'flex',
           alignItems: 'center',
-          gap: 1,
+          gap: { xs: 0.5, sm: 1 },
           width: '100%',
         }}
       >
@@ -708,7 +708,16 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
           secondary={describeStep(step, steps)}
           sx={{ overflowWrap: 'anywhere' }}
         />
-        <Stack direction="row" spacing={1}>
+        {/* On a narrow screen the controls sit closer together and the buttons are only as wide as their labels,
+            leaving more of the row for the step's text. */}
+        <Stack
+          direction="row"
+          spacing={{ xs: 0, sm: 1 }}
+          sx={{
+            flexShrink: 0,
+            '& .MuiButton-root': { minWidth: { xs: 0, sm: 64 } },
+          }}
+        >
           <IconButton
             id={isCopy ? undefined : moveButtonId(step.id, 'up')}
             size="small"
