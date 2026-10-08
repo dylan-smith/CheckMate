@@ -271,14 +271,22 @@ test.describe('Checklist management', () => {
     test('sets prerequisites, rejects a cycle, and they persist', async ({
       page,
     }) => {
-      // Picks a step's prerequisites in its editor and saves them.
-      async function setPrerequisites(text: string, prerequisites: string[]) {
-        await page.getByRole('button', { name: `Edit step "${text}"` }).click()
-        await page.getByRole('combobox', { name: 'Depends on' }).click()
+      // Picks prerequisites in a form's picker. The step editor and the new step form each have one.
+      async function pickPrerequisites(form: string, prerequisites: string[]) {
+        await page
+          .getByRole('form', { name: form })
+          .getByRole('combobox', { name: 'Depends on' })
+          .click()
         for (const prerequisite of prerequisites) {
           await page.getByRole('option', { name: prerequisite }).click()
         }
         await page.keyboard.press('Escape')
+      }
+
+      // Picks a step's prerequisites in its editor and saves them.
+      async function setPrerequisites(text: string, prerequisites: string[]) {
+        await page.getByRole('button', { name: `Edit step "${text}"` }).click()
+        await pickPrerequisites(`Edit step "${text}"`, prerequisites)
         await page.getByRole('button', { name: 'Save', exact: true }).click()
       }
 
@@ -286,12 +294,16 @@ test.describe('Checklist management', () => {
       await openChecklist(page, 'Deploy')
       await addStep(page, 'Build')
       await addStep(page, 'Test')
-      await addStep(page, 'Release')
 
       const steps = page.getByRole('listitem')
       await setPrerequisites('Test', ['Build'])
       await expect(steps.nth(1)).toContainText('Depends on: Build')
-      await setPrerequisites('Release', ['Test', 'Build'])
+
+      // A new step's prerequisites are picked as it's added.
+      await page.getByLabel('New step').fill('Release')
+      await pickPrerequisites('Add a step', ['Test', 'Build'])
+      await page.getByRole('button', { name: 'Add step' }).click()
+      await expect(steps.nth(2)).toContainText('Release')
       await expect(steps.nth(2)).toContainText('Depends on: Build, Test')
 
       // Release already depends on Build, directly and through Test, so this would make a loop.

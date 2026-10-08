@@ -258,6 +258,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
   const [steps, setSteps] = useState(initialSteps)
   const [newText, setNewText] = useState('')
   const [newType, setNewType] = useState<StepType>('Checkbox')
+  const [newDependsOn, setNewDependsOn] = useState<number[]>([])
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editText, setEditText] = useState('')
   const [editType, setEditType] = useState<StepType>('Checkbox')
@@ -310,13 +311,22 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     setErrorMessage('')
 
     try {
-      const created = await createStep(checklistId, trimmedText, newType)
+      const created = await createStep(
+        checklistId,
+        trimmedText,
+        newType,
+        newDependsOn,
+      )
       trackEvent('StepAdded')
       setSteps((current) => [...current, created])
       setNewText('')
       setNewType('Checkbox')
+      setNewDependsOn([])
     } catch (error) {
-      trackException(error, { operation: 'addStep' })
+      // A rejected step, such as one whose prerequisite was deleted elsewhere, is the user's to fix.
+      if (!(error instanceof ApiError)) {
+        trackException(error, { operation: 'addStep' })
+      }
       setErrorMessage(describeFetchError(error, 'Unable to save step.'))
     } finally {
       setBusy(false)
@@ -398,8 +408,9 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
               : step,
           ),
       )
-      // An open editor may have picked it too, and saving it there would be rejected.
+      // An open editor or the new step may have picked it too, and saving either would be rejected.
       setEditDependsOn((current) => current.filter((id) => id !== stepId))
+      setNewDependsOn((current) => current.filter((id) => id !== stepId))
       if (editingId === stepId) {
         setEditingId(null)
       }
@@ -604,6 +615,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                     editingId === step.id ? (
                       <Box
                         component="form"
+                        aria-label={`Edit step "${step.text}"`}
                         onSubmit={(event) => void handleUpdate(event, step.id)}
                         sx={{
                           display: 'flex',
@@ -699,10 +711,13 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
 
       <Box
         component="form"
+        aria-label="Add a step"
         onSubmit={(event) => void handleAdd(event)}
         sx={{
           display: 'flex',
           flexDirection: { xs: 'column', sm: 'row' },
+          // Like the edit form, the text gets a line of its own until md once there's a prerequisite field.
+          flexWrap: { sm: 'wrap', md: 'nowrap' },
           gap: 1,
         }}
       >
@@ -713,13 +728,27 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
           onChange={(event) => setNewText(event.target.value)}
           slotProps={{ htmlInput: { maxLength: 500 } }}
           size="small"
-          sx={{ flexGrow: 1 }}
+          sx={{
+            flexGrow: 1,
+            ...(steps.length > 0 && {
+              flexBasis: { sm: '100%', md: 'auto' },
+            }),
+          }}
         />
         <StepTypeField
           id="new-step-type"
           value={newType}
           onChange={setNewType}
         />
+        {/* Any step already on the checklist can be a new step's prerequisite. */}
+        {steps.length > 0 && (
+          <PrerequisitesField
+            id="new-step-depends-on"
+            options={steps}
+            value={newDependsOn}
+            onChange={setNewDependsOn}
+          />
+        )}
         <Button type="submit" variant="contained" disabled={busy}>
           Add step
         </Button>

@@ -157,8 +157,17 @@ async function saveStep(
   return (await response.json()) as ChecklistStep
 }
 
-export function createStep(checklistId: number, text: string, type: StepType) {
-  return saveStep(stepsUrl(checklistId), 'POST', { text, type })
+export function createStep(
+  checklistId: number,
+  text: string,
+  type: StepType,
+  dependsOnStepIds: number[],
+) {
+  return saveStep(stepsUrl(checklistId), 'POST', {
+    text,
+    type,
+    dependsOnStepIds,
+  })
 }
 
 export function updateStep(

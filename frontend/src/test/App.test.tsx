@@ -750,7 +750,11 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps$/),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ text: 'Walk dog', type: 'Checkbox' }),
+          body: JSON.stringify({
+            text: 'Walk dog',
+            type: 'Checkbox',
+            dependsOnStepIds: [],
+          }),
         }),
       )
       expect(trackEvent).toHaveBeenCalledWith('StepAdded')
@@ -1236,7 +1240,11 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps$/),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ text: 'Notes', type: 'Text' }),
+          body: JSON.stringify({
+            text: 'Notes',
+            type: 'Text',
+            dependsOnStepIds: [],
+          }),
         }),
       )
     })
@@ -1302,6 +1310,151 @@ describe('App', () => {
         ],
       }
 
+      // The step editor and the new step form both have a prerequisite picker, so queries go through the form.
+      function editor() {
+        return within(screen.getByRole('form', { name: /^Edit step / }))
+      }
+
+      function newStepForm() {
+        return within(screen.getByRole('form', { name: 'Add a step' }))
+      }
+
+      it('picks prerequisites for a new step', async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'POST') {
+            return jsonResponse(
+              {
+                id: 12,
+                text: 'Walk dog',
+                type: 'Checkbox',
+                sortOrder: 2,
+                dependsOnStepIds: [10, 11],
+              },
+              201,
+            )
+          }
+          return jsonResponse(checklistWithSteps)
+        })
+
+        renderAt('/checklists/1')
+
+        await user.type(await screen.findByLabelText('New step'), 'Walk dog')
+        const picker = newStepForm().getByRole('combobox', {
+          name: 'Depends on',
+        })
+        expect(picker).toHaveTextContent('None')
+        await user.click(picker)
+        // Every step already on the checklist is offered.
+        await user.click(screen.getByRole('option', { name: 'Read email' }))
+        await user.click(screen.getByRole('option', { name: 'Make coffee' }))
+        await user.keyboard('{Escape}')
+        expect(picker).toHaveTextContent('Make coffee, Read email')
+        await user.click(screen.getByRole('button', { name: 'Add step' }))
+
+        await waitFor(() => {
+          expect(screen.getAllByRole('listitem')[2]).toHaveTextContent(
+            'Walk dogDepends on: Make coffee, Read email',
+          )
+        })
+        expect(fetch).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/checklists\/1\/steps$/),
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({
+              text: 'Walk dog',
+              type: 'Checkbox',
+              dependsOnStepIds: [10, 11],
+            }),
+          }),
+        )
+        // The picker starts over for the next step, which can now also depend on the one just added.
+        expect(picker).toHaveTextContent('None')
+        await user.click(picker)
+        expect(
+          screen.getByRole('option', { name: 'Walk dog' }),
+        ).toBeInTheDocument()
+      })
+
+      it("doesn't offer prerequisites for a checklist's first step", async () => {
+        mockFetch(async () => jsonResponse({ id: 1, name: 'Empty', steps: [] }))
+
+        renderAt('/checklists/1')
+
+        await screen.findByLabelText('New step')
+        expect(
+          screen.queryByRole('combobox', { name: 'Depends on' }),
+        ).not.toBeInTheDocument()
+      })
+
+      it('shows why the API rejected a new step without reporting it', async () => {
+        const user = userEvent.setup()
+        const message =
+          'A step can only depend on other steps of the same checklist.'
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'POST') {
+            return jsonResponse(
+              {
+                title: 'Validation failed',
+                errors: { DependsOnStepIds: [message] },
+              },
+              400,
+            )
+          }
+          return jsonResponse(checklistWithSteps)
+        })
+
+        renderAt('/checklists/1')
+
+        await user.type(await screen.findByLabelText('New step'), 'Walk dog')
+        await user.click(
+          newStepForm().getByRole('combobox', { name: 'Depends on' }),
+        )
+        await user.click(screen.getByRole('option', { name: 'Make coffee' }))
+        await user.keyboard('{Escape}')
+        await user.click(screen.getByRole('button', { name: 'Add step' }))
+
+        expect(await screen.findByText(message)).toBeInTheDocument()
+        // What was typed and picked stays, so it can be fixed and added again.
+        expect(screen.getByLabelText('New step')).toHaveValue('Walk dog')
+        expect(
+          newStepForm().getByRole('combobox', { name: 'Depends on' }),
+        ).toHaveTextContent('Make coffee')
+        expect(trackException).not.toHaveBeenCalled()
+      })
+
+      it("drops a deleted step from the new step's prerequisites", async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'DELETE') {
+            return new Response(null, { status: 204 })
+          }
+          return jsonResponse(checklistWithSteps)
+        })
+
+        renderAt('/checklists/1')
+
+        const picker = await waitFor(() =>
+          newStepForm().getByRole('combobox', { name: 'Depends on' }),
+        )
+        await user.click(picker)
+        await user.click(screen.getByRole('option', { name: 'Make coffee' }))
+        await user.click(screen.getByRole('option', { name: 'Read email' }))
+        await user.keyboard('{Escape}')
+        await user.click(
+          screen.getByRole('button', { name: 'Delete step "Make coffee"' }),
+        )
+
+        await waitFor(() => {
+          expect(screen.getAllByRole('listitem')).toHaveLength(1)
+        })
+        expect(picker).toHaveTextContent('Read email')
+        expect(picker).not.toHaveTextContent('Make coffee')
+      })
+
       it('picks prerequisites in the step editor and lists them', async () => {
         const user = userEvent.setup()
 
@@ -1323,7 +1476,7 @@ describe('App', () => {
         await user.click(
           await screen.findByRole('button', { name: 'Edit step "Walk dog"' }),
         )
-        const picker = screen.getByRole('combobox', { name: 'Depends on' })
+        const picker = editor().getByRole('combobox', { name: 'Depends on' })
         expect(picker).toHaveTextContent('None')
         await user.click(picker)
         // A step can't depend on itself, so it isn't offered.
@@ -1376,7 +1529,7 @@ describe('App', () => {
           }),
         )
         expect(
-          screen.queryByRole('combobox', { name: 'Depends on' }),
+          editor().queryByRole('combobox', { name: 'Depends on' }),
         ).not.toBeInTheDocument()
       })
 
@@ -1411,7 +1564,7 @@ describe('App', () => {
             name: 'Edit step "Make coffee"',
           }),
         )
-        await user.click(screen.getByRole('combobox', { name: 'Depends on' }))
+        await user.click(editor().getByRole('combobox', { name: 'Depends on' }))
         await user.click(screen.getByRole('option', { name: 'Read email' }))
         await user.keyboard('{Escape}')
         await user.click(screen.getByRole('button', { name: 'Save' }))
@@ -1419,7 +1572,7 @@ describe('App', () => {
         expect(await screen.findByText(message)).toBeInTheDocument()
         // The editor stays open so the prerequisites can be changed.
         expect(
-          screen.getByRole('combobox', { name: 'Depends on' }),
+          editor().getByRole('combobox', { name: 'Depends on' }),
         ).toHaveTextContent('Read email')
         expect(trackException).not.toHaveBeenCalled()
       })
@@ -1465,7 +1618,7 @@ describe('App', () => {
           screen.getByRole('button', { name: 'Edit step "Walk dog"' }),
         )
         expect(
-          screen.getByRole('combobox', { name: 'Depends on' }),
+          editor().getByRole('combobox', { name: 'Depends on' }),
         ).toHaveTextContent('Read email')
       })
 
