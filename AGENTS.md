@@ -85,6 +85,15 @@ npm run test:e2e
   endpoint must look that up first, or it can reach another user's data.
 - Local dev, E2E and PR previews use test sign-in (`Bearer test:<name>`); production never turns it on.
 
+### Offline fill-outs
+
+- Fill-outs are local-first: the run page reads and writes the device's copy in IndexedDB (`frontend/src/offline/`),
+  and `sync.ts` sends changed fill-outs to the API's idempotent `PUT /api/checklists/{id}/runs/{clientKey}`. The
+  pure rules in `offline/runs.ts` (which answers make a step done, what the API would refuse) mirror
+  `ChecklistRunsController`, so a change to one needs the same change in the other.
+- Unit tests get IndexedDB from `fake-indexeddb` (see `src/test/setup.ts`), and `configureSync({ debounceMs: 0 })`
+  so syncs happen as soon as a change is saved.
+
 ### Database
 
 - The schema is owned by DbUp scripts in `backend/CheckMate.Database/Scripts/`, not EF Core

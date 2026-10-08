@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { googleSubject } from './google'
 
 // The signed-in user. token is sent to the API as a bearer token: a Google ID token, a "test:<name>" token where
 // test sign-in is enabled, or the service token the production smoke and load tests use.
@@ -56,9 +57,24 @@ export function setSession(session: Session | null) {
   listeners.forEach((listener) => listener())
 }
 
-function subscribe(listener: Listener) {
+export function subscribeSession(listener: Listener) {
   listeners.add(listener)
-  return () => listeners.delete(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+// The identity the API files the user's data under (see the API's authentication handlers), so what the app
+// keeps on the device is kept apart per user too. Test sign-in lowercases the name like the API does.
+export function sessionSubject(session: Session): string {
+  switch (session.provider) {
+    case 'test':
+      return `test:${session.token.slice('test:'.length).toLowerCase()}`
+    case 'service':
+      return 'service:ci'
+    default:
+      return `google:${googleSubject(session.token) ?? session.email ?? session.name}`
+  }
 }
 
 // Signing in or out in another tab applies here too.
@@ -72,5 +88,5 @@ if (typeof window !== 'undefined') {
 }
 
 export function useSession() {
-  return useSyncExternalStore(subscribe, getSession)
+  return useSyncExternalStore(subscribeSession, getSession)
 }

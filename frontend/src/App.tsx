@@ -9,10 +9,12 @@ import logo from './assets/logo.svg'
 import { disableGoogleAutoSelect } from './auth/google'
 import { setSession, useSession } from './auth/session'
 import SignInPage from './auth/SignInPage'
+import { startSync } from './offline/sync'
 import ChecklistDetailPage from './pages/ChecklistDetailPage'
 import ChecklistsPage from './pages/ChecklistsPage'
 import NotFoundPage from './pages/NotFoundPage'
 import RunPage from './pages/RunPage'
+import SyncStatus, { SyncNotice } from './SyncStatus'
 import { trackPageView } from './telemetry'
 
 function signOut() {
@@ -29,6 +31,9 @@ function App() {
     trackPageView()
   }, [pathname])
 
+  // Fill-outs are saved on the device and sent to the API in the background while someone is signed in.
+  useEffect(() => (session === null ? undefined : startSync()), [session])
+
   return (
     <Container maxWidth="md" component="main" sx={{ py: 4 }}>
       {session && (
@@ -41,6 +46,7 @@ function App() {
             mb: 1,
           }}
         >
+          <SyncStatus />
           <Avatar
             src={session.pictureUrl}
             alt=""
@@ -83,12 +89,15 @@ function App() {
       {session === null ? (
         <SignInPage />
       ) : (
-        <Routes>
-          <Route path="/" element={<ChecklistsPage />} />
-          <Route path="/checklists/:id" element={<ChecklistDetailPage />} />
-          <Route path="/runs/:runId" element={<RunPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Routes>
+        <>
+          <Routes>
+            <Route path="/" element={<ChecklistsPage />} />
+            <Route path="/checklists/:id" element={<ChecklistDetailPage />} />
+            <Route path="/runs/:key" element={<RunPage />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Routes>
+          <SyncNotice />
+        </>
       )}
     </Container>
   )

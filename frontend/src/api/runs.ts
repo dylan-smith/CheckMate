@@ -29,17 +29,10 @@ export type RunStep = {
   isLocked: boolean
 }
 
-// A checkbox step sends isDone. A text step sends its text, and is done when the text isn't empty.
-// A number step sends its number, and is done when it isn't null. A choice step sends the picked
-// option's id, and is done when it isn't null.
-export type RunStepUpdate =
-  | { isDone: boolean }
-  | { text: string }
-  | { number: number | null }
-  | { optionId: number | null }
-
+// clientKey is the key this device, or another, gave the run when it started it (see src/offline/runs.ts).
 export type ChecklistRun = {
   id: number
+  clientKey: string
   checklistId: number
   checklistName: string
   startedAt: string
@@ -50,8 +43,29 @@ export type ChecklistRun = {
 // One past fill-out in the checklist page's history, without its steps.
 export type ChecklistRunSummary = {
   id: number
+  clientKey: string
   startedAt: string
   completedAt: string | null
+}
+
+// A step of a run as this device sends it: the step as it showed it, and the answer. The API keeps the text
+// and type from the first sync, and decides from the answer whether the step is done, like RunStep shows it.
+export type RunSyncStep = {
+  stepId: number
+  text: string
+  type: StepType
+  isDone: boolean
+  completedAt: string | null
+  responseText: string | null
+  responseNumber: number | null
+  selectedOptionId: number | null
+  selectedOptionText: string | null
+}
+
+export type RunSyncBody = {
+  startedAt: string
+  completedAt: string | null
+  steps: RunSyncStep[]
 }
 
 type ErrorResponse = {
@@ -62,7 +76,7 @@ const runsUrl = `${apiBaseUrl}/api/runs`
 
 const completedMessage = "This run is complete and can't be changed."
 
-// A 409 means the run was already completed, for example in another tab.
+// A 409 means the run was already completed, for example on another device.
 async function throwIfCompleted(response: Response) {
   if (response.status === 409) {
     const error = (await response.json()) as ErrorResponse
@@ -70,24 +84,13 @@ async function throwIfCompleted(response: Response) {
   }
 }
 
-// A 400 explains why the change isn't allowed yet, such as a step whose prerequisites aren't done, so pass that on.
+// A 400 explains why the run can't be saved as it is, such as a step whose prerequisites aren't done, so pass that on.
 async function throwIfRejected(response: Response, fallback: string) {
   if (response.status === 400) {
     const error = (await response.json()) as ValidationErrorResponse
     const message = Object.values(error.errors ?? {}).flat()[0]
     throw new ApiError(400, message ?? fallback)
   }
-}
-
-export async function startRun(checklistId: number) {
-  const response = await apiFetch(
-    `${apiBaseUrl}/api/checklists/${checklistId}/runs`,
-    { method: 'POST' },
-  )
-  if (!response.ok) {
-    throw new Error('Unable to start filling out the checklist.')
-  }
-  return (await response.json()) as ChecklistRun
 }
 
 // Newest first.
@@ -103,7 +106,7 @@ export async function getRuns(
   return (await response.json()) as ChecklistRunSummary[]
 }
 
-// Returns null when there's no run with this id.
+// Returns null when there's no run with this id. Only links from before runs had keys use it.
 export async function getRun(id: number): Promise<ChecklistRun | null> {
   const response = await apiFetch(`${runsUrl}/${id}`)
   if (response.status === 404) {
@@ -115,25 +118,47 @@ export async function getRun(id: number): Promise<ChecklistRun | null> {
   return (await response.json()) as ChecklistRun
 }
 
-export async function saveRunStep(
-  runId: number,
-  stepId: number,
-  update: RunStepUpdate,
+// Returns null when no run has this key.
+export async function getRunByKey(
+  clientKey: string,
+): Promise<ChecklistRun | null> {
+  const response = await apiFetch(`${runsUrl}/${clientKey}`)
+  if (response.status === 404) {
+    return null
+  }
+  if (!response.ok) {
+    throw new Error('Unable to load this fill-out.')
+  }
+  return (await response.json()) as ChecklistRun
+}
+
+// Sends the whole run as this device has it. The first sync creates the run and later ones update it, so
+// sending the same run again after a lost reply changes nothing. A 404 means the checklist is gone.
+export async function syncRun(
+  checklistId: number,
+  clientKey: string,
+  body: RunSyncBody,
 ) {
-  const response = await apiFetch(`${runsUrl}/${runId}/steps/${stepId}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/checklists/${checklistId}/runs/${clientKey}`,
+    {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(update),
-  })
+  )
 
   await throwIfCompleted(response)
-  await throwIfRejected(response, 'Unable to save step.')
-  if (!response.ok) {
-    throw new Error('Unable to save step.')
+  await throwIfRejected(response, 'Unable to sync this fill-out.')
+  if (response.status === 404) {
+    throw new ApiError(404, 'This checklist has been deleted.')
   }
-  return (await response.json()) as RunStep
+  if (!response.ok) {
+    throw new Error('Unable to sync this fill-out.')
+  }
+  return (await response.json()) as ChecklistRun
 }
 
 // A 404 means the run is already gone, which is what the caller wanted.
@@ -142,17 +167,4 @@ export async function deleteRun(runId: number) {
   if (!response.ok && response.status !== 404) {
     throw new Error('Unable to delete this fill-out.')
   }
-}
-
-export async function completeRun(runId: number) {
-  const response = await apiFetch(`${runsUrl}/${runId}/complete`, {
-    method: 'POST',
-  })
-
-  await throwIfCompleted(response)
-  await throwIfRejected(response, 'Unable to complete this fill-out.')
-  if (!response.ok) {
-    throw new Error('Unable to complete this fill-out.')
-  }
-  return (await response.json()) as ChecklistRun
 }

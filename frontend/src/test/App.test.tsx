@@ -11,6 +11,10 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { setSession } from '../auth/session'
+import { createLocalRun } from '../offline/runs'
+import { getLocalStore } from '../offline/store'
+import type { LocalRun } from '../offline/store'
+import { configureSync } from '../offline/sync'
 import { trackEvent, trackException, trackPageView } from '../telemetry'
 
 vi.mock('../telemetry', () => ({
@@ -51,6 +55,11 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
+// fetch rejects like this when the API can't be reached at all.
+function unreachable(): Promise<Response> {
+  throw new TypeError('Failed to fetch')
+}
+
 function renderAt(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
@@ -62,7 +71,14 @@ function renderAt(path: string) {
 // Signed in, since the app only shows the sign-in page otherwise. auth.test.tsx covers signing in and out.
 beforeEach(() => {
   setSession({ token: 'test:Tester', name: 'Tester', provider: 'test' })
+  // Fill-outs are sent to the API as soon as they change, rather than a second later.
+  configureSync({ debounceMs: 0 })
 })
+
+// The signed-in test user's store on this device.
+function localStore() {
+  return getLocalStore('test:tester')
+}
 
 afterEach(() => {
   // Signing out re-renders the app if a test left it mounted.
@@ -154,9 +170,7 @@ describe('App', () => {
     })
 
     it('shows error message when the API is unreachable', async () => {
-      mockFetch(async () => {
-        throw new TypeError('Failed to fetch')
-      })
+      mockFetch(unreachable, unreachable)
 
       renderAt('/')
 
@@ -485,9 +499,7 @@ describe('App', () => {
     })
 
     it('shows error message when the API is unreachable', async () => {
-      mockFetch(async () => {
-        throw new TypeError('Failed to fetch')
-      })
+      mockFetch(unreachable, unreachable)
 
       renderAt('/checklists/1')
 
@@ -692,7 +704,7 @@ describe('App', () => {
         {
           id: 10,
           text: 'Make coffee',
-          type: 'Checkbox',
+          type: 'Checkbox' as const,
           sortOrder: 0,
           options: [],
           dependsOnStepIds: [],
@@ -1923,47 +1935,136 @@ describe('App', () => {
   })
 
   describe('filling out a checklist', () => {
+    const runKey = 'c0ffee00-0000-4000-8000-000000000005'
+    const runPath = `/runs/${runKey}`
+    const runApiUrl = `/api/runs/${runKey}`
+    // Fill-outs of checklist 3 are sent to the API under the key the device gave them.
+    const syncUrlPattern = /\/api\/checklists\/3\/runs\/[0-9a-f-]{36}$/
+    const completedElsewhereMessage =
+      'This fill-out was completed on another device, so it shows what was saved there.'
+
+    function checkboxStep(
+      stepId: number | null,
+      text: string,
+      { isDone = false, dependsOnStepIds = [] as number[] } = {},
+    ) {
+      return {
+        stepId,
+        text,
+        type: 'Checkbox',
+        isDone,
+        completedAt: isDone ? '2026-10-06T08:05:00Z' : null,
+        responseText: null,
+        responseNumber: null,
+        options: [],
+        selectedOptionId: null,
+        selectedOptionText: null,
+        dependsOnStepIds,
+        isLocked: false,
+      }
+    }
+
     const run = {
       id: 5,
+      clientKey: runKey,
       checklistId: 3,
       checklistName: 'Morning',
       startedAt: '2026-10-06T08:00:00Z',
       completedAt: null,
       steps: [
+        checkboxStep(11, 'Make coffee'),
+        checkboxStep(12, 'Read email', { isDone: true }),
+      ],
+    }
+    // Every step done, so the fill-out can be completed.
+    const doneSteps = [
+      checkboxStep(11, 'Make coffee', { isDone: true }),
+      checkboxStep(12, 'Read email', { isDone: true }),
+    ]
+    const completable = { ...run, steps: doneSteps }
+
+    const morningChecklist = {
+      id: 3,
+      name: 'Morning',
+      steps: [
         {
-          stepId: 11,
-          dependsOnStepIds: [],
-          isLocked: false,
+          id: 11,
           text: 'Make coffee',
-          type: 'Checkbox',
-          isDone: false,
-          completedAt: null,
-          responseText: null,
-        },
-        {
-          stepId: 12,
+          type: 'Checkbox' as const,
+          sortOrder: 0,
+          options: [],
           dependsOnStepIds: [],
-          isLocked: false,
-          text: 'Read email',
-          type: 'Checkbox',
-          isDone: true,
-          completedAt: null,
-          responseText: null,
         },
       ],
     }
 
-    it('starts a run from the checklist page and opens it', async () => {
-      const user = userEvent.setup()
-      const fetchMock = mockFetch(async (url, init) => {
-        if (init?.method === 'POST') {
-          return jsonResponse(run, 201)
+    type SyncStep = {
+      stepId: number
+      isDone: boolean
+      completedAt: string | null
+      responseText: string | null
+      responseNumber: number | null
+      selectedOptionId: number | null
+      selectedOptionText: string | null
+    }
+
+    type SyncBody = {
+      startedAt: string
+      completedAt: string | null
+      steps: SyncStep[]
+    }
+
+    // The fill-out as each sync sent it, oldest first.
+    function syncs(fetchMock: ReturnType<typeof mockFetch>): SyncBody[] {
+      return fetchMock.mock.calls
+        .filter(
+          ([url, init]) =>
+            init?.method === 'PUT' &&
+            syncUrlPattern.test(
+              typeof url === 'string'
+                ? url
+                : url instanceof URL
+                  ? url.href
+                  : url.url,
+            ),
+        )
+        .map(([, init]) => JSON.parse(init?.body as string) as SyncBody)
+    }
+
+    function lastSyncedStep(
+      fetchMock: ReturnType<typeof mockFetch>,
+      stepId: number,
+    ) {
+      return syncs(fetchMock)
+        .at(-1)
+        ?.steps.find((step) => step.stepId === stepId)
+    }
+
+    // Answers the run page's requests: the run by its key, its syncs (with the run as sent, unless onSync says
+    // otherwise), and the checklists list for the page completing goes back to.
+    function mockRunPage(
+      loaded: object = run,
+      onSync?: (body: SyncBody) => Response | Promise<Response>,
+    ) {
+      return mockFetch(async (url, init) => {
+        if (init?.method === 'PUT' && syncUrlPattern.test(url)) {
+          const body = JSON.parse(init.body as string) as SyncBody
+          return onSync ? onSync(body) : jsonResponse({ ...loaded, ...body })
         }
-        if (url.endsWith('/api/runs/5')) {
-          return jsonResponse(run)
+        if (url.endsWith(runApiUrl)) {
+          return jsonResponse(loaded)
         }
-        return jsonResponse({ id: 3, name: 'Morning', steps: [] })
+        return jsonResponse([])
       })
+    }
+
+    it('starts a fill-out from the checklist page and opens it', async () => {
+      const user = userEvent.setup()
+      const fetchMock = mockFetch(async (_url, init) =>
+        init?.method === 'PUT'
+          ? jsonResponse({ ...run, id: 7 })
+          : jsonResponse(morningChecklist),
+      )
 
       renderAt('/checklists/3')
       await user.click(await screen.findByRole('button', { name: 'Fill out' }))
@@ -1971,26 +2072,31 @@ describe('App', () => {
       expect(
         await screen.findByRole('checkbox', { name: 'Make coffee' }),
       ).not.toBeChecked()
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/checklists\/3\/runs$/),
-        expect.objectContaining({ method: 'POST' }),
-      )
       expect(trackEvent).toHaveBeenCalledWith('RunStarted')
+      // The fill-out lives on the device, and is sent to the API under the key the device gave it.
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringMatching(syncUrlPattern),
+          expect.objectContaining({ method: 'PUT' }),
+        )
+      })
+      expect(
+        fetchMock.mock.calls.some(([, init]) => init?.method === 'POST'),
+      ).toBe(false)
     })
 
-    it('starts a run straight from the checklists page', async () => {
+    it('starts a fill-out straight from the checklists page', async () => {
       const user = userEvent.setup()
       const fetchMock = mockFetch(async (url, init) => {
-        if (init?.method === 'POST') {
-          return jsonResponse(run, 201)
+        if (init?.method === 'PUT') {
+          return jsonResponse({ ...run, id: 7 })
         }
-        if (url.endsWith('/api/runs/5')) {
-          return jsonResponse(run)
-        }
-        return jsonResponse([
-          { id: 2, name: 'Evening' },
-          { id: 3, name: 'Morning' },
-        ])
+        return url.endsWith('/api/checklists/3')
+          ? jsonResponse(morningChecklist)
+          : jsonResponse([
+              { id: 2, name: 'Evening' },
+              { id: 3, name: 'Morning' },
+            ])
       })
 
       renderAt('/')
@@ -2001,17 +2107,42 @@ describe('App', () => {
       expect(
         await screen.findByRole('checkbox', { name: 'Make coffee' }),
       ).toBeInTheDocument()
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/checklists\/3\/runs$/),
-        expect.objectContaining({ method: 'POST' }),
-      )
       expect(trackEvent).toHaveBeenCalledWith('RunStarted')
+      await waitFor(() => {
+        expect(syncs(fetchMock)).toHaveLength(1)
+      })
     })
 
-    it('shows an error on the checklists page when a run cannot be started', async () => {
+    it('starts a fill-out from the copy on the device when the API cannot be reached', async () => {
       const user = userEvent.setup()
-      mockFetch(async (_url, init) =>
-        init?.method === 'POST'
+      await localStore().putChecklistList([{ id: 3, name: 'Morning' }])
+      await localStore().putChecklist(morningChecklist)
+      mockFetch(unreachable)
+
+      renderAt('/')
+      expect(
+        await screen.findByText(
+          "CheckMate couldn't be reached, so this is the copy saved on this device.",
+        ),
+      ).toBeInTheDocument()
+      await user.click(
+        await screen.findByRole('button', { name: 'Fill out "Morning"' }),
+      )
+      await user.click(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      )
+
+      expect(await screen.findByText('1 of 1 done')).toBeInTheDocument()
+      expect(
+        await screen.findByText('1 to sync, will retry'),
+      ).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('shows an error on the checklists page when a fill-out cannot be started', async () => {
+      const user = userEvent.setup()
+      mockFetch(async (url) =>
+        url.endsWith('/api/checklists/3')
           ? new Response(null, { status: 500 })
           : jsonResponse([{ id: 3, name: 'Morning' }]),
       )
@@ -2032,13 +2163,16 @@ describe('App', () => {
       })
     })
 
-    it('shows an error when a run cannot be started', async () => {
+    it('shows an error when a fill-out cannot be started', async () => {
       const user = userEvent.setup()
-      mockFetch(async (_url, init) =>
-        init?.method === 'POST'
-          ? new Response(null, { status: 500 })
-          : jsonResponse({ id: 3, name: 'Morning', steps: [] }),
-      )
+      let loads = 0
+      mockFetch(async () => {
+        loads += 1
+        // The page loads the checklist once, and loads it again to start the fill-out from its latest steps.
+        return loads === 1
+          ? jsonResponse(morningChecklist)
+          : new Response(null, { status: 500 })
+      })
 
       renderAt('/checklists/3')
       await user.click(await screen.findByRole('button', { name: 'Fill out' }))
@@ -2052,9 +2186,9 @@ describe('App', () => {
     })
 
     it('shows the run with each step and a link back to the checklists', async () => {
-      mockFetch(async () => jsonResponse(run))
+      mockRunPage()
 
-      renderAt('/runs/5')
+      renderAt(runPath)
 
       expect(
         await screen.findByRole('heading', { level: 2, name: 'Morning' }),
@@ -2069,22 +2203,11 @@ describe('App', () => {
       ).toHaveAttribute('href', '/')
     })
 
-    it('saves a tick straight away', async () => {
+    it('keeps a tick on the device straight away and sends the fill-out', async () => {
       const user = userEvent.setup()
-      const fetchMock = mockFetch(async (_url, init) =>
-        init?.method === 'PUT'
-          ? jsonResponse({
-              stepId: 11,
-              dependsOnStepIds: [],
-              isLocked: false,
-              text: 'Make coffee',
-              isDone: true,
-              completedAt: '2026-10-06T08:05:00Z',
-            })
-          : jsonResponse(run),
-      )
+      const fetchMock = mockRunPage()
 
-      renderAt('/runs/5')
+      renderAt(runPath)
       await user.click(
         await screen.findByRole('checkbox', { name: 'Make coffee' }),
       )
@@ -2093,98 +2216,72 @@ describe('App', () => {
         screen.getByRole('checkbox', { name: 'Make coffee' }),
       ).toBeChecked()
       expect(await screen.findByText('2 of 2 done')).toBeInTheDocument()
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/runs\/5\/steps\/11$/),
-        expect.objectContaining({
-          method: 'PUT',
-          body: JSON.stringify({ isDone: true }),
-        }),
-      )
-    })
-
-    it('waits for a tick to save before completing', async () => {
-      const user = userEvent.setup()
-      const requests: string[] = []
-      let finishTick: (response: Response) => void = () => {}
-      mockFetch(async (url, init) => {
-        if (!url.includes('/api/runs/5')) {
-          // The checklists page, which completing goes back to.
-          return jsonResponse([])
-        }
-        requests.push(init?.method ?? 'GET')
-        if (init?.method === 'PUT') {
-          return new Promise<Response>((resolve) => {
-            finishTick = resolve
-          })
-        }
-        return init?.method === 'POST'
-          ? jsonResponse({ ...run, completedAt: '2026-10-06T08:30:00Z' })
-          : jsonResponse(run)
-      })
-
-      renderAt('/runs/5')
-      await user.click(
-        await screen.findByRole('checkbox', { name: 'Make coffee' }),
-      )
-      await user.click(screen.getByRole('button', { name: 'Complete' }))
-      expect(requests).toEqual(['GET', 'PUT'])
-
-      finishTick(
-        jsonResponse({
-          ...run.steps[0],
+      await waitFor(() => {
+        expect(lastSyncedStep(fetchMock, 11)).toMatchObject({
           isDone: true,
-          completedAt: '2026-10-06T08:05:00Z',
-        }),
-      )
-
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'Completed "Morning".',
-      )
-      expect(requests).toEqual(['GET', 'PUT', 'POST'])
+          completedAt: expect.any(String) as string,
+        })
+      })
+      expect(await localStore().getRun(runKey)).toMatchObject({
+        serverId: 5,
+        steps: [
+          { stepId: 11, isDone: true },
+          { stepId: 12, isDone: true },
+        ],
+      })
     })
 
-    it('undoes a tick that fails to save', async () => {
+    it('keeps a change on the device and tries again later when the API cannot be reached', async () => {
       const user = userEvent.setup()
-      mockFetch(async (_url, init) =>
-        init?.method === 'PUT'
-          ? new Response(null, { status: 500 })
-          : jsonResponse(run),
-      )
+      const fetchMock = mockRunPage(run, unreachable)
 
-      renderAt('/runs/5')
+      renderAt(runPath)
       await user.click(
         await screen.findByRole('checkbox', { name: 'Read email' }),
       )
 
       expect(
-        await screen.findByText('Unable to save step.'),
+        await screen.findByText('1 to sync, will retry'),
       ).toBeInTheDocument()
-      expect(screen.getByRole('checkbox', { name: 'Read email' })).toBeChecked()
-      expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
-        operation: 'saveRunStep',
-      })
+      expect(
+        screen.getByRole('checkbox', { name: 'Read email' }),
+      ).not.toBeChecked()
+      expect(screen.getByText('0 of 2 done')).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(syncs(fetchMock)).toHaveLength(1)
+      expect(trackException).not.toHaveBeenCalled()
+    })
+
+    it('sends the tick with the completion when completing straight after it', async () => {
+      const user = userEvent.setup()
+      const fetchMock = mockRunPage()
+
+      renderAt(runPath)
+      await user.click(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      )
+      await user.click(screen.getByRole('button', { name: 'Complete' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Completed "Morning".',
+      )
+      const last = syncs(fetchMock).at(-1)
+      expect(last?.completedAt).toEqual(expect.any(String))
+      expect(last?.steps.find((step) => step.stepId === 11)?.isDone).toBe(true)
     })
 
     it('completes the run and goes back to the checklists page', async () => {
       const user = userEvent.setup()
-      const completed = { ...run, completedAt: '2026-10-06T08:30:00Z' }
-      mockFetch(async (url, init) => {
-        if (init?.method === 'POST') {
-          return jsonResponse(completed)
-        }
-        return url.endsWith('/api/runs/5')
-          ? jsonResponse(run)
-          : jsonResponse([])
-      })
+      const fetchMock = mockRunPage(completable)
 
-      renderAt('/runs/5')
+      renderAt(runPath)
       await user.click(await screen.findByRole('button', { name: 'Complete' }))
 
       expect(await screen.findByText('No checklists yet.')).toBeInTheDocument()
-      expect(fetch).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/runs\/5\/complete$/),
-        expect.objectContaining({ method: 'POST' }),
-      )
+      expect(syncs(fetchMock).at(-1)?.completedAt).toEqual(expect.any(String))
+      expect(
+        fetchMock.mock.calls.some(([, init]) => init?.method === 'POST'),
+      ).toBe(false)
       expect(trackEvent).toHaveBeenCalledWith('RunCompleted')
       expect(screen.getByRole('alert')).toHaveTextContent(
         'Completed "Morning".',
@@ -2200,28 +2297,66 @@ describe('App', () => {
       })
     })
 
+    it('completes the run on the device when the API cannot be reached, and sends it later', async () => {
+      const user = userEvent.setup()
+      mockRunPage(completable, unreachable)
+
+      renderAt(runPath)
+      await user.click(await screen.findByRole('button', { name: 'Complete' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        `Completed "Morning". It's saved on this device and will sync when you're online.`,
+      )
+      expect(trackEvent).toHaveBeenCalledWith('RunCompleted')
+      expect(
+        await screen.findByText('1 to sync, will retry'),
+      ).toBeInTheDocument()
+      expect(await localStore().getRun(runKey)).toMatchObject({
+        completedAt: expect.any(String) as string,
+      })
+    })
+
+    it('does not complete the run while a step is not done', async () => {
+      const user = userEvent.setup()
+      const fetchMock = mockRunPage()
+
+      renderAt(runPath)
+      await user.click(await screen.findByRole('button', { name: 'Complete' }))
+
+      expect(
+        await screen.findByText(
+          'Every step must be done before the run can be completed.',
+        ),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
+      expect(syncs(fetchMock)).toHaveLength(0)
+    })
+
     it('shows the run as complete when it was completed elsewhere', async () => {
       const user = userEvent.setup()
       const completed = { ...run, completedAt: '2026-10-06T08:30:00Z' }
       let loads = 0
-      mockFetch(async (_url, init) => {
+      mockFetch(async (url, init) => {
         if (init?.method === 'PUT') {
           return jsonResponse(
             { message: "This run is complete and can't be changed." },
             409,
           )
         }
-        loads += 1
-        return jsonResponse(loads === 1 ? run : completed)
+        if (url.endsWith(runApiUrl)) {
+          loads += 1
+          return jsonResponse(loads === 1 ? run : completed)
+        }
+        return jsonResponse([])
       })
 
-      renderAt('/runs/5')
+      renderAt(runPath)
       await user.click(
         await screen.findByRole('checkbox', { name: 'Make coffee' }),
       )
 
       expect(
-        await screen.findByText("This run is complete and can't be changed."),
+        await screen.findByText(completedElsewhereMessage),
       ).toBeInTheDocument()
       expect(
         await screen.findByText(/^Completed /, { selector: 'div' }),
@@ -2232,100 +2367,91 @@ describe('App', () => {
       expect(
         screen.getByRole('checkbox', { name: 'Make coffee' }),
       ).toBeDisabled()
+      expect(
+        screen.queryByRole('button', { name: 'Complete' }),
+      ).not.toBeInTheDocument()
       expect(trackException).not.toHaveBeenCalled()
     })
 
-    it('keeps the run read-only and offers a reload when reloading after a 409 fails', async () => {
-      const user = userEvent.setup()
-      const completed = { ...run, completedAt: '2026-10-06T08:30:00Z' }
-      let loads = 0
-      mockFetch(async (_url, init) => {
-        if (init?.method === 'PUT') {
-          return jsonResponse(
-            { message: "This run is complete and can't be changed." },
-            409,
-          )
-        }
-        loads += 1
-        if (loads === 2) {
-          throw new TypeError('Failed to fetch')
-        }
-        return jsonResponse(loads === 1 ? run : completed)
-      })
+    it('opens a link from before fill-outs had keys by the key', async () => {
+      mockFetch(async (url) =>
+        url.endsWith('/api/runs/5') || url.endsWith(runApiUrl)
+          ? jsonResponse(run)
+          : jsonResponse([]),
+      )
 
       renderAt('/runs/5')
+
+      expect(
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/runs\/5$/),
+        expect.anything(),
+      )
+    })
+
+    it('resumes a fill-out saved on the device without the API', async () => {
+      const user = userEvent.setup()
+      await localStore().putRun(
+        createLocalRun(morningChecklist, runKey, '2026-10-06T08:00:00Z'),
+      )
+      mockFetch(unreachable)
+
+      renderAt(runPath)
       await user.click(
         await screen.findByRole('checkbox', { name: 'Make coffee' }),
       )
 
-      const reload = await screen.findByRole('button', { name: 'Reload' })
+      expect(await screen.findByText('1 of 1 done')).toBeInTheDocument()
       expect(
-        screen.getByText("This run is complete and can't be changed."),
+        await screen.findByText('1 to sync, will retry'),
       ).toBeInTheDocument()
-      expect(
-        screen.getByRole('checkbox', { name: 'Make coffee' }),
-      ).toBeDisabled()
-      expect(
-        screen.queryByRole('button', { name: 'Complete' }),
-      ).not.toBeInTheDocument()
+    })
 
-      await user.click(reload)
+    it('says when the fill-out is not on the device and the API cannot be reached', async () => {
+      const user = userEvent.setup()
+      let reachable = false
+      mockFetch(async (url) => {
+        if (!reachable) {
+          throw new TypeError('Failed to fetch')
+        }
+        return url.endsWith(runApiUrl) ? jsonResponse(run) : jsonResponse([])
+      })
+
+      renderAt(runPath)
 
       expect(
-        await screen.findByText(/^Completed /, { selector: 'div' }),
+        await screen.findByText(
+          "This fill-out isn't saved on this device. Connect to the internet to load it.",
+        ),
       ).toBeInTheDocument()
+      expect(trackException).not.toHaveBeenCalled()
+
+      reachable = true
+      await user.click(screen.getByRole('button', { name: 'Retry' }))
+
       expect(
-        screen.queryByRole('button', { name: 'Reload' }),
-      ).not.toBeInTheDocument()
+        await screen.findByRole('checkbox', { name: 'Make coffee' }),
+      ).toBeInTheDocument()
     })
 
     describe('prerequisites', () => {
-      function checkboxStep(
-        stepId: number,
-        text: string,
-        dependsOnStepIds: number[],
-        isDone = false,
-      ) {
-        return {
-          stepId,
-          text,
-          type: 'Checkbox',
-          isDone,
-          completedAt: null,
-          responseText: null,
-          dependsOnStepIds,
-          isLocked: false,
-        }
-      }
-
       // Pack depends on Wash, and Leave on both.
       const chainRun = {
         ...run,
         steps: [
-          checkboxStep(11, 'Wash', []),
-          checkboxStep(12, 'Pack', [11]),
-          checkboxStep(13, 'Leave', [11, 12]),
+          checkboxStep(11, 'Wash'),
+          checkboxStep(12, 'Pack', { dependsOnStepIds: [11] }),
+          checkboxStep(13, 'Leave', { dependsOnStepIds: [11, 12] }),
         ],
-      }
-
-      function respondToTick(init: RequestInit, url: string) {
-        const stepId = Number(url.split('/').pop())
-        const step = chainRun.steps.find((item) => item.stepId === stepId)
-        const { isDone } = JSON.parse(init.body as string) as {
-          isDone: boolean
-        }
-        return jsonResponse({ ...step, isDone })
       }
 
       it('shows only the steps that can be done, and the rest as they unlock', async () => {
         const user = userEvent.setup()
-        mockFetch(async (url, init) =>
-          init?.method === 'PUT'
-            ? respondToTick(init, url)
-            : jsonResponse(chainRun),
-        )
+        mockRunPage(chainRun)
 
-        renderAt('/runs/5')
+        renderAt(runPath)
 
         const toDo = await screen.findByRole('list', { name: 'To do' })
         expect(within(toDo).getAllByRole('checkbox')).toEqual([
@@ -2374,20 +2500,16 @@ describe('App', () => {
 
       it('does not let a step be un-done while a done step depends on it', async () => {
         const user = userEvent.setup()
-        mockFetch(async (url, init) =>
-          init?.method === 'PUT'
-            ? respondToTick(init, url)
-            : jsonResponse({
-                ...chainRun,
-                steps: [
-                  checkboxStep(11, 'Wash', [], true),
-                  checkboxStep(12, 'Pack', [11], true),
-                  checkboxStep(13, 'Leave', [11, 12]),
-                ],
-              }),
-        )
+        mockRunPage({
+          ...chainRun,
+          steps: [
+            checkboxStep(11, 'Wash', { isDone: true }),
+            checkboxStep(12, 'Pack', { isDone: true, dependsOnStepIds: [11] }),
+            checkboxStep(13, 'Leave', { dependsOnStepIds: [11, 12] }),
+          ],
+        })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
 
         expect(
           await screen.findByRole('checkbox', { name: 'Wash' }),
@@ -2414,40 +2536,30 @@ describe('App', () => {
         expect(screen.queryByText(/Can't be un-done/)).not.toBeInTheDocument()
       })
 
-      it('shows why a save was rejected and loads the run again', async () => {
+      it('shows why the API would not take the fill-out, until it changes', async () => {
         const user = userEvent.setup()
         const message =
           "This step can't be filled in until the steps it depends on are done."
-        let loads = 0
-        mockFetch(async (_url, init) => {
-          if (init?.method === 'PUT') {
-            return jsonResponse({ errors: { '': [message] } }, 400)
-          }
-          loads += 1
-          // Another tab un-did Wash after this one loaded the run.
-          return jsonResponse(
-            loads === 1
-              ? {
-                  ...chainRun,
-                  steps: [
-                    checkboxStep(11, 'Wash', [], true),
-                    ...chainRun.steps.slice(1),
-                  ],
-                }
-              : chainRun,
-          )
-        })
+        const fetchMock = mockRunPage(
+          {
+            ...chainRun,
+            steps: [
+              checkboxStep(11, 'Wash', { isDone: true }),
+              ...chainRun.steps.slice(1),
+            ],
+          },
+          async () => jsonResponse({ errors: { 'Steps[1]': [message] } }, 400),
+        )
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         await user.click(await screen.findByRole('checkbox', { name: 'Pack' }))
 
-        expect(await screen.findByText(message)).toBeInTheDocument()
-        await waitFor(() => {
-          expect(
-            screen.queryByRole('checkbox', { name: 'Pack' }),
-          ).not.toBeInTheDocument()
-        })
-        expect(screen.getByRole('checkbox', { name: 'Wash' })).not.toBeChecked()
+        expect(
+          await screen.findByText(`Not synced yet: ${message}`),
+        ).toBeInTheDocument()
+        // The tick is kept on the device, and sent again only once something changes.
+        expect(screen.getByRole('checkbox', { name: 'Pack' })).toBeChecked()
+        expect(syncs(fetchMock)).toHaveLength(1)
         expect(trackException).not.toHaveBeenCalled()
       })
 
@@ -2455,36 +2567,35 @@ describe('App', () => {
         const user = userEvent.setup()
         const message =
           'Every step must be done before the run can be completed.'
-        mockFetch(async (_url, init) =>
-          init?.method === 'POST'
-            ? jsonResponse({ errors: { '': [message] } }, 400)
-            : jsonResponse(chainRun),
+        mockRunPage(completable, async (body) =>
+          body.completedAt === null
+            ? jsonResponse({ ...completable, ...body })
+            : jsonResponse({ errors: { CompletedAt: [message] } }, 400),
         )
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         await user.click(
           await screen.findByRole('button', { name: 'Complete' }),
         )
 
         expect(await screen.findByText(message)).toBeInTheDocument()
-        expect(screen.getByRole('checkbox', { name: 'Wash' })).toBeEnabled()
         expect(
-          screen.getByRole('button', { name: 'Complete' }),
+          await screen.findByRole('button', { name: 'Complete' }),
         ).toBeInTheDocument()
+        expect(
+          screen.getByRole('checkbox', { name: 'Make coffee' }),
+        ).toBeEnabled()
+        expect(await localStore().getRun(runKey)).toMatchObject({
+          completedAt: null,
+        })
         expect(trackException).not.toHaveBeenCalled()
       })
     })
 
     describe('text steps', () => {
       const notesStep = {
-        stepId: 13,
-        dependsOnStepIds: [],
-        isLocked: false,
-        text: 'Notes',
+        ...checkboxStep(13, 'Notes'),
         type: 'Text',
-        isDone: false,
-        completedAt: null,
-        responseText: null,
       }
       const runWithText = { ...run, steps: [...run.steps, notesStep] }
       const savedNotes = {
@@ -2496,13 +2607,9 @@ describe('App', () => {
 
       it('saves the text when the field loses focus', async () => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? jsonResponse(savedNotes)
-            : jsonResponse(runWithText),
-        )
+        const fetchMock = mockRunPage(runWithText)
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         await user.type(
           await screen.findByRole('textbox', { name: 'Notes' }),
           '  All good  ',
@@ -2514,24 +2621,19 @@ describe('App', () => {
         expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveValue(
           'All good',
         )
-        expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
-          expect.objectContaining({
-            method: 'PUT',
-            body: JSON.stringify({ text: '  All good  ' }),
-          }),
-        )
+        await waitFor(() => {
+          expect(lastSyncedStep(fetchMock, 13)).toMatchObject({
+            responseText: 'All good',
+            isDone: true,
+          })
+        })
       })
 
       it('saves the text when Enter is pressed, and not again if unchanged', async () => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? jsonResponse(savedNotes)
-            : jsonResponse(runWithText),
-        )
+        const fetchMock = mockRunPage(runWithText)
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         const field = await screen.findByRole('textbox', { name: 'Notes' })
         await user.type(field, 'All good{Enter}')
 
@@ -2544,54 +2646,51 @@ describe('App', () => {
           ),
         ).toHaveFocus()
         await user.tab()
+        await waitFor(() => {
+          expect(syncs(fetchMock)).toHaveLength(1)
+        })
         expect(fetchMock).toHaveBeenCalledTimes(2)
       })
 
       it('does not save when the field is left unchanged', async () => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async () => jsonResponse(runWithText))
+        const fetchMock = mockRunPage(runWithText)
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         await user.click(await screen.findByRole('textbox', { name: 'Notes' }))
         await user.tab()
 
         expect(fetchMock).toHaveBeenCalledTimes(1)
       })
 
-      it('keeps the typed text when it fails to save', async () => {
+      it('keeps the typed text on the device when the API cannot be reached', async () => {
         const user = userEvent.setup()
-        mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? new Response(null, { status: 500 })
-            : jsonResponse(runWithText),
-        )
+        mockRunPage(runWithText, unreachable)
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         await user.type(
           await screen.findByRole('textbox', { name: 'Notes' }),
           'All good',
         )
         await user.tab()
 
-        expect(
-          await screen.findByText('Unable to save step.'),
-        ).toBeInTheDocument()
+        expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
         expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveValue(
           'All good',
         )
-        expect(screen.getByText('1 of 3 done')).toBeInTheDocument()
+        expect(
+          await screen.findByText('1 to sync, will retry'),
+        ).toBeInTheDocument()
       })
 
       it('shows the saved text read-only once the run is complete', async () => {
-        mockFetch(async () =>
-          jsonResponse({
-            ...run,
-            completedAt: '2026-10-06T08:30:00Z',
-            steps: [savedNotes],
-          }),
-        )
+        mockRunPage({
+          ...run,
+          completedAt: '2026-10-06T08:30:00Z',
+          steps: [savedNotes],
+        })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
 
         const field = await screen.findByRole('textbox', { name: 'Notes' })
         expect(field).toHaveValue('All good')
@@ -2600,27 +2699,12 @@ describe('App', () => {
 
       it('saves the text first when Complete is clicked straight from the field', async () => {
         const user = userEvent.setup()
-        const requests: string[] = []
-        const completed = {
-          ...runWithText,
-          completedAt: '2026-10-06T08:30:00Z',
-          steps: [...run.steps, savedNotes],
-        }
-        const fetchMock = mockFetch(async (url, init) => {
-          if (!url.includes('/api/runs/5')) {
-            // The checklists page, which completing goes back to.
-            return jsonResponse([])
-          }
-          requests.push(init?.method ?? 'GET')
-          if (init?.method === 'PUT') {
-            return jsonResponse(savedNotes)
-          }
-          return init?.method === 'POST'
-            ? jsonResponse(completed)
-            : jsonResponse(runWithText)
+        const fetchMock = mockRunPage({
+          ...run,
+          steps: [...doneSteps, notesStep],
         })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         await user.type(
           await screen.findByRole('textbox', { name: 'Notes' }),
           'All good',
@@ -2631,167 +2715,21 @@ describe('App', () => {
         expect(await screen.findByRole('alert')).toHaveTextContent(
           'Completed "Morning".',
         )
-        expect(requests).toEqual(['GET', 'PUT', 'POST'])
-        expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
-          expect.objectContaining({
-            body: JSON.stringify({ text: 'All good' }),
-          }),
-        )
-      })
-
-      it('tries a failed save again before completing', async () => {
-        const user = userEvent.setup()
-        let puts = 0
-        const completed = {
-          ...runWithText,
-          completedAt: '2026-10-06T08:30:00Z',
-          steps: [...run.steps, savedNotes],
-        }
-        const fetchMock = mockFetch(async (url, init) => {
-          if (!url.includes('/api/runs/5')) {
-            // The checklists page, which completing goes back to.
-            return jsonResponse([])
-          }
-          if (init?.method === 'PUT') {
-            puts += 1
-            return puts === 1
-              ? new Response(null, { status: 500 })
-              : jsonResponse(savedNotes)
-          }
-          return init?.method === 'POST'
-            ? jsonResponse(completed)
-            : jsonResponse(runWithText)
+        const last = syncs(fetchMock).at(-1)
+        expect(last?.completedAt).toEqual(expect.any(String))
+        expect(last?.steps.find((step) => step.stepId === 13)).toMatchObject({
+          responseText: 'All good',
+          isDone: true,
         })
-
-        renderAt('/runs/5')
-        await user.type(
-          await screen.findByRole('textbox', { name: 'Notes' }),
-          'All good',
-        )
-        await user.tab()
-        expect(
-          await screen.findByText('Unable to save step.'),
-        ).toBeInTheDocument()
-
-        await user.click(screen.getByRole('button', { name: 'Complete' }))
-
-        expect(await screen.findByRole('alert')).toHaveTextContent(
-          'Completed "Morning".',
-        )
-        expect(puts).toBe(2)
-        expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/complete$/),
-          expect.objectContaining({ method: 'POST' }),
-        )
-      })
-
-      it("keeps a failed tick's error instead of saving text when completing", async () => {
-        const user = userEvent.setup()
-        let finishTick: (response: Response) => void = () => {}
-        let textPuts = 0
-        const fetchMock = mockFetch(async (url, init) => {
-          if (init?.method === 'PUT' && url.endsWith('/steps/11')) {
-            return new Promise<Response>((resolve) => {
-              finishTick = resolve
-            })
-          }
-          if (init?.method === 'PUT') {
-            textPuts += 1
-            return textPuts === 1
-              ? new Response(null, { status: 500 })
-              : jsonResponse(savedNotes)
-          }
-          return jsonResponse(runWithText)
-        })
-
-        renderAt('/runs/5')
-        await user.type(
-          await screen.findByRole('textbox', { name: 'Notes' }),
-          'All good',
-        )
-        // Leaving the field saves the text, which fails, while the tick's save is still under way.
-        await user.click(screen.getByRole('checkbox', { name: 'Make coffee' }))
-        await screen.findByText('Unable to save step.')
-        await user.click(screen.getByRole('button', { name: 'Complete' }))
-        finishTick(new Response(null, { status: 500 }))
-
-        await waitFor(() => {
-          expect(
-            screen.getByRole('checkbox', { name: 'Make coffee' }),
-          ).not.toBeChecked()
-        })
-        await waitFor(() => {
-          expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
-        })
-        expect(screen.getByText('Unable to save step.')).toBeInTheDocument()
-        expect(textPuts).toBe(1)
-        expect(
-          fetchMock.mock.calls.some(([, init]) => init?.method === 'POST'),
-        ).toBe(false)
-      })
-
-      it('does not complete while the text still cannot be saved', async () => {
-        const user = userEvent.setup()
-        const fetchMock = mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? new Response(null, { status: 500 })
-            : jsonResponse(runWithText),
-        )
-
-        renderAt('/runs/5')
-        await user.type(
-          await screen.findByRole('textbox', { name: 'Notes' }),
-          'All good',
-        )
-        await user.tab()
-        expect(
-          await screen.findByText('Unable to save step.'),
-        ).toBeInTheDocument()
-        await user.click(screen.getByRole('button', { name: 'Complete' }))
-
-        await waitFor(() => {
-          expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
-        })
-        expect(screen.getByText('Unable to save step.')).toBeInTheDocument()
-        expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveValue(
-          'All good',
-        )
-        expect(screen.getByRole('textbox', { name: 'Notes' })).toBeEnabled()
-        expect(
-          fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT'),
-        ).toHaveLength(2)
-        expect(
-          fetchMock.mock.calls.some(([, init]) => init?.method === 'POST'),
-        ).toBe(false)
       })
     })
 
     describe('number steps', () => {
       const temperatureStep = {
-        stepId: 14,
-        dependsOnStepIds: [],
-        isLocked: false,
-        text: 'Fridge temperature',
+        ...checkboxStep(14, 'Fridge temperature'),
         type: 'Number',
-        isDone: false,
-        completedAt: null,
-        responseText: null,
-        responseNumber: null,
       }
       const runWithNumber = { ...run, steps: [...run.steps, temperatureStep] }
-
-      function respondWithNumber(fetchInit?: RequestInit) {
-        const { number } = JSON.parse(fetchInit?.body as string) as {
-          number: number | null
-        }
-        return jsonResponse({
-          ...temperatureStep,
-          isDone: number !== null,
-          completedAt: number === null ? null : '2026-10-06T08:10:00Z',
-          responseNumber: number,
-        })
-      }
 
       it.each([
         ['-3.5', -3.5],
@@ -2800,13 +2738,9 @@ describe('App', () => {
         ['+.25', 0.25],
       ])('saves %j as a number', async (typed, number) => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? respondWithNumber(init)
-            : jsonResponse(runWithNumber),
-        )
+        const fetchMock = mockRunPage(runWithNumber)
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         const field = await screen.findByRole('textbox', {
           name: 'Fridge temperature',
         })
@@ -2819,13 +2753,12 @@ describe('App', () => {
         expect(
           screen.getByRole('textbox', { name: 'Fridge temperature' }),
         ).toHaveValue(String(number))
-        expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/steps\/14$/),
-          expect.objectContaining({
-            method: 'PUT',
-            body: JSON.stringify({ number }),
-          }),
-        )
+        await waitFor(() => {
+          expect(lastSyncedStep(fetchMock, 14)).toMatchObject({
+            responseNumber: number,
+            isDone: true,
+          })
+        })
       })
 
       it.each([
@@ -2843,9 +2776,9 @@ describe('App', () => {
         ],
       ])('rejects %j without saving it', async (typed, message) => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async () => jsonResponse(runWithNumber))
+        const fetchMock = mockRunPage(runWithNumber)
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         const field = await screen.findByRole('textbox', {
           name: 'Fridge temperature',
         })
@@ -2863,15 +2796,12 @@ describe('App', () => {
         async (typed) => {
           const user = userEvent.setup()
           const bodies: string[] = []
-          mockFetch(async (_url, init) => {
-            if (init?.method === 'PUT') {
-              bodies.push(init.body as string)
-              return respondWithNumber(init)
-            }
-            return jsonResponse(runWithNumber)
+          mockRunPage(runWithNumber, async (body) => {
+            bodies.push(JSON.stringify(body))
+            return jsonResponse({ ...runWithNumber, ...body })
           })
 
-          renderAt('/runs/5')
+          renderAt(runPath)
           const field = await screen.findByRole('textbox', {
             name: 'Fridge temperature',
           })
@@ -2880,20 +2810,18 @@ describe('App', () => {
 
           expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
           // Compared as text, so a value rounded on the way through a JavaScript number would fail.
-          expect(bodies).toEqual([`{"number":${typed}}`])
+          await waitFor(() => {
+            expect(bodies.at(-1)).toContain(`"responseNumber":${typed}`)
+          })
           expect(field).toHaveValue(typed)
         },
       )
 
       it('clears the error and saves once the number is fixed', async () => {
         const user = userEvent.setup()
-        mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? respondWithNumber(init)
-            : jsonResponse(runWithNumber),
-        )
+        mockRunPage(runWithNumber)
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         const field = await screen.findByRole('textbox', {
           name: 'Fridge temperature',
         })
@@ -2914,19 +2842,15 @@ describe('App', () => {
 
       it('saves an emptied field as no number', async () => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? respondWithNumber(init)
-            : jsonResponse({
-                ...run,
-                steps: [
-                  ...run.steps,
-                  { ...temperatureStep, isDone: true, responseNumber: 4 },
-                ],
-              }),
-        )
+        const fetchMock = mockRunPage({
+          ...run,
+          steps: [
+            ...run.steps,
+            { ...temperatureStep, isDone: true, responseNumber: 4 },
+          ],
+        })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         const field = await screen.findByRole('textbox', {
           name: 'Fridge temperature',
         })
@@ -2935,22 +2859,23 @@ describe('App', () => {
         await user.tab()
 
         expect(await screen.findByText('1 of 3 done')).toBeInTheDocument()
-        expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/steps\/14$/),
-          expect.objectContaining({ body: JSON.stringify({ number: null }) }),
-        )
+        await waitFor(() => {
+          expect(lastSyncedStep(fetchMock, 14)).toMatchObject({
+            responseNumber: null,
+            isDone: false,
+            completedAt: null,
+          })
+        })
       })
 
       it('does not save a number that is written differently but the same', async () => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async () =>
-          jsonResponse({
-            ...run,
-            steps: [{ ...temperatureStep, isDone: true, responseNumber: 4.5 }],
-          }),
-        )
+        const fetchMock = mockRunPage({
+          ...run,
+          steps: [{ ...temperatureStep, isDone: true, responseNumber: 4.5 }],
+        })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         const field = await screen.findByRole('textbox', {
           name: 'Fridge temperature',
         })
@@ -2963,9 +2888,9 @@ describe('App', () => {
 
       it('does not complete while a number is invalid', async () => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async () => jsonResponse(runWithNumber))
+        const fetchMock = mockRunPage(runWithNumber)
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         const field = await screen.findByRole('textbox', {
           name: 'Fridge temperature',
         })
@@ -2985,29 +2910,12 @@ describe('App', () => {
 
       it('saves a typed number before completing', async () => {
         const user = userEvent.setup()
-        const requests: string[] = []
-        const fetchMock = mockFetch(async (url, init) => {
-          if (!url.includes('/api/runs/5')) {
-            // The checklists page, which completing goes back to.
-            return jsonResponse([])
-          }
-          requests.push(init?.method ?? 'GET')
-          if (init?.method === 'PUT') {
-            return respondWithNumber(init)
-          }
-          return init?.method === 'POST'
-            ? jsonResponse({
-                ...runWithNumber,
-                completedAt: '2026-10-06T08:30:00Z',
-                steps: [
-                  ...run.steps,
-                  { ...temperatureStep, isDone: true, responseNumber: 3.5 },
-                ],
-              })
-            : jsonResponse(runWithNumber)
+        const fetchMock = mockRunPage({
+          ...run,
+          steps: [...doneSteps, temperatureStep],
         })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         await user.type(
           await screen.findByRole('textbox', { name: 'Fridge temperature' }),
           '3.5',
@@ -3017,25 +2925,22 @@ describe('App', () => {
         expect(await screen.findByRole('alert')).toHaveTextContent(
           'Completed "Morning".',
         )
-        expect(requests).toEqual(['GET', 'PUT', 'POST'])
-        expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/steps\/14$/),
-          expect.objectContaining({ body: JSON.stringify({ number: 3.5 }) }),
-        )
+        const last = syncs(fetchMock).at(-1)
+        expect(last?.completedAt).toEqual(expect.any(String))
+        expect(last?.steps.find((step) => step.stepId === 14)).toMatchObject({
+          responseNumber: 3.5,
+          isDone: true,
+        })
       })
 
       it('shows the saved number read-only once the run is complete', async () => {
-        mockFetch(async () =>
-          jsonResponse({
-            ...run,
-            completedAt: '2026-10-06T08:30:00Z',
-            steps: [
-              { ...temperatureStep, isDone: true, responseNumber: -2.25 },
-            ],
-          }),
-        )
+        mockRunPage({
+          ...run,
+          completedAt: '2026-10-06T08:30:00Z',
+          steps: [{ ...temperatureStep, isDone: true, responseNumber: -2.25 }],
+        })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
 
         const field = await screen.findByRole('textbox', {
           name: 'Fridge temperature',
@@ -3047,21 +2952,12 @@ describe('App', () => {
 
     describe('multiple choice steps', () => {
       const weather = {
-        stepId: 13,
-        dependsOnStepIds: [],
-        isLocked: false,
-        text: 'Weather',
+        ...checkboxStep(13, 'Weather'),
         type: 'Choice',
-        isDone: false,
-        completedAt: null,
-        responseText: null,
-        responseNumber: null,
         options: [
           { id: 1, text: 'Sunny' },
           { id: 2, text: 'Rainy' },
         ],
-        selectedOptionId: null,
-        selectedOptionText: null,
       }
       const choiceRun = { ...run, steps: [weather] }
       const picked = {
@@ -3074,30 +2970,22 @@ describe('App', () => {
 
       it('saves a picked option straight away and can clear it', async () => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async (_url, init) => {
-          if (init?.method === 'PUT') {
-            const body = JSON.parse(init.body as string) as {
-              optionId: number | null
-            }
-            return jsonResponse(body.optionId === null ? weather : picked)
-          }
-          return jsonResponse(choiceRun)
-        })
+        const fetchMock = mockRunPage(choiceRun)
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         const group = await screen.findByRole('group', { name: 'Weather' })
         expect(group).toBeInTheDocument()
         await user.click(screen.getByRole('radio', { name: 'Rainy' }))
 
         expect(screen.getByRole('radio', { name: 'Rainy' })).toBeChecked()
         expect(await screen.findByText('1 of 1 done')).toBeInTheDocument()
-        expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
-          expect.objectContaining({
-            method: 'PUT',
-            body: JSON.stringify({ optionId: 2 }),
-          }),
-        )
+        await waitFor(() => {
+          expect(lastSyncedStep(fetchMock, 13)).toMatchObject({
+            selectedOptionId: 2,
+            selectedOptionText: 'Rainy',
+            isDone: true,
+          })
+        })
 
         await user.click(
           await screen.findByRole('button', { name: 'Clear "Weather"' }),
@@ -3105,29 +2993,13 @@ describe('App', () => {
 
         expect(await screen.findByText('0 of 1 done')).toBeInTheDocument()
         expect(screen.getByRole('radio', { name: 'Rainy' })).not.toBeChecked()
-        expect(fetchMock).toHaveBeenLastCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
-          expect.objectContaining({
-            body: JSON.stringify({ optionId: null }),
-          }),
-        )
-      })
-
-      it('undoes a pick that fails to save', async () => {
-        const user = userEvent.setup()
-        mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? new Response(null, { status: 500 })
-            : jsonResponse(choiceRun),
-        )
-
-        renderAt('/runs/5')
-        await user.click(await screen.findByRole('radio', { name: 'Sunny' }))
-
-        expect(
-          await screen.findByText('Unable to save step.'),
-        ).toBeInTheDocument()
-        expect(screen.getByRole('radio', { name: 'Sunny' })).not.toBeChecked()
+        await waitFor(() => {
+          expect(lastSyncedStep(fetchMock, 13)).toMatchObject({
+            selectedOptionId: null,
+            selectedOptionText: null,
+            isDone: false,
+          })
+        })
       })
 
       it('shows a dropdown when there are many options', async () => {
@@ -3136,19 +3008,12 @@ describe('App', () => {
           id: index + 1,
           text,
         }))
-        const fetchMock = mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? jsonResponse({
-                ...weather,
-                options,
-                isDone: true,
-                selectedOptionId: 6,
-                selectedOptionText: 'F',
-              })
-            : jsonResponse({ ...run, steps: [{ ...weather, options }] }),
-        )
+        const fetchMock = mockRunPage({
+          ...run,
+          steps: [{ ...weather, options }],
+        })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
         await user.click(
           await screen.findByRole('combobox', { name: 'Weather' }),
         )
@@ -3159,24 +3024,22 @@ describe('App', () => {
         expect(
           screen.getByRole('combobox', { name: 'Weather' }),
         ).toHaveTextContent('F')
-        expect(fetchMock).toHaveBeenCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
-          expect.objectContaining({ body: JSON.stringify({ optionId: 6 }) }),
-        )
+        await waitFor(() => {
+          expect(lastSyncedStep(fetchMock, 13)).toMatchObject({
+            selectedOptionId: 6,
+            selectedOptionText: 'F',
+          })
+        })
       })
 
       it('says when the picked option has since been removed, and can clear it', async () => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? jsonResponse(weather)
-            : jsonResponse({
-                ...run,
-                steps: [{ ...picked, selectedOptionId: null }],
-              }),
-        )
+        const fetchMock = mockRunPage({
+          ...run,
+          steps: [{ ...picked, selectedOptionId: null }],
+        })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
 
         expect(
           await screen.findByText(
@@ -3199,10 +3062,12 @@ describe('App', () => {
         expect(
           screen.queryByRole('button', { name: 'Clear "Weather"' }),
         ).not.toBeInTheDocument()
-        expect(fetchMock).toHaveBeenLastCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
-          expect.objectContaining({ body: JSON.stringify({ optionId: null }) }),
-        )
+        await waitFor(() => {
+          expect(lastSyncedStep(fetchMock, 13)).toMatchObject({
+            selectedOptionId: null,
+            selectedOptionText: null,
+          })
+        })
       })
 
       it.each([
@@ -3216,16 +3081,12 @@ describe('App', () => {
         ],
       ])('can clear a removed pick when %s', async (_case, options) => {
         const user = userEvent.setup()
-        const fetchMock = mockFetch(async (_url, init) =>
-          init?.method === 'PUT'
-            ? jsonResponse({ ...weather, options })
-            : jsonResponse({
-                ...run,
-                steps: [{ ...picked, options, selectedOptionId: null }],
-              }),
-        )
+        const fetchMock = mockRunPage({
+          ...run,
+          steps: [{ ...picked, options, selectedOptionId: null }],
+        })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
 
         expect(
           await screen.findByText(
@@ -3237,33 +3098,31 @@ describe('App', () => {
         )
 
         expect(await screen.findByText('0 of 1 done')).toBeInTheDocument()
-        expect(fetchMock).toHaveBeenLastCalledWith(
-          expect.stringMatching(/\/api\/runs\/5\/steps\/13$/),
-          expect.objectContaining({
-            body: JSON.stringify({ optionId: null }),
-          }),
-        )
+        await waitFor(() => {
+          expect(lastSyncedStep(fetchMock, 13)).toMatchObject({
+            selectedOptionId: null,
+            isDone: false,
+          })
+        })
       })
 
       it('shows the option picked when the run was filled out once complete', async () => {
-        mockFetch(async () =>
-          jsonResponse({
-            ...run,
-            completedAt: '2026-10-06T08:30:00Z',
-            // The option was renamed since, which doesn't change the run.
-            steps: [
-              {
-                ...picked,
-                options: [
-                  { id: 1, text: 'Sunny' },
-                  { id: 2, text: 'Raining' },
-                ],
-              },
-            ],
-          }),
-        )
+        mockRunPage({
+          ...run,
+          completedAt: '2026-10-06T08:30:00Z',
+          // The option was renamed since, which doesn't change the run.
+          steps: [
+            {
+              ...picked,
+              options: [
+                { id: 1, text: 'Sunny' },
+                { id: 2, text: 'Raining' },
+              ],
+            },
+          ],
+        })
 
-        renderAt('/runs/5')
+        renderAt(runPath)
 
         const field = await screen.findByRole('textbox', { name: 'Weather' })
         expect(field).toHaveValue('Rainy')
@@ -3273,31 +3132,15 @@ describe('App', () => {
     })
 
     it('keeps a deleted step that was done but does not let it be unticked', async () => {
-      mockFetch(async () =>
-        jsonResponse({
-          ...run,
-          steps: [
-            {
-              stepId: null,
-              dependsOnStepIds: [],
-              isLocked: false,
-              text: 'Old step',
-              isDone: true,
-              completedAt: null,
-            },
-            {
-              stepId: null,
-              dependsOnStepIds: [],
-              isLocked: false,
-              text: 'Never done',
-              isDone: false,
-              completedAt: null,
-            },
-          ],
-        }),
-      )
+      mockRunPage({
+        ...run,
+        steps: [
+          checkboxStep(null, 'Old step', { isDone: true }),
+          checkboxStep(null, 'Never done'),
+        ],
+      })
 
-      renderAt('/runs/5')
+      renderAt(runPath)
 
       expect(
         await screen.findByRole('checkbox', { name: 'Old step' }),
@@ -3310,6 +3153,18 @@ describe('App', () => {
     })
 
     it('shows not found when the run does not exist', async () => {
+      mockFetch(async () => new Response(null, { status: 404 }))
+
+      renderAt('/runs/00000000-0000-4000-8000-000000000099')
+
+      expect(
+        await screen.findByText(
+          "That fill-out doesn't exist. Its checklist may have been deleted.",
+        ),
+      ).toBeInTheDocument()
+    })
+
+    it('shows not found for a link from before fill-outs had keys when the run does not exist', async () => {
       mockFetch(async () => new Response(null, { status: 404 }))
 
       renderAt('/runs/99')
@@ -3335,7 +3190,7 @@ describe('App', () => {
     it('shows an error when the run cannot be loaded', async () => {
       mockFetch(async () => new Response(null, { status: 500 }))
 
-      renderAt('/runs/5')
+      renderAt(runPath)
 
       expect(
         await screen.findByText('Unable to load this fill-out.'),
@@ -3348,19 +3203,55 @@ describe('App', () => {
 
   describe('fill-out history', () => {
     const checklist = { id: 3, name: 'Morning', steps: [] }
+    const inProgressKey = 'c0ffee00-0000-4000-8000-000000000006'
+    const completedKey = 'c0ffee00-0000-4000-8000-000000000005'
     const inProgress = {
       id: 6,
+      clientKey: inProgressKey,
       startedAt: '2026-10-07T08:00:00Z',
       completedAt: null,
     }
     const completed = {
       id: 5,
+      clientKey: completedKey,
       startedAt: '2026-10-06T08:00:00Z',
       completedAt: '2026-10-06T08:30:00Z',
     }
 
     function local(value: string) {
       return new Date(value).toLocaleString()
+    }
+
+    function runResponse(key: string, completedAt: string | null) {
+      return jsonResponse({
+        id: key === inProgressKey ? 6 : 5,
+        clientKey: key,
+        checklistId: 3,
+        checklistName: 'Morning',
+        startedAt: inProgress.startedAt,
+        completedAt,
+        steps: [
+          {
+            stepId: 11,
+            dependsOnStepIds: [],
+            isLocked: false,
+            text: 'Make coffee',
+            type: 'Checkbox',
+            isDone: completedAt !== null,
+            completedAt: completedAt === null ? null : '2026-10-06T08:05:00Z',
+            responseText: null,
+            responseNumber: null,
+            options: [],
+            selectedOptionId: null,
+            selectedOptionText: null,
+          },
+        ],
+      })
+    }
+
+    // A fill-out on this device that the API hasn't got yet.
+    function unsyncedRun(clientKey: string, startedAt: string): LocalRun {
+      return createLocalRun({ ...checklist, steps: [] }, clientKey, startedAt)
     }
 
     it('lists each fill-out newest first, linking to it', async () => {
@@ -3374,11 +3265,11 @@ describe('App', () => {
       const list = await screen.findByRole('list', { name: 'Fill-outs' })
       const links = within(list).getAllByRole('link')
       expect(links).toHaveLength(2)
-      expect(links[0]).toHaveAttribute('href', '/runs/6')
+      expect(links[0]).toHaveAttribute('href', `/runs/${inProgressKey}`)
       expect(links[0]).toHaveTextContent(
         `Started ${local(inProgress.startedAt)}In progress`,
       )
-      expect(links[1]).toHaveAttribute('href', '/runs/5')
+      expect(links[1]).toHaveAttribute('href', `/runs/${completedKey}`)
       expect(links[1]).toHaveTextContent(
         `Started ${local(completed.startedAt)}Completed ${local(completed.completedAt)}`,
       )
@@ -3414,30 +3305,56 @@ describe('App', () => {
       })
     })
 
+    it('lists fill-outs the API has not got yet, marked as such', async () => {
+      const onDevice = 'c0ffee00-0000-4000-8000-000000000007'
+      await localStore().putRun(unsyncedRun(onDevice, '2026-10-08T08:00:00Z'))
+      mockFetch(
+        async (_url, init) =>
+          init?.method === 'PUT'
+            ? new Response(null, { status: 500 })
+            : jsonResponse(checklist),
+        async () => jsonResponse([completed]),
+      )
+
+      renderAt('/checklists/3')
+
+      const list = await screen.findByRole('list', { name: 'Fill-outs' })
+      const links = within(list).getAllByRole('link')
+      expect(links).toHaveLength(2)
+      expect(links[0]).toHaveAttribute('href', `/runs/${onDevice}`)
+      expect(links[0]).toHaveTextContent('Not synced')
+      expect(links[1]).not.toHaveTextContent('Not synced')
+    })
+
+    it('shows the fill-outs on the device when the API cannot be reached', async () => {
+      const onDevice = 'c0ffee00-0000-4000-8000-000000000007'
+      await localStore().putChecklist(checklist)
+      await localStore().putRun(unsyncedRun(onDevice, '2026-10-08T08:00:00Z'))
+      mockFetch(unreachable, unreachable)
+
+      renderAt('/checklists/3')
+
+      expect(
+        await screen.findByText(
+          "Showing the fill-outs saved on this device. Others will show once you're online.",
+        ),
+      ).toBeInTheDocument()
+      const list = await screen.findByRole('list', { name: 'Fill-outs' })
+      expect(within(list).getByRole('link')).toHaveAttribute(
+        'href',
+        `/runs/${onDevice}`,
+      )
+      expect(
+        screen.queryByText('Unable to load fill-outs.'),
+      ).not.toBeInTheDocument()
+    })
+
     it('resumes a fill-out in progress', async () => {
       const user = userEvent.setup()
       mockFetch(
         async (url) =>
-          url.endsWith('/api/runs/6')
-            ? jsonResponse({
-                id: 6,
-                checklistId: 3,
-                checklistName: 'Morning',
-                startedAt: inProgress.startedAt,
-                completedAt: null,
-                steps: [
-                  {
-                    stepId: 11,
-                    dependsOnStepIds: [],
-                    isLocked: false,
-                    text: 'Make coffee',
-                    type: 'Checkbox',
-                    isDone: true,
-                    completedAt: '2026-10-07T08:05:00Z',
-                    responseText: null,
-                  },
-                ],
-              })
+          url.endsWith(`/api/runs/${inProgressKey}`)
+            ? runResponse(inProgressKey, null)
             : jsonResponse(checklist),
         async () => jsonResponse([inProgress]),
       )
@@ -3450,7 +3367,7 @@ describe('App', () => {
       ).toBeEnabled()
       expect(
         screen.getByRole('checkbox', { name: 'Make coffee' }),
-      ).toBeChecked()
+      ).not.toBeChecked()
       expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
     })
 
@@ -3458,36 +3375,8 @@ describe('App', () => {
       const user = userEvent.setup()
       mockFetch(
         async (url) =>
-          url.endsWith('/api/runs/5')
-            ? jsonResponse({
-                id: 5,
-                checklistId: 3,
-                checklistName: 'Morning',
-                startedAt: completed.startedAt,
-                completedAt: completed.completedAt,
-                steps: [
-                  {
-                    stepId: 11,
-                    dependsOnStepIds: [],
-                    isLocked: false,
-                    text: 'Make coffee',
-                    type: 'Checkbox',
-                    isDone: true,
-                    completedAt: '2026-10-06T08:05:00Z',
-                    responseText: null,
-                  },
-                  {
-                    stepId: 12,
-                    dependsOnStepIds: [],
-                    isLocked: false,
-                    text: 'Read email',
-                    type: 'Checkbox',
-                    isDone: false,
-                    completedAt: null,
-                    responseText: null,
-                  },
-                ],
-              })
+          url.endsWith(`/api/runs/${completedKey}`)
+            ? runResponse(completedKey, completed.completedAt)
             : jsonResponse(checklist),
         async () => jsonResponse([completed]),
       )
@@ -3500,9 +3389,6 @@ describe('App', () => {
       })
       expect(makeCoffee).toBeChecked()
       expect(makeCoffee).toBeDisabled()
-      const readEmail = screen.getByRole('checkbox', { name: 'Read email' })
-      expect(readEmail).not.toBeChecked()
-      expect(readEmail).toBeDisabled()
       // Each step's completion time is kept, but not shown.
       expect(
         screen.queryByText(local('2026-10-06T08:05:00Z'), { exact: false }),
@@ -3537,7 +3423,10 @@ describe('App', () => {
       await waitFor(() => {
         expect(within(list).getAllByRole('link')).toHaveLength(1)
       })
-      expect(within(list).getByRole('link')).toHaveAttribute('href', '/runs/6')
+      expect(within(list).getByRole('link')).toHaveAttribute(
+        'href',
+        `/runs/${inProgressKey}`,
+      )
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/runs\/5$/),
         expect.objectContaining({ method: 'DELETE' }),
@@ -3597,7 +3486,10 @@ describe('App', () => {
         await screen.findByText('Unable to delete this fill-out.'),
       ).toBeInTheDocument()
       const list = screen.getByRole('list', { name: 'Fill-outs' })
-      expect(within(list).getByRole('link')).toHaveAttribute('href', '/runs/5')
+      expect(within(list).getByRole('link')).toHaveAttribute(
+        'href',
+        `/runs/${completedKey}`,
+      )
       expect(
         screen.getByRole('button', { name: /^Delete fill-out/ }),
       ).toBeEnabled()
@@ -3606,29 +3498,33 @@ describe('App', () => {
       })
     })
 
-    describe('deleting from the fill-out page', () => {
-      function runResponse(completedAt: string | null) {
-        return jsonResponse({
-          id: 6,
-          checklistId: 3,
-          checklistName: 'Morning',
-          startedAt: inProgress.startedAt,
-          completedAt,
-          steps: [
-            {
-              stepId: 11,
-              dependsOnStepIds: [],
-              isLocked: false,
-              text: 'Make coffee',
-              type: 'Checkbox',
-              isDone: false,
-              completedAt: null,
-              responseText: null,
-            },
-          ],
-        })
-      }
+    it('deletes a fill-out on the device without waiting for the API', async () => {
+      const user = userEvent.setup()
+      const onDevice = 'c0ffee00-0000-4000-8000-000000000007'
+      await localStore().putRun(unsyncedRun(onDevice, '2026-10-08T08:00:00Z'))
+      const fetchMock = mockFetch(
+        async (_url, init) =>
+          init?.method === 'PUT'
+            ? new Response(null, { status: 500 })
+            : jsonResponse(checklist),
+        async () => jsonResponse([]),
+      )
 
+      renderAt('/checklists/3')
+      await user.click(
+        await screen.findByRole('button', { name: /^Delete fill-out/ }),
+      )
+
+      expect(await screen.findByText('No fill-outs yet.')).toBeInTheDocument()
+      expect(trackEvent).toHaveBeenCalledWith('RunDeleted')
+      // The API never had it, so there's nothing to delete there.
+      expect(
+        fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE'),
+      ).toBe(false)
+      expect(await localStore().getRun(onDevice)).toBeUndefined()
+    })
+
+    describe('deleting from the fill-out page', () => {
       it.each([
         ['in progress', null],
         ['completed', '2026-10-07T08:30:00Z'],
@@ -3643,14 +3539,14 @@ describe('App', () => {
                 deleted = true
                 return new Response(null, { status: 204 })
               }
-              return url.endsWith('/api/runs/6')
-                ? runResponse(completedAt)
+              return url.endsWith(`/api/runs/${inProgressKey}`)
+                ? runResponse(inProgressKey, completedAt)
                 : jsonResponse(checklist)
             },
             async () => jsonResponse(deleted ? [] : [inProgress]),
           )
 
-          renderAt('/runs/6')
+          renderAt(`/runs/${inProgressKey}`)
           await user.click(
             await screen.findByRole('button', { name: 'Delete fill-out' }),
           )
@@ -3661,38 +3557,100 @@ describe('App', () => {
           expect(
             screen.getByRole('heading', { level: 2, name: 'Morning' }),
           ).toBeInTheDocument()
-          expect(fetchMock).toHaveBeenCalledWith(
-            expect.stringMatching(/\/api\/runs\/6$/),
-            expect.objectContaining({ method: 'DELETE' }),
-          )
           expect(trackEvent).toHaveBeenCalledWith('RunDeleted')
+          // The API's copy goes when the device syncs.
+          await waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+              expect.stringMatching(/\/api\/runs\/6$/),
+              expect.objectContaining({ method: 'DELETE' }),
+            )
+          })
+          await waitFor(async () => {
+            expect(await localStore().getRun(inProgressKey)).toBeUndefined()
+          })
         },
       )
 
-      it('stays on the fill-out and shows an error when deleting it fails', async () => {
+      it('deletes the fill-out on the device even when the API cannot be reached', async () => {
         const user = userEvent.setup()
-        mockFetch(async (_url, init) =>
-          init?.method === 'DELETE'
-            ? new Response(null, { status: 500 })
-            : runResponse(null),
+        mockFetch(
+          async (url, init) =>
+            init?.method === 'DELETE'
+              ? new Response(null, { status: 500 })
+              : url.endsWith(`/api/runs/${inProgressKey}`)
+                ? runResponse(inProgressKey, null)
+                : jsonResponse(checklist),
+          async () => jsonResponse([inProgress]),
         )
 
-        renderAt('/runs/6')
+        renderAt(`/runs/${inProgressKey}`)
         await user.click(
           await screen.findByRole('button', { name: 'Delete fill-out' }),
         )
 
+        // Gone from the list straight away, while the device keeps trying to delete the API's copy.
+        expect(await screen.findByText('No fill-outs yet.')).toBeInTheDocument()
         expect(
-          await screen.findByText('Unable to delete this fill-out.'),
+          await screen.findByText('1 to sync, will retry'),
         ).toBeInTheDocument()
-        expect(
-          screen.getByRole('checkbox', { name: 'Make coffee' }),
-        ).toBeEnabled()
-        expect(
-          screen.getByRole('button', { name: 'Delete fill-out' }),
-        ).toBeEnabled()
-        expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
+        expect(await localStore().getRun(inProgressKey)).toMatchObject({
+          deletedAt: expect.any(String) as string,
+        })
       })
+    })
+  })
+
+  describe('syncing', () => {
+    it('says when the fill-outs on the device have reached the API', async () => {
+      const checklist = { id: 3, name: 'Morning', steps: [] }
+      const onDevice = 'c0ffee00-0000-4000-8000-000000000007'
+      await localStore().putRun(
+        createLocalRun(checklist, onDevice, '2026-10-08T08:00:00Z'),
+      )
+      // The first try fails, so the fill-out is one that had been waiting.
+      configureSync({ debounceMs: 0, firstRetryMs: 10 })
+      let puts = 0
+      mockFetch(async (_url, init) =>
+        init?.method === 'PUT' && puts++ > 0
+          ? jsonResponse({
+              id: 9,
+              clientKey: onDevice,
+              checklistId: 3,
+              checklistName: 'Morning',
+              startedAt: '2026-10-08T08:00:00Z',
+              completedAt: null,
+              steps: [],
+            })
+          : init?.method === 'PUT'
+            ? unreachable()
+            : jsonResponse([]),
+      )
+
+      renderAt('/')
+
+      expect(await screen.findByText('Synced 1 fill-out.')).toBeInTheDocument()
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+      expect(await localStore().getRun(onDevice)).toMatchObject({
+        serverId: 9,
+        syncedRevision: 1,
+      })
+    })
+
+    it('says when the device is offline, and keeps changes to checklists for later', async () => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+      mockFetch(unreachable, unreachable)
+
+      renderAt('/')
+
+      expect(await screen.findByText('Offline')).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          "You're offline. Checklists saved on this device can still be filled out, but making or changing one needs a connection.",
+        ),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: 'Create checklist' }),
+      ).toBeDisabled()
     })
   })
 

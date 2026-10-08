@@ -47,6 +47,8 @@ import { trackEvent, trackException } from '../telemetry'
 type ChecklistStepsProps = {
   checklistId: number
   initialSteps: ChecklistStep[]
+  // Changing steps needs the API, so the page turns the editor off while the device is offline.
+  disabled?: boolean
 }
 
 type MoveDirection = 'up' | 'down'
@@ -414,7 +416,11 @@ function SortableStep({ step, disabled, children }: SortableStepProps) {
   )
 }
 
-function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
+function ChecklistSteps({
+  checklistId,
+  initialSteps,
+  disabled = false,
+}: ChecklistStepsProps) {
   const [steps, setSteps] = useState(initialSteps)
   const [newText, setNewText] = useState('')
   const [newType, setNewType] = useState<StepType>('Checkbox')
@@ -426,7 +432,8 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
   const [editOptions, setEditOptions] = useState<OptionDraft[]>([])
   const [editDependsOn, setEditDependsOn] = useState<number[]>([])
   // Only one change runs at a time, so the list can't get out of step with the API.
-  const [busy, setBusy] = useState(false)
+  const [saving, setBusy] = useState(false)
+  const busy = saving || disabled
   const [errorMessage, setErrorMessage] = useState('')
   // Read out by screen readers, since a moved step otherwise changes place silently.
   const [moveAnnouncement, setMoveAnnouncement] = useState('')

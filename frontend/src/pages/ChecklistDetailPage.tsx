@@ -13,20 +13,28 @@ import {
   ApiError,
   deleteChecklist,
   describeFetchError,
-  getChecklist,
   updateChecklist,
 } from '../api/checklists'
 import type { ChecklistDetail as ChecklistDetailData } from '../api/checklists'
-import { startRun } from '../api/runs'
+import { loadChecklist } from '../offline/checklists'
+import { newClientKey } from '../offline/clientKey'
+import { useOnline } from '../offline/online'
+import { createLocalRun } from '../offline/runs'
+import { useLocalStore } from '../offline/store'
+import { requestSync } from '../offline/sync'
 import { trackEvent, trackException } from '../telemetry'
 import ChecklistRuns from './ChecklistRuns'
 import ChecklistSteps from './ChecklistSteps'
+import { cachedCopyMessage, offlineMessage } from './ChecklistsPage'
 import NotFoundPage from './NotFoundPage'
 import { parseId } from './parseId'
 
 function ChecklistDetail({ id }: { id: number }) {
   const navigate = useNavigate()
+  const online = useOnline()
+  const store = useLocalStore()
   const [checklist, setChecklist] = useState<ChecklistDetailData | null>(null)
+  const [fromCache, setFromCache] = useState(false)
   const [notFound, setNotFound] = useState(false)
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(true)
@@ -39,17 +47,18 @@ function ChecklistDetail({ id }: { id: number }) {
     // Ignore a response that arrives after the user has left the page.
     let current = true
 
-    async function loadChecklist() {
+    async function load() {
       try {
-        const loaded = await getChecklist(id)
+        const loaded = await loadChecklist(id)
         if (!current) {
           return
         }
         if (loaded === null) {
           setNotFound(true)
         } else {
-          setChecklist(loaded)
-          setName(loaded.name)
+          setChecklist(loaded.data)
+          setFromCache(loaded.fromCache)
+          setName(loaded.data.name)
         }
       } catch (error) {
         if (!current) {
@@ -64,7 +73,7 @@ function ChecklistDetail({ id }: { id: number }) {
       }
     }
 
-    void loadChecklist()
+    void load()
 
     return () => {
       current = false
@@ -121,14 +130,27 @@ function ChecklistDetail({ id }: { id: number }) {
     }
   }
 
+  // Starts the fill-out on the device, from the checklist as the API has it now (the steps section may have
+  // changed it since the page loaded) or, offline, as the device has it.
   async function handleFillOut() {
     setStarting(true)
     setErrorMessage('')
 
     try {
-      const run = await startRun(id)
+      const loaded = await loadChecklist(id)
+      if (loaded === null) {
+        setNotFound(true)
+        return
+      }
+      const run = createLocalRun(
+        loaded.data,
+        newClientKey(),
+        new Date().toISOString(),
+      )
+      await store.putRun(run)
       trackEvent('RunStarted')
-      void navigate(`/runs/${run.id}`)
+      requestSync()
+      void navigate(`/runs/${run.clientKey}`)
     } catch (error) {
       trackException(error, { operation: 'startRun' })
       setErrorMessage(
@@ -137,6 +159,8 @@ function ChecklistDetail({ id }: { id: number }) {
       setStarting(false)
     }
   }
+
+  const editing = submitting || deleting || starting || !online
 
   return (
     <Stack spacing={2}>
@@ -162,6 +186,12 @@ function ChecklistDetail({ id }: { id: number }) {
           </Button>
         )}
       </Box>
+
+      {!online ? (
+        <Alert severity="info">{offlineMessage}</Alert>
+      ) : (
+        fromCache && <Alert severity="info">{cachedCopyMessage}</Alert>
+      )}
 
       {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
 
@@ -194,18 +224,14 @@ function ChecklistDetail({ id }: { id: number }) {
                   required
                 />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                  <Button
-                    type="submit"
-                    variant="contained"
-                    disabled={submitting || deleting || starting}
-                  >
+                  <Button type="submit" variant="contained" disabled={editing}>
                     {submitting ? 'Saving…' : 'Save changes'}
                   </Button>
                   <Button
                     type="button"
                     color="error"
                     variant="outlined"
-                    disabled={submitting || deleting || starting}
+                    disabled={editing}
                     onClick={() => void handleDelete()}
                   >
                     {deleting ? 'Deleting…' : 'Delete'}
@@ -213,7 +239,11 @@ function ChecklistDetail({ id }: { id: number }) {
                 </Stack>
               </Box>
             </Paper>
-            <ChecklistSteps checklistId={id} initialSteps={checklist.steps} />
+            <ChecklistSteps
+              checklistId={id}
+              initialSteps={checklist.steps}
+              disabled={!online}
+            />
             <ChecklistRuns checklistId={id} />
           </>
         )

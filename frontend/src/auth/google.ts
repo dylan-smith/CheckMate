@@ -58,9 +58,22 @@ export function loadGoogleIdentity(): Promise<GoogleAccountsId> {
 }
 
 type IdTokenPayload = {
+  sub?: string
   name?: string
   email?: string
   picture?: string
+}
+
+// Google's stable id for the user, which the API files their data under. Undefined if the token can't be read.
+export function googleSubject(credential: string): string | undefined {
+  try {
+    const payload = JSON.parse(
+      decodeBase64Url(credential.split('.')[1] ?? ''),
+    ) as IdTokenPayload
+    return payload.sub
+  } catch {
+    return undefined
+  }
 }
 
 // Reads the user's name and email from the ID token for display. The API checks the token itself.
