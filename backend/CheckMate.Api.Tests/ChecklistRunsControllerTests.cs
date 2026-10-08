@@ -671,6 +671,111 @@ public class ChecklistRunsControllerTests
         Assert.Equal(firstCompletedAt, (await checkContext.ChecklistRuns.SingleAsync()).CompletedAt);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Delete_RemovesRunAndItsSteps_AndKeepsOtherRuns(bool complete)
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        int runId;
+        int keptRunId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            var checklist = await AddChecklistAsync(setupContext, "Daily");
+            var step = await AddStepAsync(setupContext, checklist.Id, "Step");
+            var setupController = CreateController(setupContext);
+            runId = GetRun(await setupController.Start(checklist.Id)).Id;
+            keptRunId = GetRun(await setupController.Start(checklist.Id)).Id;
+            await setupController.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = true });
+            if (complete)
+            {
+                await setupController.Complete(runId);
+            }
+        }
+
+        await using var dbContext = CreateDbContext(databaseName);
+
+        var result = await CreateController(dbContext).Delete(runId);
+
+        Assert.IsType<NoContentResult>(result);
+        await using var checkContext = CreateDbContext(databaseName);
+        Assert.Equal(keptRunId, (await checkContext.ChecklistRuns.SingleAsync()).Id);
+        Assert.Equal(keptRunId, (await checkContext.ChecklistRunSteps.SingleAsync()).RunId);
+        Assert.Single(await checkContext.ChecklistSteps.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Delete_ReturnsNotFound_WhenRunDoesNotExist()
+    {
+        await using var dbContext = CreateDbContext();
+
+        var result = await CreateController(dbContext).Delete(999);
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task Delete_RemovesRun_WhenItIsCompletedWhileDeleting()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        var (runId, _) = await StartRunWithOneStepAsync(databaseName);
+        await using var otherContext = CreateDbContext(databaseName);
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+            Assert.IsType<OkObjectResult>((await CreateController(otherContext).Complete(runId)).Result)));
+
+        var result = await CreateController(dbContext).Delete(runId);
+
+        Assert.IsType<NoContentResult>(result);
+        await using var checkContext = CreateDbContext(databaseName);
+        Assert.False(await checkContext.ChecklistRuns.AnyAsync());
+        Assert.False(await checkContext.ChecklistRunSteps.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Delete_ReturnsNoContent_WhenAnotherRequestDeletesItFirst()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        var (runId, _) = await StartRunWithOneStepAsync(databaseName);
+        await using var otherContext = CreateDbContext(databaseName);
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+            Assert.IsType<NoContentResult>(await CreateController(otherContext).Delete(runId))));
+
+        var result = await CreateController(dbContext).Delete(runId);
+
+        Assert.IsType<NoContentResult>(result);
+        await using var checkContext = CreateDbContext(databaseName);
+        Assert.False(await checkContext.ChecklistRuns.AnyAsync());
+    }
+
+    [Fact]
+    public async Task UpdateStep_ReturnsNotFound_WhenRunIsDeletedWhileSaving()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        var (runId, stepId) = await StartRunWithOneStepAsync(databaseName);
+        await using var otherContext = CreateDbContext(databaseName);
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+            Assert.IsType<NoContentResult>(await CreateController(otherContext).Delete(runId))));
+
+        var result = await CreateController(dbContext).UpdateStep(runId, stepId, new RunStepRequest { IsDone = true });
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task Complete_ReturnsNotFound_WhenRunIsDeletedWhileSaving()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        var (runId, _) = await StartRunWithOneStepAsync(databaseName);
+        await using var otherContext = CreateDbContext(databaseName);
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+            Assert.IsType<NoContentResult>(await CreateController(otherContext).Delete(runId))));
+
+        var result = await CreateController(dbContext).Complete(runId);
+
+        Assert.IsType<NotFoundResult>(result.Result);
+    }
+
     [Fact]
     public async Task GetById_LocksStepsUntilTheStepsTheyDependOnAreDone()
     {
