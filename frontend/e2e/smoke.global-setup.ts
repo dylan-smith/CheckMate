@@ -2,8 +2,8 @@
 //
 // Right after a deployment the App Service restarts, and on the free plan the serverless
 // database may still be resuming from auto-pause, so the first requests can be slow or fail.
-// Poll the API until it answers the frontend's own request (GET /api/checklists with the
-// frontend's Origin) with a 200 and a matching CORS header, then let the tests run.
+// Poll the API until it answers a signed-in request with the frontend's Origin (GET /api/me, which reads the
+// signed-in user from the database) with a 200 and a matching CORS header, then let the tests run.
 
 const POLL_INTERVAL_MS = 10_000
 // A request made while the app is starting waits for startup, which includes up to 90 seconds
@@ -23,7 +23,8 @@ export default async function globalSetup() {
 
   const origin = new URL(process.env.SMOKE_BASE_URL ?? 'http://localhost:4173')
     .origin
-  const url = new URL('/api/checklists', apiUrl).toString()
+  const url = new URL('/api/me', apiUrl).toString()
+  const authToken = process.env.SMOKE_AUTH_TOKEN ?? 'test:Smoke User'
   const timeoutOverride = process.env.SMOKE_READY_TIMEOUT_MS
   const timeoutMs = Number(timeoutOverride ?? 6 * 60_000)
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -37,7 +38,7 @@ export default async function globalSetup() {
     let outcome: string
     try {
       const response = await fetch(url, {
-        headers: { Origin: origin },
+        headers: { Origin: origin, Authorization: `Bearer ${authToken}` },
         // Never let one attempt run past the overall deadline.
         signal: AbortSignal.timeout(
           Math.max(1, Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now())),

@@ -8,8 +8,9 @@ A checklist management app with:
 
 ## Features
 
+- Sign in with a Google account; each user only sees their own checklists and fill-outs
 - Create, edit, and delete checklists
-- Enforces unique checklist names
+- Enforces unique checklist names for each user
 - RESTful API with OpenAPI support
 
 ## Prerequisites
@@ -41,6 +42,16 @@ npm run dev
 ```
 
 The frontend dev server starts at `http://localhost:5173`. Set the `VITE_API_BASE_URL` environment variable if your backend runs on a different URL.
+
+### Sign-in
+
+Every API endpoint except `/health`, `/openapi/v1.json` and `/scalar` needs a signed-in user, sent as a bearer token. Checklists and fill-outs belong to the user who created them, and nobody else can see or change them. The API knows three kinds of token:
+
+- **Google ID tokens**: the frontend signs in with [Google Identity Services](https://developers.google.com/identity/gsi/web) and sends the ID token Google gives it. The API checks it against Google's keys and the OAuth client ID in `Authentication:Google:ClientId`. The frontend shows the Google button when `VITE_GOOGLE_CLIENT_ID` is set at build time. Google only accepts the origins registered on the OAuth client, so this is used in production (and locally if you set both values and `http://localhost:5173` is registered).
+- **Test sign-in** (`test:<name>`): signs in as any name with no password, each name with its own data. It's on when `Authentication:AllowTestSignIn` is `true`, which `appsettings.Development.json`, the E2E tests and PR previews set; production never does. The frontend shows the test sign-in form in the Vite dev server and in builds with `VITE_ENABLE_TEST_SIGN_IN=true`.
+- **The service token**: the secret in `Authentication:ServiceToken` signs in as one service user, so the production smoke tests and the Generate Load workflow can use the API. It's off when empty.
+
+Locally, `dotnet run` and `npm run dev` need nothing more: sign in with the test sign-in form. To call the API from Scalar or curl, add a header such as `Authorization: Bearer test:Me`.
 
 ### Dev Container
 
@@ -87,11 +98,11 @@ npm run preview
 
 ## Deployment
 
-1. **Backend** — Publish the API with `dotnet publish -c Release` from `backend/CheckMate.Api`. Deploy the output to any host that supports .NET 10 (Azure App Service, Docker, etc.). Configure the `ConnectionStrings:CheckMate` setting to point to your production SQL Server instance and set `UseInMemoryDatabase` to `false`. If the frontend will be served from a different origin than the API, also configure `Cors:AllowedOrigins` to include the production frontend URL(s) so the browser can call the API.
+1. **Backend** — Publish the API with `dotnet publish -c Release` from `backend/CheckMate.Api`. Deploy the output to any host that supports .NET 10 (Azure App Service, Docker, etc.). Configure the `ConnectionStrings:CheckMate` setting to point to your production SQL Server instance and set `UseInMemoryDatabase` to `false`. Set `Authentication:Google:ClientId` to your Google OAuth client ID (see [Sign-in](#sign-in)), and `Authentication:ServiceToken` if anything needs to call the API without a person signing in. If the frontend will be served from a different origin than the API, also configure `Cors:AllowedOrigins` to include the production frontend URL(s) so the browser can call the API.
 
    **Application Insights** — The API automatically sends telemetry to Azure Application Insights when a connection string is available. Set the `APPLICATIONINSIGHTS_CONNECTION_STRING` environment variable (or the `AzureMonitor:ConnectionString` app setting) to your Application Insights connection string. When using Azure App Service, you can connect Application Insights directly from the Azure Portal, which sets `APPLICATIONINSIGHTS_CONNECTION_STRING` automatically. Telemetry is silently disabled when neither value is configured (e.g. during local development).
 
-2. **Frontend** — Run `npm run build` in `frontend` and serve the contents of `frontend/dist` with any static file host (Azure Storage Account static website, Nginx, etc.). Set `VITE_API_BASE_URL` to the production API URL before building. When using a different origin for the frontend, make sure the backend `Cors:AllowedOrigins` setting includes that frontend URL.
+2. **Frontend** — Run `npm run build` in `frontend` and serve the contents of `frontend/dist` with any static file host (Azure Storage Account static website, Nginx, etc.). Set `VITE_API_BASE_URL` to the production API URL and `VITE_GOOGLE_CLIENT_ID` to the Google OAuth client ID before building. When using a different origin for the frontend, make sure the backend `Cors:AllowedOrigins` setting includes that frontend URL.
 
    **Application Insights** — The frontend sends page views, exceptions, API calls and checklist events to Application Insights using the Application Insights JavaScript SDK when `VITE_APPINSIGHTS_CONNECTION_STRING` is set at build time (CI reads it from the API's `APPLICATIONINSIGHTS_CONNECTION_STRING` app setting, so both report to the same resource). API calls carry a W3C `traceparent` header, so each browser request and the API request it triggers share one operation in Application Insights. The SDK sets `ai_user` and `ai_session` cookies to count users and sessions. Telemetry is disabled when the variable isn't set (local development, unit tests and E2E runs).
 
@@ -203,10 +214,12 @@ Azure won't move a budget's start date once it exists, so `budgetStartDate` in `
 
 #### Deploying Infrastructure Manually
 
-To preview or apply infrastructure changes outside of CI, log in to Azure (`az login`, with MFA), set the runtime connection string, and run:
+To preview or apply infrastructure changes outside of CI, log in to Azure (`az login`, with MFA), set the runtime connection string and the sign-in settings, and run:
 
 ```powershell
 $env:AZURE_SQL_CONNECTION_STRING = '<connection string>'
+$env:GOOGLE_CLIENT_ID = '<Google OAuth client ID>'
+$env:CHECKMATE_SERVICE_TOKEN = '<service token>'
 
 # Preview — should show no Create/Delete against the existing resources
 az deployment group what-if --resource-group CheckMate --template-file infra/main.bicep --parameters infra/main.bicepparam
@@ -244,7 +257,7 @@ Previews live in the `CheckMate-Preview` resource group and are kept cheap by sh
 | Database `CheckMate-pr-<N>` | Per PR | Serverless, auto-pauses after an hour, is reset to sample checklists on every deployment (see below), and uses the [SQL free offer](https://learn.microsoft.com/azure/azure-sql/database/free-offer) like production. The offer covers 10 databases per subscription including production's; if a deployment fails because they're used up, close stale PRs or set `useFreeLimit = false` in `preview.bicepparam` (about $0.25 an hour while active, nothing while paused) |
 | Storage account `checkmatepr<N><suffix>` | Per PR | Static website, deployed exactly like production. Storage account names are unique across Azure, so the name ends with 5 characters derived from the resource group |
 
-The first request after a while can take a minute while the app and database start. Each deployment runs the PR's migrations against its database, then creates the web app's database user from its managed identity's client ID (`.github/scripts/preview-db-user.sql`), so no database users are set up by hand. A deployment still running for the PR finishes before a newer push deploys (closing the PR cancels it). The database is recreated empty when a migration script it already ran has been edited, or its last migration run didn't finish (`.github/scripts/preview-migrations.sh`); otherwise it's kept, and scripts added since run against it. Every deployment then deletes all of the preview's checklists and adds the sample checklists in `.github/scripts/preview-seed-data.json`, through the API, covering every step type and some steps that depend on others (a step's `dependsOn` names earlier steps of its checklist by their text), with some completed and in-progress fill-outs; edit that file to change them. So each push starts the preview over from the sample data, and anything reviewers changed is lost. The `migrations` tag is carried through each Bicep deployment, which would otherwise replace it. If a preview is still broken, close and reopen the PR.
+The first request after a while can take a minute while the app and database start. Each deployment runs the PR's migrations against its database, then creates the web app's database user from its managed identity's client ID (`.github/scripts/preview-db-user.sql`), so no database users are set up by hand. A deployment still running for the PR finishes before a newer push deploys (closing the PR cancels it). The database is recreated empty when a migration script it already ran has been edited, or its last migration run didn't finish (`.github/scripts/preview-migrations.sh`); otherwise it's kept, and scripts added since run against it. Previews have no Google sign-in (Google won't accept their origins), so they use test sign-in instead. Every deployment then deletes the checklists of the test user **Preview User** (the name the sign-in page suggests) and adds the sample checklists in `.github/scripts/preview-seed-data.json`, through the API, covering every step type and some steps that depend on others (a step's `dependsOn` names earlier steps of its checklist by their text), with some completed and in-progress fill-outs; edit that file to change them. So each push starts the preview over from the sample data, and anything reviewers changed as Preview User is lost; checklists made under other names are kept. The `migrations` tag is carried through each Bicep deployment, which would otherwise replace it. If a preview is still broken, close and reopen the PR.
 
 To preview the templates by hand (needs rights on the `CheckMate-Preview` resource group):
 
@@ -291,6 +304,7 @@ The Azure SQL built-in point-in-time restore (7 days) is still available for res
 | `AZURE_BACKEND_APP_NAME` | Name of the Azure App Service for the backend |
 | `AZURE_BACKEND_URL` | Public URL of the backend API (e.g. `https://checkmate-api.azurewebsites.net`) |
 | `AZURE_STORAGE_ACCOUNT_NAME` | Name of the Azure Storage Account used to host the frontend static website |
+| `GOOGLE_CLIENT_ID` | Client ID of the Google OAuth web client used for sign-in. The infrastructure deployment gives it to the API, and the frontend build embeds it (it isn't secret) |
 
 All other resource names, regions and SKUs live in `infra/main.bicepparam`.
 
@@ -311,6 +325,7 @@ The what-if identity is a user-assigned managed identity with a federated creden
 | Secret | Description |
 |--------|-------------|
 | `AZURE_SQL_CONNECTION_STRING` | SQL Server connection string used at runtime and for migrations (applied to the App Service by the Bicep deployment) |
+| `CHECKMATE_SERVICE_TOKEN` | Secret token (at least 32 characters) that signs in as the service user. The infrastructure deployment gives it to the API, and the production smoke tests and the Generate Load workflow send it. Store it in the `production` environment |
 | `SLACK_WEBHOOK_URL` | Optional. Slack incoming webhook URL that alerts post to. Without it, alerts only go to email and the Azure mobile app |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (from `claude setup-token`) used by the CI failure and alert investigation workflows |
 | `ALERT_INVESTIGATION_TOKEN` | Optional. Fine-grained personal access token for this repository only, with **Actions: Read and write**. The infrastructure deployment gives it to the Slack Logic App, which uses it to start the alert investigation workflow. Without it (or `SLACK_WEBHOOK_URL`), alerts aren't investigated |

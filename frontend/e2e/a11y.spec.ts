@@ -1,5 +1,5 @@
-import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import { test, expect } from './fixtures'
 
 // The backend started by playwright.config.ts.
 const checklistsApiUrl = 'http://localhost:5269/api/checklists'

@@ -213,10 +213,11 @@ jobs:
       - run: npm ci
       - run: npx playwright install chromium --with-deps
       - name: Build frontend
-        run: VITE_API_BASE_URL=http://localhost:5269 npm run build
+        run: VITE_API_BASE_URL=http://localhost:5269 VITE_ENABLE_TEST_SIGN_IN=true npm run build
       - name: Run Playwright tests
         env:
           VITE_API_BASE_URL: http://localhost:5269
+          VITE_ENABLE_TEST_SIGN_IN: 'true'
         run: npx playwright test
       - name: Publish E2E Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
@@ -335,6 +336,8 @@ jobs:
           # What-if can't read existing app setting values, so the real secret adds nothing to the
           # preview; keep it out of PR runs, whose workflow definition comes from the PR branch.
           AZURE_SQL_CONNECTION_STRING: what-if-placeholder
+          GOOGLE_CLIENT_ID: what-if-placeholder
+          CHECKMATE_SERVICE_TOKEN: what-if-placeholder-that-is-at-least-32-chars
           AZURE_CORE_NO_COLOR: 'true'
 
       # If this fails (say main's templates are broken), the comment shows every change instead of failing the PR.
@@ -353,6 +356,8 @@ jobs:
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_SQL_CONNECTION_STRING: what-if-placeholder
+          GOOGLE_CLIENT_ID: what-if-placeholder
+          CHECKMATE_SERVICE_TOKEN: what-if-placeholder-that-is-at-least-32-chars
           AZURE_CORE_NO_COLOR: 'true'
 
       - name: Comment infrastructure changes on PR
@@ -547,13 +552,15 @@ jobs:
         env:
           AZURE_STORAGE_ACCOUNT_NAME: ${{ steps.infra.outputs['storage-account-name'] }}
 
-      # No Application Insights connection string: the preview doesn't report telemetry.
+      # No Application Insights connection string: the preview doesn't report telemetry. No Google client ID either:
+      # Google only accepts the origins registered with it, so previews use test sign-in instead.
       - name: Build frontend
         if: steps.current.outputs.current == 'true'
         run: npm run build
         working-directory: frontend
         env:
           VITE_API_BASE_URL: ${{ steps.infra.outputs['app-service-url'] }}
+          VITE_ENABLE_TEST_SIGN_IN: 'true'
 
       - name: Deploy frontend to Azure Storage Account
         if: steps.current.outputs.current == 'true'
@@ -581,6 +588,7 @@ jobs:
           SMOKE_BASE_URL: ${{ steps.infra.outputs['frontend-origin'] }}
           SMOKE_API_URL: ${{ steps.infra.outputs['app-service-url'] }}
           SMOKE_READY_TIMEOUT_MS: '600000'
+          SMOKE_AUTH_TOKEN: 'test:Smoke User'
 
       - uses: actions/upload-artifact@v7
         if: ${{ failure() }}
@@ -592,12 +600,14 @@ jobs:
           retention-days: 30
 
       # Replaces the preview's data with the sample checklists on every deployment, so there's something to try straight
-      # away and each push starts from the same data.
+      # away and each push starts from the same data. They belong to the test user "Preview User", the name the
+      # preview's sign-in page suggests.
       - name: Seed sample data
         if: steps.current.outputs.current == 'true'
         run: bash .github/scripts/seed-preview.sh
         env:
           API_URL: ${{ steps.infra.outputs['app-service-url'] }}
+          API_AUTH_TOKEN: 'test:Preview User'
 
       # Not when cancelled: the newer run for this PR owns the comment then.
       - name: Update preview comment
@@ -646,6 +656,8 @@ jobs:
           AZURE_SQL_CONNECTION_STRING: ${{ secrets.AZURE_SQL_CONNECTION_STRING }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           ALERT_INVESTIGATION_TOKEN: ${{ secrets.ALERT_INVESTIGATION_TOKEN }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          CHECKMATE_SERVICE_TOKEN: ${{ secrets.CHECKMATE_SERVICE_TOKEN }}
 
       # Static website hosting is a data-plane setting that ARM templates can't manage.
       - name: Enable static website hosting
@@ -851,6 +863,7 @@ jobs:
         env:
           VITE_API_BASE_URL: ${{ vars.AZURE_BACKEND_URL }}
           VITE_APPINSIGHTS_CONNECTION_STRING: ${{ steps['resolve-appinsights'].outputs['connection-string'] }}
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
 
       - name: Deploy to Azure Storage Account
         run: npm run deploy
@@ -903,6 +916,8 @@ jobs:
           SMOKE_BASE_URL: ${{ needs['deploy-frontend'].outputs['frontend-origin'] }}
           # The smoke tests first poll the API until it's healthy (see e2e/smoke.global-setup.ts).
           SMOKE_API_URL: ${{ vars.AZURE_BACKEND_URL }}
+          # Signs the smoke tests in as the service user, since production has no test sign-in.
+          SMOKE_AUTH_TOKEN: ${{ secrets.CHECKMATE_SERVICE_TOKEN }}
         run: npm run test:smoke
 
       - uses: actions/upload-artifact@v7

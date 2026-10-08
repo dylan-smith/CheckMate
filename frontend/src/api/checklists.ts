@@ -1,4 +1,5 @@
 import { apiBaseUrl } from '../config'
+import { apiFetch } from './client'
 
 export type Checklist = {
   id: number
@@ -79,7 +80,7 @@ export function describeFetchError(error: unknown, fallback: string) {
 const checklistsUrl = `${apiBaseUrl}/api/checklists`
 
 export async function listChecklists(): Promise<Checklist[]> {
-  const response = await fetch(checklistsUrl)
+  const response = await apiFetch(checklistsUrl)
   if (!response.ok) {
     throw new Error('Unable to load checklists.')
   }
@@ -90,7 +91,7 @@ export async function listChecklists(): Promise<Checklist[]> {
 export async function getChecklist(
   id: number,
 ): Promise<ChecklistDetail | null> {
-  const response = await fetch(`${checklistsUrl}/${id}`)
+  const response = await apiFetch(`${checklistsUrl}/${id}`)
   if (response.status === 404) {
     return null
   }
@@ -105,7 +106,7 @@ async function saveChecklist(
   method: 'POST' | 'PUT',
   name: string,
 ) {
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -136,7 +137,9 @@ export function updateChecklist(id: number, name: string) {
 
 // A 404 means the checklist is already gone, which is what the caller wanted.
 export async function deleteChecklist(id: number) {
-  const response = await fetch(`${checklistsUrl}/${id}`, { method: 'DELETE' })
+  const response = await apiFetch(`${checklistsUrl}/${id}`, {
+    method: 'DELETE',
+  })
   if (!response.ok && response.status !== 404) {
     throw new Error('Unable to delete checklist.')
   }
@@ -161,7 +164,7 @@ async function saveStep(
   method: 'POST' | 'PUT',
   { text, type, options = [], dependsOnStepIds }: StepInput,
 ) {
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -201,7 +204,7 @@ export function updateStep(
 // Takes every step id of the checklist in the new order and returns the steps in that order.
 // A 400 means the list no longer matches the steps, for example because they were changed elsewhere.
 export async function reorderSteps(checklistId: number, stepIds: number[]) {
-  const response = await fetch(`${stepsUrl(checklistId)}/order`, {
+  const response = await apiFetch(`${stepsUrl(checklistId)}/order`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -223,7 +226,7 @@ export async function reorderSteps(checklistId: number, stepIds: number[]) {
 
 // A 404 means the step is already gone, which is what the caller wanted.
 export async function deleteStep(checklistId: number, stepId: number) {
-  const response = await fetch(`${stepsUrl(checklistId)}/${stepId}`, {
+  const response = await apiFetch(`${stepsUrl(checklistId)}/${stepId}`, {
     method: 'DELETE',
   })
   if (!response.ok && response.status !== 404) {

@@ -20,6 +20,7 @@ public class StepTypeBindingTests(WebApplicationFactory<Program> factory)
         // Development uses the in-memory database, so the app starts without SQL Server.
         using var client = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Development"))
             .CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "test:Binding Tests");
         var checklistResponse = await client.PostAsJsonAsync("/api/checklists", new { name = Guid.NewGuid().ToString() });
         checklistResponse.EnsureSuccessStatusCode();
         var checklist = await checklistResponse.Content.ReadFromJsonAsync<IdResponse>();
@@ -35,6 +36,7 @@ public class StepTypeBindingTests(WebApplicationFactory<Program> factory)
     {
         using var client = factory.WithWebHostBuilder(builder => builder.UseEnvironment("Development"))
             .CreateClient();
+        client.DefaultRequestHeaders.Authorization = new("Bearer", "test:Binding Tests");
         var checklistResponse = await client.PostAsJsonAsync("/api/checklists", new { name = Guid.NewGuid().ToString() });
         checklistResponse.EnsureSuccessStatusCode();
         var checklist = await checklistResponse.Content.ReadFromJsonAsync<IdResponse>();

@@ -1,4 +1,5 @@
 import { apiBaseUrl } from '../config'
+import { apiFetch } from './client'
 import { ApiError } from './checklists'
 import type { StepOption, StepType } from './checklists'
 
@@ -62,7 +63,7 @@ async function throwIfCompleted(response: Response) {
 }
 
 export async function startRun(checklistId: number) {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/api/checklists/${checklistId}/runs`,
     { method: 'POST' },
   )
@@ -76,7 +77,7 @@ export async function startRun(checklistId: number) {
 export async function getRuns(
   checklistId: number,
 ): Promise<ChecklistRunSummary[]> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/api/checklists/${checklistId}/runs`,
   )
   if (!response.ok) {
@@ -87,7 +88,7 @@ export async function getRuns(
 
 // Returns null when there's no run with this id.
 export async function getRun(id: number): Promise<ChecklistRun | null> {
-  const response = await fetch(`${runsUrl}/${id}`)
+  const response = await apiFetch(`${runsUrl}/${id}`)
   if (response.status === 404) {
     return null
   }
@@ -102,7 +103,7 @@ export async function saveRunStep(
   stepId: number,
   update: RunStepUpdate,
 ) {
-  const response = await fetch(`${runsUrl}/${runId}/steps/${stepId}`, {
+  const response = await apiFetch(`${runsUrl}/${runId}/steps/${stepId}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -118,7 +119,7 @@ export async function saveRunStep(
 }
 
 export async function completeRun(runId: number) {
-  const response = await fetch(`${runsUrl}/${runId}/complete`, {
+  const response = await apiFetch(`${runsUrl}/${runId}/complete`, {
     method: 'POST',
   })
 

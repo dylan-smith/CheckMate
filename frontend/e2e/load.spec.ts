@@ -22,6 +22,9 @@ const deadline = startedAt + durationMinutes * 60_000
 const PROGRESS_INTERVAL_MS = 60_000
 // The first visit can wait for the serverless database to resume from auto-pause.
 const FIRST_LOAD_TIMEOUT_MS = 180_000
+// Each visit signs in as the service user (LOAD_AUTH_TOKEN is the production service token), so the checklists it
+// creates are the service user's.
+const authToken = process.env.LOAD_AUTH_TOKEN ?? 'test:Load User'
 const checklistPrefix = `Load test web ${process.env.GITHUB_RUN_ID ?? 'local'}`
 
 function readSetting(name: string, min: number, max: number) {
@@ -68,6 +71,13 @@ async function recordCreated(response: Response) {
 // delete it if the visit fails partway.
 async function visit(browser: Browser, name: string) {
   const context = await browser.newContext()
+  // Saves a session the way the frontend does after signing in (see src/auth/session.ts), before the page loads.
+  await context.addInitScript((token) => {
+    localStorage.setItem(
+      'checkmate.session',
+      JSON.stringify({ token, name: 'Load Test', provider: 'service' }),
+    )
+  }, authToken)
   const page = await context.newPage()
   try {
     await page.goto('/')

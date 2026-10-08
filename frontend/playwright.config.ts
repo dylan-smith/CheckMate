@@ -28,7 +28,7 @@ export default defineConfig({
   webServer: [
     {
       command: 'dotnet run --project ../backend/CheckMate.Api',
-      url: 'http://localhost:5269/api/checklists',
+      url: 'http://localhost:5269/health',
       // Never reuse an API that is already running: it may use a real database, and the tests delete
       // every checklist. If port 5269 is taken, Playwright fails instead.
       reuseExistingServer: false,
@@ -38,10 +38,13 @@ export default defineConfig({
         ASPNETCORE_ENVIRONMENT: 'Development',
         // Always in-memory: the tests delete existing checklists, so keep them away from a real database.
         UseInMemoryDatabase: 'true',
+        // Development turns it on already; set here too since the tests depend on it (see e2e/fixtures.ts).
+        Authentication__AllowTestSignIn: 'true',
       },
     },
     {
       command: 'npm run build && npm run preview -- --port 4173 --strictPort',
+      env: { VITE_ENABLE_TEST_SIGN_IN: 'true' },
       url: 'http://localhost:4173',
       reuseExistingServer: !process.env.CI,
       timeout: 60000,

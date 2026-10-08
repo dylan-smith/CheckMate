@@ -1,13 +1,31 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 
-test('smoke: app loads and displays the main heading', async ({ page }) => {
+// The token the signed-in smoke test uses: the service token in production, and a test sign-in elsewhere, where
+// test sign-in is turned on.
+const authToken = process.env.SMOKE_AUTH_TOKEN ?? 'test:Smoke User'
+
+// Saves a session the way the frontend does after signing in (see src/auth/session.ts), before the page loads.
+async function signIn(page: Page) {
+  await page.addInitScript((token) => {
+    localStorage.setItem(
+      'checkmate.session',
+      JSON.stringify({ token, name: 'Smoke Test', provider: 'service' }),
+    )
+  }, authToken)
+}
+
+test('smoke: app loads and asks the user to sign in', async ({ page }) => {
   await page.goto('/')
 
   await expect(page.getByRole('heading', { name: 'CheckMate' })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Sign in', exact: true }),
+  ).toBeVisible()
 })
 
 test('smoke: can create, open, and delete a checklist', async ({ page }) => {
   const checklistName = `Smoke Test ${Date.now()}`
+  await signIn(page)
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'CheckMate' })).toBeVisible()

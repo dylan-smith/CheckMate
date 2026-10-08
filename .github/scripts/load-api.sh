@@ -7,9 +7,14 @@
 # cleanup, verified and retried, deletes any still there. Only ids this run created are ever deleted. The
 # cleanup also runs when the script is stopped early (an error, or the runner cancelling it).
 #
-# Requires AZURE_BACKEND_URL, LOAD_DURATION_MINUTES (1-240) and LOAD_WORKERS (1-20). Writes a table of
+# Requires AZURE_BACKEND_URL, LOAD_AUTH_TOKEN (the service token, so the API accepts the requests), LOAD_DURATION_MINUTES (1-240) and LOAD_WORKERS (1-20). Writes a table of
 # requests by status code to GITHUB_STEP_SUMMARY when set.
 set -euo pipefail
+
+if [ -z "${LOAD_AUTH_TOKEN:-}" ]; then
+  echo "::error::LOAD_AUTH_TOKEN must be set to the service token"
+  exit 1
+fi
 
 for setting in "LOAD_DURATION_MINUTES 240" "LOAD_WORKERS 20"; do
   set -- ${setting}
@@ -104,7 +109,7 @@ request() {
   local method="$1" path="$2" response
   shift 2
   response="$(curl --silent --output - --write-out '\n%{http_code}' --max-time 60 \
-    --request "${method}" --header 'Content-Type: application/json' "$@" \
+    --request "${method}" --header 'Content-Type: application/json' \n    --header "Authorization: Bearer ${LOAD_AUTH_TOKEN}" "$@" \
     "${AZURE_BACKEND_URL}${path}" || echo $'\n000')"
   last_status="${response##*$'\n'}"
   echo "${last_status}" >> "${counts_dir}/${worker_id}"
