@@ -827,7 +827,9 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                             // The type and prerequisite fields leave the text too little room on one row until
                             // md, so below that the text gets a line of its own.
                             flexWrap: { sm: 'wrap', md: 'nowrap' },
-                            gap: 1,
+                            // Stacked fields need more room, since each label sits above its field's border.
+                            columnGap: 1,
+                            rowGap: 2,
                           }}
                         >
                           <TextField
@@ -934,7 +936,9 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
             flexDirection: { xs: 'column', sm: 'row' },
             // Like the edit form, the text gets a line of its own until md once there's a prerequisite field.
             flexWrap: { sm: 'wrap', md: 'nowrap' },
-            gap: 1,
+            // Stacked fields need more room, since each label sits above its field's border.
+            columnGap: 1,
+            rowGap: 2,
           }}
         >
           <TextField
