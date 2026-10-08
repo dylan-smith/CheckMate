@@ -43,7 +43,9 @@ async function deletePending(apiUrl: string) {
         new URL(`/api/checklists/${id}`, apiUrl).toString(),
         {
           method: 'DELETE',
-          headers: { Authorization: `Bearer ${process.env.LOAD_AUTH_TOKEN ?? ''}` },
+          headers: {
+            Authorization: `Bearer ${process.env.LOAD_AUTH_TOKEN ?? ''}`,
+          },
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         },
       )
