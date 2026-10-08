@@ -312,10 +312,12 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         {
             await dbContext.SaveChangesAsync();
         }
-        catch (DbUpdateConcurrencyException exception)
+        catch (DbUpdateConcurrencyException)
         {
+            var runEntry = dbContext.Entry(run);
+
             // Another request deleted it first, which is what this one wanted.
-            if (!await RunExistsAsync(runId))
+            if (await runEntry.GetDatabaseValuesAsync() is not { } databaseValues)
             {
                 logger.LogWarning("Run {RunId} deleted by another request while deleting it", runId);
                 return NoContent();
@@ -323,14 +325,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
             // It was completed since it was read, and CompletedAt is a concurrency token, so delete it with the
             // saved value. A run is only completed once, so this can't conflict again.
-            foreach (var entry in exception.Entries)
-            {
-                if (await entry.GetDatabaseValuesAsync() is { } databaseValues)
-                {
-                    entry.OriginalValues.SetValues(databaseValues);
-                }
-            }
-
+            runEntry.OriginalValues.SetValues(databaseValues);
             await dbContext.SaveChangesAsync();
         }
 
