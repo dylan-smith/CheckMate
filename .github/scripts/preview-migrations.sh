@@ -63,7 +63,7 @@ case "${1:-}" in
     fi
     ;;
   clear)
-    # Only this tag goes: the others (pr-number, seeded) stay. Deleting a tag takes its current value.
+    # Only this tag goes: the others (such as pr-number) stay. Deleting a tag takes its current value.
     if [ -n "${applied}" ] && [ "${applied}" != "None" ]; then
       az tag update \
         --resource-id "${database_id}" \

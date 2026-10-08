@@ -18,11 +18,8 @@ import type { StepType } from '../api/checklists'
 import type { ChecklistRun, RunStep, RunStepUpdate } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
 import NotFoundPage from './NotFoundPage'
+import { formatDateTime } from './formatDateTime'
 import { parseId } from './parseId'
-
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString()
-}
 
 // A draft that can be saved, as the field shows it once saved and as it's sent, or why it can't be saved.
 type ParsedDraft = { value: string; update: RunStepUpdate } | { error: string }

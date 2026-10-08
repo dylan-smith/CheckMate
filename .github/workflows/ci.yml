@@ -591,7 +591,8 @@ jobs:
             frontend/playwright-report/smoke-results.xml
           retention-days: 30
 
-      # Adds sample checklists to a preview that hasn't been seeded yet, so there's something to try straight away.
+      # Replaces the preview's data with the sample checklists on every deployment, so there's something to try straight
+      # away and each push starts from the same data.
       - name: Seed sample data
         if: steps.current.outputs.current == 'true'
         run: bash .github/scripts/seed-preview.sh
