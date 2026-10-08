@@ -353,27 +353,9 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             .Include(item => item.Steps)
             .FirstOrDefaultAsync(item => item.ClientKey == clientKey);
 
-        if (existing is not null)
+        if (existing is not null && await RefuseSyncOfSettledRunAsync(existing, checklistId, request, checklist.Name) is { } refusal)
         {
-            if (existing.ChecklistId != checklistId)
-            {
-                logger.LogWarning("Rejected sync of run {RunId} under checklist {ChecklistId}, which isn't its checklist", existing.Id, checklistId);
-                return Conflict(new { message = OtherChecklistMessage });
-            }
-
-            if (existing.CompletedAt is not null)
-            {
-                // A completed run never changes. A device that has it complete too is sending its completion again,
-                // say after losing the reply, so it gets the run as saved. One that has it open is trying to change it.
-                if (request.CompletedAt is null)
-                {
-                    logger.LogWarning("Rejected sync of completed run {RunId}", existing.Id);
-                    return Conflict(new { message = CompletedRunMessage });
-                }
-
-                logger.LogInformation("Run {RunId} synced again after it was completed", existing.Id);
-                return Ok(await ToResponseAsync(existing, checklist.Name));
-            }
+            return refusal;
         }
 
         if (request.Steps.Select(step => step.StepId).Distinct().Count() != request.Steps.Count)
@@ -383,131 +365,27 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return ValidationProblem(ModelState);
         }
 
-        var now = DateTimeOffset.UtcNow;
-        var clampedTimes = 0;
-
-        // A device's clock can be ahead, and a time still to come would say a step was done after it was synced.
-        DateTimeOffset ClampToNow(DateTimeOffset time)
-        {
-            if (time <= now)
-            {
-                return time;
-            }
-
-            clampedTimes++;
-            return now;
-        }
-
         var checklistSteps = await dbContext.ChecklistSteps
             .AsNoTracking()
             .Include(step => step.Options)
             .Where(step => step.ChecklistId == checklistId)
             .ToDictionaryAsync(step => step.Id);
+        var clock = new SyncClock();
+        var run = existing ?? AddSyncedRun(clientKey, checklistId, request, checklistSteps);
+        var steps = PairSyncedSteps(run, request, isNew: existing is null);
 
-        // The request's steps paired with the run's, with each one's position in the request for error messages.
-        var steps = new List<(RunSyncStepRequest Request, ChecklistRunStep RunStep, int Index)>();
-        ChecklistRun run;
+        run.StartedAt = clock.ClampToNow(request.StartedAt);
 
-        if (existing is null)
+        foreach (var step in steps)
         {
-            run = new ChecklistRun
-            {
-                ClientKey = clientKey,
-                ChecklistId = checklistId,
-                Steps = [.. request.Steps.Select((step, index) => new ChecklistRunStep
-                {
-                    StepId = checklistSteps.ContainsKey(step.StepId) ? step.StepId : null,
-                    StepText = step.Text.Trim(),
-                    StepType = step.Type,
-                    SortOrder = index
-                })]
-            };
-
-            dbContext.ChecklistRuns.Add(run);
-            steps.AddRange(request.Steps.Select((step, index) => (step, run.Steps[index], index)));
-        }
-        else
-        {
-            run = existing;
-
-            // A step the run no longer has was deleted from the checklist since the run was synced, so it can't be
-            // filled in any more. Steps the request leaves out are left as they are.
-            foreach (var (step, index) in request.Steps.Select((step, index) => (step, index)))
-            {
-                if (run.Steps.FirstOrDefault(item => item.StepId == step.StepId) is { } runStep)
-                {
-                    steps.Add((step, runStep, index));
-                }
-            }
-
-            if (steps.Count < request.Steps.Count)
-            {
-                logger.LogWarning("Skipped {Count} steps synced to run {RunId} that it no longer has", request.Steps.Count - steps.Count, run.Id);
-            }
+            ApplySyncedStep(step, checklistSteps, clock);
         }
 
-        run.StartedAt = ClampToNow(request.StartedAt ?? now);
-
-        foreach (var (step, runStep, index) in steps)
-        {
-            var stepKey = $"{nameof(request.Steps)}[{index}]";
-            (int? Id, string Text)? pick = null;
-
-            if (runStep.StepType == StepType.Number && step.ResponseNumber is decimal number && !FitsResponseNumber(number))
-            {
-                ModelState.AddModelError($"{stepKey}.{nameof(step.ResponseNumber)}", NumberLimitsMessage);
-            }
-            else if (runStep.StepType == StepType.Choice)
-            {
-                // The option as it is now, or the text the device showed when the option is no longer on the step.
-                var option = runStep.StepId is int stepId && checklistSteps.TryGetValue(stepId, out var checklistStep)
-                    ? checklistStep.Options.FirstOrDefault(item => item.Id == step.SelectedOptionId)
-                    : null;
-                var pickedText = step.SelectedOptionText?.Trim();
-
-                if (option is not null)
-                {
-                    pick = (option.Id, option.Text);
-                }
-                else if (!string.IsNullOrEmpty(pickedText))
-                {
-                    pick = (null, pickedText);
-                }
-                else if (step.SelectedOptionId is not null)
-                {
-                    ModelState.AddModelError($"{stepKey}.{nameof(step.SelectedOptionId)}", OptionNotOnStepMessage);
-                }
-            }
-
-            ApplyResponse(runStep, step.IsDone, step.ResponseText, step.ResponseNumber, pick, now);
-
-            // The device's record of when the step was done, rather than when this sync made it done.
-            if (runStep.IsDone)
-            {
-                runStep.CompletedAt = ClampToNow(step.CompletedAt ?? now);
-            }
-        }
-
-        // Every done step's prerequisites must be done as well, including a step the request leaves as it is while
-        // un-doing one it depends on.
-        var dependsOn = await GetDependsOnAsync(run.Steps);
-        var indexes = steps.ToDictionary(item => item.RunStep, item => item.Index);
-
-        foreach (var runStep in run.Steps.Where(item => item.IsDone && IsLocked(item, run.Steps, dependsOn)))
-        {
-            var key = indexes.TryGetValue(runStep, out var index) ? $"{nameof(request.Steps)}[{index}]" : nameof(request.Steps);
-            ModelState.AddModelError(key, LockedStepMessage);
-        }
+        await AddLockedStepErrorsAsync(run, steps);
 
         if (request.CompletedAt is DateTimeOffset completedAt)
         {
-            // As in Complete, a step deleted from the checklist doesn't hold the run back.
-            if (run.Steps.Any(step => !step.IsDone && step.StepId is not null))
-            {
-                ModelState.AddModelError(nameof(request.CompletedAt), UnfinishedStepsMessage);
-            }
-
-            run.CompletedAt = ClampToNow(completedAt);
+            CompleteSyncedRun(run, completedAt, clock);
         }
 
         if (!ModelState.IsValid)
@@ -516,12 +394,221 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return ValidationProblem(ModelState);
         }
 
-        if (clampedTimes > 0)
+        if (clock.ClampedTimes > 0)
         {
-            logger.LogWarning("Moved {Count} times of a run of checklist {ChecklistId} that were still to come back to now", clampedTimes, checklistId);
+            logger.LogWarning("Moved {Count} times of a run of checklist {ChecklistId} that were still to come back to now", clock.ClampedTimes, checklistId);
         }
 
-        if (existing is not null)
+        if (await SaveSyncedRunAsync(run, clientKey, isNew: existing is null) is { } saveFailure)
+        {
+            return saveFailure;
+        }
+
+        var response = await ToResponseAsync(run, checklist.Name);
+
+        if (existing is null)
+        {
+            logger.LogInformation("Synced new run {RunId} of checklist {ChecklistId}", run.Id, checklistId);
+            return CreatedAtAction(nameof(GetById), new { runId = run.Id }, response);
+        }
+
+        logger.LogInformation("Synced run {RunId} of checklist {ChecklistId}", run.Id, checklistId);
+        return Ok(response);
+    }
+
+    // The time a sync is saved at, and how it treats the times the device sent. A device's clock can be ahead, and
+    // a time still to come would say a step was done after it was synced, so those are moved back to now and counted.
+    private sealed class SyncClock
+    {
+        public DateTimeOffset Now { get; } = DateTimeOffset.UtcNow;
+
+        public int ClampedTimes { get; private set; }
+
+        // A missing time means now, as when a device didn't record when a step was done.
+        public DateTimeOffset ClampToNow(DateTimeOffset? time)
+        {
+            if (time is null || time <= Now)
+            {
+                return time ?? Now;
+            }
+
+            ClampedTimes++;
+            return Now;
+        }
+    }
+
+    // A step of the request paired with the run step it answers, and its position in the request for error messages.
+    private readonly record struct SyncedStep(RunSyncStepRequest Request, ChecklistRunStep RunStep, int Index)
+    {
+        public string Key => $"{nameof(RunSyncRequest.Steps)}[{Index}]";
+    }
+
+    // Why a sync can't change the run it found, or null when it can. A run synced under another checklist's URL is a
+    // conflict. A completed run never changes: a device that has it complete too is sending its completion again,
+    // say after losing the reply, so it gets the run as saved, while one that has it open is trying to change it.
+    private async Task<ActionResult<ChecklistRunResponse>?> RefuseSyncOfSettledRunAsync(
+        ChecklistRun existing,
+        int checklistId,
+        RunSyncRequest request,
+        string checklistName)
+    {
+        if (existing.ChecklistId != checklistId)
+        {
+            logger.LogWarning("Rejected sync of run {RunId} under checklist {ChecklistId}, which isn't its checklist", existing.Id, checklistId);
+            return Conflict(new { message = OtherChecklistMessage });
+        }
+
+        if (existing.CompletedAt is null)
+        {
+            return null;
+        }
+
+        if (request.CompletedAt is null)
+        {
+            logger.LogWarning("Rejected sync of completed run {RunId}", existing.Id);
+            return Conflict(new { message = CompletedRunMessage });
+        }
+
+        logger.LogInformation("Run {RunId} synced again after it was completed", existing.Id);
+        return Ok(await ToResponseAsync(existing, checklistName));
+    }
+
+    // A run with a copy of each step as the device showed it, in the request's order. A step the checklist no longer
+    // has is kept without a link to it, like a step deleted after an online run.
+    private ChecklistRun AddSyncedRun(
+        Guid clientKey,
+        int checklistId,
+        RunSyncRequest request,
+        Dictionary<int, ChecklistStep> checklistSteps)
+    {
+        var run = new ChecklistRun
+        {
+            ClientKey = clientKey,
+            ChecklistId = checklistId,
+            Steps = [.. request.Steps.Select((step, index) => new ChecklistRunStep
+            {
+                StepId = checklistSteps.ContainsKey(step.StepId) ? step.StepId : null,
+                StepText = step.Text.Trim(),
+                StepType = step.Type,
+                SortOrder = index
+            })]
+        };
+
+        dbContext.ChecklistRuns.Add(run);
+        return run;
+    }
+
+    // A new run's steps match the request one to one. An existing run's are matched by step: one the run no longer
+    // has was deleted from the checklist since the run was synced, so it can't be filled in any more, and steps the
+    // request leaves out are left as they are.
+    private List<SyncedStep> PairSyncedSteps(ChecklistRun run, RunSyncRequest request, bool isNew)
+    {
+        if (isNew)
+        {
+            return [.. request.Steps.Select((step, index) => new SyncedStep(step, run.Steps[index], index))];
+        }
+
+        var steps = new List<SyncedStep>();
+
+        foreach (var (step, index) in request.Steps.Select((step, index) => (step, index)))
+        {
+            if (run.Steps.FirstOrDefault(item => item.StepId == step.StepId) is { } runStep)
+            {
+                steps.Add(new(step, runStep, index));
+            }
+        }
+
+        if (steps.Count < request.Steps.Count)
+        {
+            logger.LogWarning("Skipped {Count} steps synced to run {RunId} that it no longer has", request.Steps.Count - steps.Count, run.Id);
+        }
+
+        return steps;
+    }
+
+    // Applies the device's answer to a step, done at the time the device recorded rather than when this sync made it
+    // done. An answer the API can't keep goes in ModelState under the step's position in the request.
+    private void ApplySyncedStep(SyncedStep synced, Dictionary<int, ChecklistStep> checklistSteps, SyncClock clock)
+    {
+        var (step, runStep, _) = synced;
+        (int? Id, string Text)? pick = null;
+
+        if (runStep.StepType == StepType.Number && step.ResponseNumber is decimal number && !FitsResponseNumber(number))
+        {
+            ModelState.AddModelError($"{synced.Key}.{nameof(step.ResponseNumber)}", NumberLimitsMessage);
+        }
+        else if (runStep.StepType == StepType.Choice)
+        {
+            pick = ResolveSyncedPick(synced, checklistSteps);
+        }
+
+        ApplyResponse(runStep, step.IsDone, step.ResponseText, step.ResponseNumber, pick, clock.Now);
+
+        if (runStep.IsDone)
+        {
+            runStep.CompletedAt = clock.ClampToNow(step.CompletedAt);
+        }
+    }
+
+    // The option a choice step picked, as it is now, or the text the device showed when the option is no longer on
+    // the step. Null when nothing was picked, or when the pick can't be kept.
+    private (int? Id, string Text)? ResolveSyncedPick(SyncedStep synced, Dictionary<int, ChecklistStep> checklistSteps)
+    {
+        var (step, runStep, _) = synced;
+        var option = runStep.StepId is int stepId && checklistSteps.TryGetValue(stepId, out var checklistStep)
+            ? checklistStep.Options.FirstOrDefault(item => item.Id == step.SelectedOptionId)
+            : null;
+
+        if (option is not null)
+        {
+            return (option.Id, option.Text);
+        }
+
+        var pickedText = step.SelectedOptionText?.Trim();
+
+        if (!string.IsNullOrEmpty(pickedText))
+        {
+            return (null, pickedText);
+        }
+
+        if (step.SelectedOptionId is not null)
+        {
+            ModelState.AddModelError($"{synced.Key}.{nameof(step.SelectedOptionId)}", OptionNotOnStepMessage);
+        }
+
+        return null;
+    }
+
+    // Every done step's prerequisites must be done as well, including a step the request leaves as it is while
+    // un-doing one it depends on, which has no position in the request to report under.
+    private async Task AddLockedStepErrorsAsync(ChecklistRun run, IReadOnlyCollection<SyncedStep> steps)
+    {
+        var dependsOn = await GetDependsOnAsync(run.Steps);
+        var keys = steps.ToDictionary(item => item.RunStep, item => item.Key);
+
+        foreach (var runStep in run.Steps.Where(item => item.IsDone && IsLocked(item, run.Steps, dependsOn)))
+        {
+            ModelState.AddModelError(keys.GetValueOrDefault(runStep, nameof(RunSyncRequest.Steps)), LockedStepMessage);
+        }
+    }
+
+    // As in Complete, every step must be done first, except a step deleted from the checklist, which doesn't hold the
+    // run back.
+    private void CompleteSyncedRun(ChecklistRun run, DateTimeOffset completedAt, SyncClock clock)
+    {
+        if (run.Steps.Any(step => !step.IsDone && step.StepId is not null))
+        {
+            ModelState.AddModelError(nameof(RunSyncRequest.CompletedAt), UnfinishedStepsMessage);
+        }
+
+        run.CompletedAt = clock.ClampToNow(completedAt);
+    }
+
+    // Saves the synced run, and says why it couldn't when another request got there first: the run was completed
+    // or deleted since it was read, another sync created it, or a picked option was removed. Null once saved.
+    private async Task<ActionResult<ChecklistRunResponse>?> SaveSyncedRunAsync(ChecklistRun run, Guid clientKey, bool isNew)
+    {
+        if (!isNew)
         {
             // As in UpdateStep, so the save can't change a run completed since it was read.
             dbContext.Entry(run).Property(item => item.CompletedAt).IsModified = true;
@@ -530,6 +617,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         try
         {
             await dbContext.SaveChangesAsync();
+            return null;
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -546,13 +634,13 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         {
             // Two syncs of a new run overlapped and the other one saved first, so its key is taken now. The device's
             // next sync finds that run.
-            if (existing is null && await dbContext.ChecklistRuns.AsNoTracking().AnyAsync(item => item.ClientKey == clientKey))
+            if (isNew && await dbContext.ChecklistRuns.AsNoTracking().AnyAsync(item => item.ClientKey == clientKey))
             {
-                logger.LogWarning("Rejected sync of a run of checklist {ChecklistId} created by another request while saving", checklistId);
+                logger.LogWarning("Rejected sync of a run of checklist {ChecklistId} created by another request while saving", run.ChecklistId);
                 return Conflict(new { message = SyncedElsewhereMessage });
             }
 
-            // A picked option was removed from its step after it was checked above, so its foreign key failed the save.
+            // A picked option was removed from its step after it was checked, so its foreign key failed the save.
             var pickedOptionIds = run.Steps
                 .Where(step => step.SelectedOptionId is not null)
                 .Select(step => step.SelectedOptionId!.Value)
@@ -562,24 +650,13 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             if (pickedOptionIds.Count > 0
                 && await dbContext.StepOptions.AsNoTracking().CountAsync(option => pickedOptionIds.Contains(option.Id)) < pickedOptionIds.Count)
             {
-                logger.LogWarning("Rejected sync of a run of checklist {ChecklistId} picking an option removed while saving", checklistId);
-                ModelState.AddModelError(nameof(request.Steps), OptionNotOnStepMessage);
+                logger.LogWarning("Rejected sync of a run of checklist {ChecklistId} picking an option removed while saving", run.ChecklistId);
+                ModelState.AddModelError(nameof(RunSyncRequest.Steps), OptionNotOnStepMessage);
                 return ValidationProblem(ModelState);
             }
 
             throw;
         }
-
-        var response = await ToResponseAsync(run, checklist.Name);
-
-        if (existing is null)
-        {
-            logger.LogInformation("Synced new run {RunId} of checklist {ChecklistId}", run.Id, checklistId);
-            return CreatedAtAction(nameof(GetById), new { runId = run.Id }, response);
-        }
-
-        logger.LogInformation("Synced run {RunId} of checklist {ChecklistId}", run.Id, checklistId);
-        return Ok(response);
     }
 
     // Deletes a run whether it's in progress or complete.
