@@ -1,4 +1,5 @@
 import { apiBaseUrl } from '../config'
+import { apiFetch } from './client'
 import { ApiError } from './checklists'
 import type {
   StepOption,
@@ -79,7 +80,7 @@ async function throwIfRejected(response: Response, fallback: string) {
 }
 
 export async function startRun(checklistId: number) {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/api/checklists/${checklistId}/runs`,
     { method: 'POST' },
   )
@@ -93,7 +94,7 @@ export async function startRun(checklistId: number) {
 export async function getRuns(
   checklistId: number,
 ): Promise<ChecklistRunSummary[]> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${apiBaseUrl}/api/checklists/${checklistId}/runs`,
   )
   if (!response.ok) {
@@ -104,7 +105,7 @@ export async function getRuns(
 
 // Returns null when there's no run with this id.
 export async function getRun(id: number): Promise<ChecklistRun | null> {
-  const response = await fetch(`${runsUrl}/${id}`)
+  const response = await apiFetch(`${runsUrl}/${id}`)
   if (response.status === 404) {
     return null
   }
@@ -119,7 +120,7 @@ export async function saveRunStep(
   stepId: number,
   update: RunStepUpdate,
 ) {
-  const response = await fetch(`${runsUrl}/${runId}/steps/${stepId}`, {
+  const response = await apiFetch(`${runsUrl}/${runId}/steps/${stepId}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -137,14 +138,14 @@ export async function saveRunStep(
 
 // A 404 means the run is already gone, which is what the caller wanted.
 export async function deleteRun(runId: number) {
-  const response = await fetch(`${runsUrl}/${runId}`, { method: 'DELETE' })
+  const response = await apiFetch(`${runsUrl}/${runId}`, { method: 'DELETE' })
   if (!response.ok && response.status !== 404) {
     throw new Error('Unable to delete this fill-out.')
   }
 }
 
 export async function completeRun(runId: number) {
-  const response = await fetch(`${runsUrl}/${runId}/complete`, {
+  const response = await apiFetch(`${runsUrl}/${runId}/complete`, {
     method: 'POST',
   })
 

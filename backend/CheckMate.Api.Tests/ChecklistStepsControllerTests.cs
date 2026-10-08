@@ -888,6 +888,32 @@ public class ChecklistStepsControllerTests
         return Assert.IsType<ChecklistStepResponse>(objectResult.Value);
     }
 
+    [Fact]
+    public async Task OtherUsersSteps_AreNotFoundOrChanged()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        int checklistId;
+        int stepId;
+        await using (var otherContext = TestDb.Create(databaseName, TestDb.OtherUserId))
+        {
+            var checklist = await AddChecklistAsync(otherContext, "Theirs");
+            checklistId = checklist.Id;
+            stepId = (await AddStepAsync(otherContext, checklistId, "Their step")).Id;
+        }
+
+        await using var dbContext = CreateDbContext(databaseName);
+        var controller = CreateController(dbContext);
+        var request = new ChecklistStepRequest { Text = "Mine" };
+
+        Assert.IsType<NotFoundResult>((await controller.GetAll(checklistId)).Result);
+        Assert.IsType<NotFoundResult>((await controller.GetById(checklistId, stepId)).Result);
+        Assert.IsType<NotFoundResult>((await controller.Create(checklistId, request)).Result);
+        Assert.IsType<NotFoundResult>((await controller.Update(checklistId, stepId, request)).Result);
+        Assert.IsType<NotFoundResult>((await controller.Reorder(checklistId, new ChecklistStepOrderRequest { StepIds = [stepId] })).Result);
+        Assert.IsType<NotFoundResult>(await controller.Delete(checklistId, stepId));
+        Assert.Equal("Their step", (await dbContext.ChecklistSteps.SingleAsync()).Text);
+    }
+
     private static ChecklistStepsController CreateController(ChecklistDbContext dbContext)
     {
         return new(dbContext, NullLogger<ChecklistStepsController>.Instance);
@@ -911,12 +937,7 @@ public class ChecklistStepsControllerTests
 
     private static ChecklistDbContext CreateDbContext(string? databaseName = null, params IInterceptor[] interceptors)
     {
-        var options = new DbContextOptionsBuilder<ChecklistDbContext>()
-            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString())
-            .AddInterceptors(interceptors)
-            .Options;
-
-        return new ChecklistDbContext(options);
+        return TestDb.Create(databaseName, TestDb.UserId, interceptors);
     }
 
     // A run of the step, which has picked the given option.

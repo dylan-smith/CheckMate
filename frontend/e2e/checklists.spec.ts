@@ -1,9 +1,5 @@
-import {
-  test,
-  expect,
-  type APIRequestContext,
-  type Page,
-} from '@playwright/test'
+import type { APIRequestContext, Page } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 // The backend started by playwright.config.ts.
 const checklistsApiUrl = 'http://localhost:5269/api/checklists'

@@ -8,16 +8,19 @@
 # A run is completed if it says so. They're filled out in the
 # order listed, so the last is the newest, and all of them get the time of the seed itself.
 #
-# Every deployment starts the preview over: it deletes every checklist first, and their steps and fill-outs with
-# them, so whatever reviewers changed is gone and the samples are never duplicated. A seed that stops partway is
-# redone in full by the next deployment.
-# Requires API_URL, and runs from the repository root.
+# Every deployment starts the preview over: it deletes every checklist of the seed's user first, and their steps and
+# fill-outs with them, so whatever reviewers changed as that user is gone and the samples are never duplicated.
+# Checklists other test users made are left alone. A seed that stops partway is redone in full by the next
+# deployment.
+# Requires API_URL and API_AUTH_TOKEN (the test sign-in the checklists are created for), and runs from the
+# repository root.
 set -euo pipefail
 
 seed_file=.github/scripts/preview-seed-data.json
 
 api() {
-  curl --fail-with-body --silent --show-error --max-time 60 -H 'Content-Type: application/json' "$@"
+  curl --fail-with-body --silent --show-error --max-time 60 -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer ${API_AUTH_TOKEN}" "$@"
 }
 
 # Only reads are retried: a retried POST or DELETE whose first attempt did go through would fail or duplicate.

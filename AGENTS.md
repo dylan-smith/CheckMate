@@ -73,6 +73,15 @@ npm run test:e2e
   `--max-warnings 0`.
 - Add or update tests for new or changed behavior.
 
+### Sign-in and data ownership
+
+- Every API endpoint needs a signed-in user unless it's marked `AllowAnonymous` (`/health`, OpenAPI, Scalar).
+  See `backend/CheckMate.Api/Authentication/` and the README's "Sign-in" section.
+- Checklists and runs belong to a user. `ChecklistDbContext` filters them to the current user and sets the owner
+  on new ones. Anything else (steps, options, run steps) is only reached through its checklist or run, so a new
+  endpoint must look that up first, or it can reach another user's data.
+- Local dev, E2E and PR previews use test sign-in (`Bearer test:<name>`); production never turns it on.
+
 ### Database
 
 - The schema is owned by DbUp scripts in `backend/CheckMate.Database/Scripts/`, not EF Core

@@ -8,8 +8,9 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
+import { setSession } from '../auth/session'
 import { trackEvent, trackException, trackPageView } from '../telemetry'
 
 vi.mock('../telemetry', () => ({
@@ -58,7 +59,14 @@ function renderAt(path: string) {
   )
 }
 
+// Signed in, since the app only shows the sign-in page otherwise. auth.test.tsx covers signing in and out.
+beforeEach(() => {
+  setSession({ token: 'test:Tester', name: 'Tester', provider: 'test' })
+})
+
 afterEach(() => {
+  // Signing out re-renders the app if a test left it mounted.
+  act(() => setSession(null))
   vi.restoreAllMocks()
   vi.clearAllMocks()
 })
@@ -439,6 +447,7 @@ describe('App', () => {
       ).toBeInTheDocument()
       expect(fetch).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/checklists\/7$/),
+        expect.anything(),
       )
       expect(
         screen.getByRole('link', { name: /Back to checklists/ }),
@@ -1964,7 +1973,7 @@ describe('App', () => {
       ).not.toBeChecked()
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/checklists\/3\/runs$/),
-        { method: 'POST' },
+        expect.objectContaining({ method: 'POST' }),
       )
       expect(trackEvent).toHaveBeenCalledWith('RunStarted')
     })
@@ -1994,7 +2003,7 @@ describe('App', () => {
       ).toBeInTheDocument()
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/checklists\/3\/runs$/),
-        { method: 'POST' },
+        expect.objectContaining({ method: 'POST' }),
       )
       expect(trackEvent).toHaveBeenCalledWith('RunStarted')
     })
@@ -2673,7 +2682,7 @@ describe('App', () => {
         expect(puts).toBe(2)
         expect(fetchMock).toHaveBeenCalledWith(
           expect.stringMatching(/\/api\/runs\/5\/complete$/),
-          { method: 'POST' },
+          expect.objectContaining({ method: 'POST' }),
         )
       })
 
@@ -3375,6 +3384,7 @@ describe('App', () => {
       )
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/checklists\/3\/runs$/),
+        expect.anything(),
       )
     })
 
@@ -3530,7 +3540,7 @@ describe('App', () => {
       expect(within(list).getByRole('link')).toHaveAttribute('href', '/runs/6')
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/runs\/5$/),
-        { method: 'DELETE' },
+        expect.objectContaining({ method: 'DELETE' }),
       )
       expect(trackEvent).toHaveBeenCalledWith('RunDeleted')
 
@@ -3543,7 +3553,7 @@ describe('App', () => {
       expect(await screen.findByText('No fill-outs yet.')).toBeInTheDocument()
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/runs\/6$/),
-        { method: 'DELETE' },
+        expect.objectContaining({ method: 'DELETE' }),
       )
     })
 
@@ -3653,7 +3663,7 @@ describe('App', () => {
           ).toBeInTheDocument()
           expect(fetchMock).toHaveBeenCalledWith(
             expect.stringMatching(/\/api\/runs\/6$/),
-            { method: 'DELETE' },
+            expect.objectContaining({ method: 'DELETE' }),
           )
           expect(trackEvent).toHaveBeenCalledWith('RunDeleted')
         },

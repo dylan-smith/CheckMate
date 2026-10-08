@@ -971,6 +971,42 @@ public class ChecklistRunsControllerTests
         return Assert.IsType<ChecklistRunResponse>(objectResult.Value);
     }
 
+    [Fact]
+    public async Task Start_GivesTheRunToTheCurrentUser()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+
+        var run = GetRun(await CreateController(dbContext).Start(checklist.Id));
+
+        Assert.Equal(TestDb.UserId, (await dbContext.ChecklistRuns.SingleAsync(item => item.Id == run.Id)).UserId);
+    }
+
+    [Fact]
+    public async Task OtherUsersRuns_AreNotFoundOrChanged()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        int checklistId;
+        int stepId;
+        int runId;
+        await using (var otherContext = TestDb.Create(databaseName, TestDb.OtherUserId))
+        {
+            checklistId = (await AddChecklistAsync(otherContext, "Theirs")).Id;
+            stepId = (await AddStepAsync(otherContext, checklistId, "Their step")).Id;
+            runId = GetRun(await CreateController(otherContext).Start(checklistId)).Id;
+        }
+
+        await using var dbContext = CreateDbContext(databaseName);
+        var controller = CreateController(dbContext);
+
+        Assert.IsType<NotFoundResult>((await controller.Start(checklistId)).Result);
+        Assert.IsType<NotFoundResult>((await controller.GetForChecklist(checklistId)).Result);
+        Assert.IsType<NotFoundResult>((await controller.GetById(runId)).Result);
+        Assert.IsType<NotFoundResult>((await controller.UpdateStep(runId, stepId, new RunStepRequest { IsDone = true })).Result);
+        Assert.IsType<NotFoundResult>((await controller.Complete(runId)).Result);
+        Assert.False((await dbContext.ChecklistRunSteps.SingleAsync()).IsDone);
+    }
+
     private static ChecklistRunsController CreateController(ChecklistDbContext dbContext)
     {
         return new(dbContext, NullLogger<ChecklistRunsController>.Instance);
@@ -1008,12 +1044,7 @@ public class ChecklistRunsControllerTests
 
     private static ChecklistDbContext CreateDbContext(string? databaseName = null, params IInterceptor[] interceptors)
     {
-        var options = new DbContextOptionsBuilder<ChecklistDbContext>()
-            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString())
-            .AddInterceptors(interceptors)
-            .Options;
-
-        return new ChecklistDbContext(options);
+        return TestDb.Create(databaseName, TestDb.UserId, interceptors);
     }
 
     // Runs another request once, just before this context saves, to make two requests overlap.

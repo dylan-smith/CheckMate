@@ -47,6 +47,12 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
     {
         logger.LogInformation("Retrieving step {StepId} of checklist {ChecklistId}", stepId, checklistId);
 
+        if (!await ChecklistExistsAsync(checklistId))
+        {
+            logger.LogWarning("Checklist {ChecklistId} not found", checklistId);
+            return NotFound();
+        }
+
         var step = await dbContext.ChecklistSteps
             .AsNoTracking()
             .Include(item => item.Options)
@@ -122,6 +128,12 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
     [HttpPut("{stepId:int}")]
     public async Task<ActionResult<ChecklistStepResponse>> Update(int checklistId, int stepId, [FromBody] ChecklistStepRequest request)
     {
+        if (!await ChecklistExistsAsync(checklistId))
+        {
+            logger.LogWarning("Checklist {ChecklistId} not found for step update", checklistId);
+            return NotFound();
+        }
+
         var step = await dbContext.ChecklistSteps
             .Include(item => item.Options)
             .Include(item => item.DependsOn)
@@ -240,6 +252,12 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
     [HttpDelete("{stepId:int}")]
     public async Task<IActionResult> Delete(int checklistId, int stepId)
     {
+        if (!await ChecklistExistsAsync(checklistId))
+        {
+            logger.LogWarning("Checklist {ChecklistId} not found for step deletion", checklistId);
+            return NotFound();
+        }
+
         // The options are loaded so the in-memory provider, which only cascades to tracked entities, deletes them too.
         var step = await dbContext.ChecklistSteps
             .Include(item => item.Options)
@@ -382,6 +400,8 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         return (removedIds, clearedRunStepIds);
     }
 
+    // Steps belong to the user through their checklist, so every action checks the checklist first: the query filter
+    // only finds the current user's (see ChecklistDbContext).
     private Task<bool> ChecklistExistsAsync(int checklistId)
     {
         return dbContext.Checklists.AsNoTracking().AnyAsync(item => item.Id == checklistId);

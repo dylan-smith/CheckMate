@@ -301,12 +301,60 @@ public class ChecklistsControllerTests
         Assert.IsType<NotFoundResult>(result);
     }
 
+    [Fact]
+    public async Task Create_GivesTheChecklistToTheCurrentUser()
+    {
+        await using var dbContext = CreateDbContext();
+        var controller = new ChecklistsController(dbContext, NullLogger<ChecklistsController>.Instance);
+
+        await controller.Create(new ChecklistRequest { Name = "Weekly" });
+
+        Assert.Equal(TestDb.UserId, (await dbContext.Checklists.SingleAsync()).UserId);
+    }
+
+    [Fact]
+    public async Task Create_AllowsANameAnotherUserHas()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        await using (var otherContext = TestDb.Create(databaseName, TestDb.OtherUserId))
+        {
+            otherContext.Checklists.Add(new Checklist { Name = "Daily" });
+            await otherContext.SaveChangesAsync();
+        }
+
+        await using var dbContext = TestDb.Create(databaseName);
+        var controller = new ChecklistsController(dbContext, NullLogger<ChecklistsController>.Instance);
+
+        var result = await controller.Create(new ChecklistRequest { Name = "Daily" });
+
+        Assert.IsType<CreatedAtActionResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task OtherUsersChecklists_AreNotListedOrFound()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        int otherId;
+        await using (var otherContext = TestDb.Create(databaseName, TestDb.OtherUserId))
+        {
+            var other = new Checklist { Name = "Theirs" };
+            otherContext.Checklists.Add(other);
+            await otherContext.SaveChangesAsync();
+            otherId = other.Id;
+        }
+
+        await using var dbContext = TestDb.Create(databaseName);
+        var controller = new ChecklistsController(dbContext, NullLogger<ChecklistsController>.Instance);
+
+        var all = Assert.IsType<OkObjectResult>((await controller.GetAll()).Result);
+        Assert.Empty(Assert.IsAssignableFrom<IEnumerable<Checklist>>(all.Value));
+        Assert.IsType<NotFoundResult>((await controller.GetById(otherId)).Result);
+        Assert.IsType<NotFoundResult>((await controller.Update(otherId, new ChecklistRequest { Name = "Mine" })).Result);
+        Assert.IsType<NotFoundResult>(await controller.Delete(otherId));
+    }
+
     private static ChecklistDbContext CreateDbContext()
     {
-        var options = new DbContextOptionsBuilder<ChecklistDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options;
-
-        return new ChecklistDbContext(options);
+        return TestDb.Create();
     }
 }

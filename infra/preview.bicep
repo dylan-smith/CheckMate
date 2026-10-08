@@ -133,6 +133,9 @@ resource appSettings 'Microsoft.Web/sites/config@2024-11-01' = {
     ConnectionStrings__CheckMate: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${sqlDatabase.name};Authentication=Active Directory Managed Identity;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
     // The browser sends the origin without a trailing slash.
     Cors__AllowedOrigins__0: replace(storageAccount.properties.primaryEndpoints.web, '.net/', '.net')
+    // Google only accepts the origins registered with it, and every preview has its own, so previews use test
+    // sign-in instead: anyone can sign in as any name. Never set this in main.bicep.
+    Authentication__AllowTestSignIn: 'true'
     WEBSITE_ENABLE_SYNC_UPDATE_SITE: 'true'
   }
 }

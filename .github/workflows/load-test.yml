@@ -96,6 +96,7 @@ jobs:
         env:
           LOAD_BASE_URL: ${{ steps['resolve-frontend-origin'].outputs['frontend-origin'] }}
           LOAD_API_URL: ${{ vars.AZURE_BACKEND_URL }}
+          LOAD_AUTH_TOKEN: ${{ secrets.CHECKMATE_SERVICE_TOKEN }}
           LOAD_DURATION_MINUTES: ${{ inputs.duration-minutes }}
           LOAD_USERS: ${{ inputs.browser-users }}
         run: npm run test:load
@@ -117,5 +118,6 @@ jobs:
         run: .github/scripts/load-api.sh
         env:
           AZURE_BACKEND_URL: ${{ vars.AZURE_BACKEND_URL }}
+          LOAD_AUTH_TOKEN: ${{ secrets.CHECKMATE_SERVICE_TOKEN }}
           LOAD_DURATION_MINUTES: ${{ inputs.duration-minutes }}
           LOAD_WORKERS: ${{ inputs.api-workers }}

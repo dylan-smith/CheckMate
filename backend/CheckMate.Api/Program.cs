@@ -1,5 +1,6 @@
 using System.Data.Common;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
+using CheckMate.Api.Authentication;
 using CheckMate.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -43,6 +44,7 @@ if (!string.IsNullOrWhiteSpace(azureMonitorConnectionString))
     Console.WriteLine("[Startup] Azure Monitor / Application Insights configured successfully.");
 }
 
+builder.Services.AddCheckMateAuthentication(builder.Configuration);
 builder.Services.AddControllers();
 // No database check: the availability test pings /health, and touching SQL would stop the serverless database
 // from auto-pausing.
@@ -100,8 +102,8 @@ else
 
 var app = builder.Build();
 
-app.MapOpenApi();
-app.MapScalarApiReference();
+app.MapOpenApi().AllowAnonymous();
+app.MapScalarApiReference().AllowAnonymous();
 
 using var scope = app.Services.CreateScope();
 var dbContext = scope.ServiceProvider.GetRequiredService<ChecklistDbContext>();
@@ -143,8 +145,11 @@ else
 
 app.UseCors();
 app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseMiddleware<CurrentUserMiddleware>();
+app.UseAuthorization();
 app.MapControllers();
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health").AllowAnonymous();
 
 Console.WriteLine("[Startup] Application startup complete. Listening for requests...");
 

@@ -43,6 +43,15 @@ param sqlEntraAdminPrincipalType string = 'User'
 @secure()
 param sqlConnectionString string
 
+@description('Google OAuth client ID (a web application client) whose ID tokens the API accepts for sign-in.')
+@minLength(1)
+param googleClientId string
+
+@description('Secret token that signs in as the service user, so the production smoke and load tests can use the API.')
+@secure()
+@minLength(32)
+param serviceToken string
+
 @description('Days to keep database backups before they are deleted automatically.')
 @minValue(1)
 param backupRetentionDays int = 30
@@ -119,6 +128,8 @@ module appService 'modules/appservice.bicep' = {
     sqlConnectionString: sqlConnectionString
     // The browser sends the origin without a trailing slash.
     corsAllowedOrigin: replace(storage.outputs.primaryWebEndpoint, '.net/', '.net')
+    googleClientId: googleClientId
+    serviceToken: serviceToken
   }
 }
 

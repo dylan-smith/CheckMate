@@ -41,7 +41,13 @@ async function deletePending(apiUrl: string) {
     try {
       const response = await fetch(
         new URL(`/api/checklists/${id}`, apiUrl).toString(),
-        { method: 'DELETE', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) },
+        {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${process.env.LOAD_AUTH_TOKEN ?? ''}`,
+          },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        },
       )
       if (response.status === 204 || response.status === 404) {
         console.log(`[load] Deleted leftover checklist ${id}`)

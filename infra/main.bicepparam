@@ -28,6 +28,11 @@ param sqlEntraAdminPrincipalType = 'User'
 // Passed in from the AZURE_SQL_CONNECTION_STRING secret; never commit it.
 param sqlConnectionString = readEnvironmentVariable('AZURE_SQL_CONNECTION_STRING')
 
+// Sign-in: the Google OAuth client ID from the GOOGLE_CLIENT_ID variable, and the service token the smoke and load
+// tests use from the CHECKMATE_SERVICE_TOKEN secret; never commit the token.
+param googleClientId = readEnvironmentVariable('GOOGLE_CLIENT_ID')
+param serviceToken = readEnvironmentVariable('CHECKMATE_SERVICE_TOKEN')
+
 // Monitoring
 param logAnalyticsWorkspaceName = 'CheckMate'
 param appInsightsName = 'CheckMate'

@@ -29,6 +29,13 @@ param sqlConnectionString string
 @description('Origin allowed to call the API via CORS (the frontend static website).')
 param corsAllowedOrigin string
 
+@description('Google OAuth client ID whose ID tokens the API accepts for sign-in.')
+param googleClientId string
+
+@description('Secret token that signs in as the service user, for the smoke and load tests.')
+@secure()
+param serviceToken string
+
 // Free and Shared plans don't support Always On.
 var isFreeOrShared = startsWith(planSku, 'F') || startsWith(planSku, 'D')
 
@@ -76,6 +83,8 @@ resource appSettings 'Microsoft.Web/sites/config@2024-11-01' = {
   properties: {
     ConnectionStrings__CheckMate: sqlConnectionString
     Cors__AllowedOrigins__0: corsAllowedOrigin
+    Authentication__Google__ClientId: googleClientId
+    Authentication__ServiceToken: serviceToken
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsightsConnectionString
     APPINSIGHTS_INSTRUMENTATIONKEY: appInsightsInstrumentationKey
     WEBSITE_ENABLE_SYNC_UPDATE_SITE: 'true'
