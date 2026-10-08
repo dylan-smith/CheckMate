@@ -4,6 +4,7 @@ using CheckMate.Api.Data;
 using CheckMate.Api.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CheckMate.Api.Tests;
@@ -193,6 +194,273 @@ public class ChecklistStepsControllerTests
 
         Assert.IsType<NotFoundResult>(result);
         Assert.True(await dbContext.ChecklistSteps.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Create_SavesTrimmedOptionsInOrder_ForChoiceStep()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Create(checklist.Id, ChoiceRequest("Weather", " Sunny ", "Rainy", "Snowy"));
+
+        var step = Assert.IsType<ChecklistStepResponse>(Assert.IsType<CreatedAtActionResult>(result.Result).Value);
+        Assert.Equal(StepType.Choice, step.Type);
+        Assert.Equal(["Sunny", "Rainy", "Snowy"], step.Options.Select(option => option.Text));
+        var saved = await dbContext.StepOptions.OrderBy(option => option.SortOrder).ToListAsync();
+        Assert.Equal(["Sunny", "Rainy", "Snowy"], saved.Select(option => option.Text));
+        Assert.All(saved, option => Assert.Equal(step.Id, option.StepId));
+        Assert.Equal(saved.Select(option => option.Id), step.Options.Select(option => option.Id));
+    }
+
+    [Theory]
+    [InlineData("Only one")]
+    [InlineData("Sunny", " ")]
+    [InlineData("Sunny", "sunny")]
+    public async Task Create_ReturnsValidationProblem_WhenChoiceOptionsAreInvalid(params string[] options)
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+
+        var result = await controller.Create(checklist.Id, ChoiceRequest("Weather", options));
+
+        Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result.Result).Value);
+        Assert.False(await dbContext.ChecklistSteps.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Create_ReturnsValidationProblem_WhenOptionsAreGivenForAnotherType()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var request = ChoiceRequest("Notes", "A", "B");
+        request.Type = StepType.Text;
+
+        var result = await controller.Create(checklist.Id, request);
+
+        Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result.Result).Value);
+        Assert.False(await dbContext.ChecklistSteps.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Create_ReturnsValidationProblem_WhenNewStepNamesAnExistingOption()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var existing = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        var request = ChoiceRequest("Copy", "Sunny", "Rainy");
+        request.Options![0].Id = existing.Options[0].Id;
+
+        var result = await controller.Create(checklist.Id, request);
+
+        Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result.Result).Value);
+    }
+
+    [Fact]
+    public async Task Update_EditsKeepsAddsRemovesAndReordersOptions()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var created = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Weather", "Sunny", "Rainy", "Snowy")));
+        var (sunny, rainy) = (created.Options[0].Id, created.Options[1].Id);
+
+        var result = await controller.Update(checklist.Id, created.Id, new ChecklistStepRequest
+        {
+            Text = "Weather",
+            Type = StepType.Choice,
+            Options = [
+                new StepOptionRequest { Id = rainy, Text = "Raining" },
+                new StepOptionRequest { Text = "Cloudy" },
+                new StepOptionRequest { Id = sunny, Text = "Sunny" }
+            ]
+        });
+
+        var step = Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(["Raining", "Cloudy", "Sunny"], step.Options.Select(option => option.Text));
+        Assert.Equal(rainy, step.Options[0].Id);
+        Assert.Equal(sunny, step.Options[2].Id);
+        dbContext.ChangeTracker.Clear();
+        var saved = await dbContext.StepOptions.OrderBy(option => option.SortOrder).ToListAsync();
+        Assert.Equal(["Raining", "Cloudy", "Sunny"], saved.Select(option => option.Text));
+    }
+
+    [Fact]
+    public async Task Update_ReturnsValidationProblem_WhenOptionBelongsToAnotherStep()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var step = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        var other = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Mood", "Happy", "Sad")));
+        var request = ChoiceRequest("Weather", "Sunny", "Happy");
+        request.Options![1].Id = other.Options[0].Id;
+
+        var result = await controller.Update(checklist.Id, step.Id, request);
+
+        Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result.Result).Value);
+        dbContext.ChangeTracker.Clear();
+        Assert.Equal(4, await dbContext.StepOptions.CountAsync());
+    }
+
+    [Fact]
+    public async Task Update_ReturnsConflict_WhenARemovedOptionIsPickedWhileSaving()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        ChecklistStepResponse step;
+        int checklistId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            checklistId = (await AddChecklistAsync(setupContext, "Daily")).Id;
+            step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        }
+
+        // A fill-out picks the removed option after this request cleared the runs that had, so SQL Server's
+        // foreign key fails the save. The in-memory provider has no foreign keys, so the failure is thrown here instead.
+        await using var otherContext = CreateDbContext(databaseName);
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+        {
+            await AddRunWithPickAsync(otherContext, checklistId, step, step.Options[1].Id);
+            throw new DbUpdateException("FK_ChecklistRunSteps_StepOptions_SelectedOptionId");
+        }));
+        var request = ChoiceRequest("Weather", "Sunny", "Cloudy");
+        request.Options![0].Id = step.Options[0].Id;
+
+        var result = await CreateController(dbContext).Update(checklistId, step.Id, request);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task Update_Throws_WhenSaveFailsWhileRemovingOptionsNoRunPicked()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        ChecklistStepResponse step;
+        int checklistId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            checklistId = (await AddChecklistAsync(setupContext, "Daily")).Id;
+            step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        }
+
+        // Some other failure, so it isn't mistaken for a pick of the removed option.
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(() =>
+            throw new DbUpdateException("Something else")));
+        var request = ChoiceRequest("Weather", "Sunny", "Cloudy");
+        request.Options![0].Id = step.Options[0].Id;
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => CreateController(dbContext).Update(checklistId, step.Id, request));
+    }
+
+    [Fact]
+    public async Task Update_Throws_WhenSaveFailsAfterClearingAPickOfARemovedOption()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        ChecklistStepResponse step;
+        int checklistId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            checklistId = (await AddChecklistAsync(setupContext, "Daily")).Id;
+            step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
+            // A run that had already picked the option this update removes, so the update clears that pick.
+            await AddRunWithPickAsync(setupContext, checklistId, step, step.Options[1].Id);
+        }
+
+        // Some other failure. The failed save leaves the run's pick as it was, which mustn't look like a new one.
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(() =>
+            throw new DbUpdateException("Something else")));
+        var request = ChoiceRequest("Weather", "Sunny", "Cloudy");
+        request.Options![0].Id = step.Options[0].Id;
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => CreateController(dbContext).Update(checklistId, step.Id, request));
+    }
+
+    [Fact]
+    public async Task Update_Throws_WhenSaveFailsWithoutRemovingOptions()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        ChecklistStepResponse step;
+        int checklistId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            checklistId = (await AddChecklistAsync(setupContext, "Daily")).Id;
+            step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        }
+
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(() =>
+            throw new DbUpdateException("Something else")));
+        var request = ChoiceRequest("Weather", "Sunny", "Rainy");
+        request.Options![0].Id = step.Options[0].Id;
+        request.Options![1].Id = step.Options[1].Id;
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => CreateController(dbContext).Update(checklistId, step.Id, request));
+    }
+
+    [Fact]
+    public async Task Update_RemovesOptions_WhenChangedToAnotherType()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var step = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Weather", "Sunny", "Rainy")));
+
+        var result = await controller.Update(checklist.Id, step.Id, new ChecklistStepRequest { Text = "Weather", Type = StepType.Text });
+
+        Assert.Empty(Assert.IsType<ChecklistStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value).Options);
+        Assert.False(await dbContext.StepOptions.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Delete_ClearsAPickSavedAfterTheRunsWereRead()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        ChecklistStepResponse step;
+        int checklistId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            checklistId = (await AddChecklistAsync(setupContext, "Daily")).Id;
+            step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
+            await AddRunWithPickAsync(setupContext, checklistId, step, null);
+        }
+
+        // A fill-out picks an option after this request read the run, while it had no pick.
+        await using var otherContext = CreateDbContext(databaseName);
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
+        {
+            var runStep = await otherContext.ChecklistRunSteps.SingleAsync();
+            runStep.SelectedOptionId = step.Options[0].Id;
+            await otherContext.SaveChangesAsync();
+        }));
+
+        Assert.IsType<NoContentResult>(await CreateController(dbContext).Delete(checklistId, step.Id));
+
+        await using var checkContext = CreateDbContext(databaseName);
+        var saved = await checkContext.ChecklistRunSteps.SingleAsync();
+        Assert.Null(saved.StepId);
+        Assert.Null(saved.SelectedOptionId);
+    }
+
+    [Fact]
+    public async Task Delete_RemovesStepOptions()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var controller = CreateController(dbContext);
+        var step = GetStep(await controller.Create(checklist.Id, ChoiceRequest("Weather", "Sunny", "Rainy")));
+        dbContext.ChangeTracker.Clear();
+
+        Assert.IsType<NoContentResult>(await controller.Delete(checklist.Id, step.Id));
+
+        Assert.False(await dbContext.StepOptions.AnyAsync());
     }
 
     [Fact]
@@ -604,6 +872,22 @@ public class ChecklistStepsControllerTests
         await dbContext.SaveChangesAsync();
     }
 
+    private static ChecklistStepRequest ChoiceRequest(string text, params string[] options)
+    {
+        return new ChecklistStepRequest
+        {
+            Text = text,
+            Type = StepType.Choice,
+            Options = [.. options.Select(option => new StepOptionRequest { Text = option })]
+        };
+    }
+
+    private static ChecklistStepResponse GetStep(ActionResult<ChecklistStepResponse> result)
+    {
+        var objectResult = Assert.IsAssignableFrom<ObjectResult>(result.Result);
+        return Assert.IsType<ChecklistStepResponse>(objectResult.Value);
+    }
+
     private static ChecklistStepsController CreateController(ChecklistDbContext dbContext)
     {
         return new(dbContext, NullLogger<ChecklistStepsController>.Instance);
@@ -625,12 +909,51 @@ public class ChecklistStepsControllerTests
         return step;
     }
 
-    private static ChecklistDbContext CreateDbContext(string? databaseName = null)
+    private static ChecklistDbContext CreateDbContext(string? databaseName = null, params IInterceptor[] interceptors)
     {
         var options = new DbContextOptionsBuilder<ChecklistDbContext>()
             .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString())
+            .AddInterceptors(interceptors)
             .Options;
 
         return new ChecklistDbContext(options);
+    }
+
+    // A run of the step, which has picked the given option.
+    private static async Task AddRunWithPickAsync(ChecklistDbContext dbContext, int checklistId, ChecklistStepResponse step, int? optionId)
+    {
+        dbContext.ChecklistRuns.Add(new ChecklistRun
+        {
+            ChecklistId = checklistId,
+            Steps = [new ChecklistRunStep
+            {
+                StepId = step.Id,
+                StepText = step.Text,
+                StepType = StepType.Choice,
+                SelectedOptionId = optionId
+            }]
+        });
+        await dbContext.SaveChangesAsync();
+    }
+
+    // Runs another request once, just before this context saves, to make two requests overlap. It can also
+    // throw to fail the save the way SQL Server would.
+    private sealed class BeforeSaveInterceptor(Func<Task> beforeSave) : SaveChangesInterceptor
+    {
+        private bool _ran;
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_ran)
+            {
+                _ran = true;
+                await beforeSave();
+            }
+
+            return result;
+        }
     }
 }

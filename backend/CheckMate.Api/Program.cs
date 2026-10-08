@@ -87,11 +87,15 @@ else
     // Resuming a serverless database from auto-pause can take longer than the 30-second connection
     // timeout, which surfaces as client timeout error -2. EF Core doesn't treat -2 as transient, so
     // add it: the next attempt connects once the resume finishes.
+    // Steps load their options and prerequisites together. Both are small, so one query beats a round trip
+    // for each, and choosing it here stops EF Core warning about each query that includes both.
     builder.Services.AddDbContext<ChecklistDbContext>(options =>
-        options.UseSqlServer(connectionString, sqlOptions => sqlOptions.EnableRetryOnFailure(
-            maxRetryCount: 8,
-            maxRetryDelay: TimeSpan.FromSeconds(10),
-            errorNumbersToAdd: [-2])));
+        options.UseSqlServer(connectionString, sqlOptions => sqlOptions
+            .EnableRetryOnFailure(
+                maxRetryCount: 8,
+                maxRetryDelay: TimeSpan.FromSeconds(10),
+                errorNumbersToAdd: [-2])
+            .UseQuerySplittingBehavior(QuerySplittingBehavior.SingleQuery)));
 }
 
 var app = builder.Build();

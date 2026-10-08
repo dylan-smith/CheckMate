@@ -9,6 +9,8 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
 
     public DbSet<ChecklistStep> ChecklistSteps => Set<ChecklistStep>();
 
+    public DbSet<StepOption> StepOptions => Set<StepOption>();
+
     public DbSet<ChecklistRun> ChecklistRuns => Set<ChecklistRun>();
 
     public DbSet<ChecklistRunStep> ChecklistRunSteps => Set<ChecklistRunStep>();
@@ -44,6 +46,20 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
             .Property(step => step.Type)
             .HasColumnName("StepType");
 
+        modelBuilder.Entity<StepOption>()
+            .HasOne<ChecklistStep>()
+            .WithMany(step => step.Options)
+            .HasForeignKey(option => option.StepId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<StepOption>()
+            .HasIndex(option => new { option.StepId, option.SortOrder });
+
+        modelBuilder.Entity<StepOption>()
+            .Property(option => option.Text)
+            .HasMaxLength(200)
+            .IsRequired();
+
         modelBuilder.Entity<StepDependency>()
             .HasKey(dependency => new { dependency.StepId, dependency.DependsOnStepId });
 
@@ -53,7 +69,7 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
             .HasForeignKey(dependency => dependency.StepId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // No cascade in the database (see 0007-CreateStepDependenciesTable.sql), so the app deletes these rows itself.
+        // No cascade in the database (see 0008-CreateStepDependenciesTable.sql), so the app deletes these rows itself.
         modelBuilder.Entity<StepDependency>()
             .HasOne<ChecklistStep>()
             .WithMany()
@@ -103,5 +119,16 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options) : 
         modelBuilder.Entity<ChecklistRunStep>()
             .Property(step => step.ResponseNumber)
             .HasPrecision(15, 6);
+
+        // No cascade in the database either (see 0007-AddStepOptions.sql), so the app clears SelectedOptionId itself.
+        modelBuilder.Entity<ChecklistRunStep>()
+            .HasOne<StepOption>()
+            .WithMany()
+            .HasForeignKey(step => step.SelectedOptionId)
+            .OnDelete(DeleteBehavior.ClientSetNull);
+
+        modelBuilder.Entity<ChecklistRunStep>()
+            .Property(step => step.SelectedOptionText)
+            .HasMaxLength(200);
     }
 }

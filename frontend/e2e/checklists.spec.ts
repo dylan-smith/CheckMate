@@ -608,6 +608,92 @@ test.describe('Checklist management', () => {
       })
     })
 
+    test('a multiple choice step is picked, resumes, and keeps its pick after the option changes', async ({
+      page,
+    }) => {
+      await createChecklist(page, 'Site visit')
+      await openChecklist(page, 'Site visit')
+      await page.getByLabel('New step').fill('Weather')
+      await page.getByRole('combobox', { name: 'Type' }).click()
+      await page.getByRole('option', { name: 'Multiple choice' }).click()
+      await page.getByRole('textbox', { name: 'Option 1' }).fill('Sunny')
+      await page.getByRole('textbox', { name: 'Option 2' }).fill('Rainy')
+      await page.getByRole('button', { name: 'Add option' }).click()
+      await page.getByRole('textbox', { name: 'Option 3' }).fill('Snowy')
+      await page.getByRole('button', { name: 'Add step' }).click()
+      const step = page.getByRole('listitem').first()
+      await expect(step).toContainText(
+        'WeatherMultiple choice: Sunny, Rainy, Snowy',
+      )
+
+      await page.getByRole('button', { name: 'Fill out' }).click()
+      await expect(page).toHaveURL(/\/runs\/\d+$/)
+      const rainy = page.getByRole('radio', { name: 'Rainy' })
+      await rainy.check()
+      await expect(page.getByText('1 of 1 done')).toBeVisible()
+      // Wait for the save to finish, which enables the options again.
+      await expect(rainy).toBeEnabled()
+
+      await page.reload()
+      await expect(rainy).toBeChecked()
+
+      const runUrl = page.url()
+      await page.getByRole('button', { name: 'Complete' }).click()
+      await expect(page.getByRole('alert')).toHaveText(
+        'Completed "Site visit".',
+      )
+
+      // Rename the picked option, and the past run still shows what was picked.
+      await openChecklist(page, 'Site visit')
+      await page.getByRole('button', { name: 'Edit step "Weather"' }).click()
+      await page.getByRole('textbox', { name: 'Option 2' }).fill('Raining')
+      await page.getByRole('button', { name: 'Save', exact: true }).click()
+      await expect(step).toContainText(
+        'WeatherMultiple choice: Sunny, Raining, Snowy',
+      )
+
+      await page.goto(runUrl)
+      await expect(page.getByText(/^Completed /)).toBeVisible()
+      const picked = page.getByRole('textbox', { name: 'Weather' })
+      await expect(picked).toHaveValue('Rainy')
+      await expect(picked).toBeDisabled()
+    })
+
+    test('the API rejects an option from another step', async ({ request }) => {
+      const response = await request.post(checklistsApiUrl, {
+        data: { name: 'Two questions' },
+      })
+      const { id } = (await response.json()) as { id: number }
+      const createChoice = async (text: string) => {
+        const stepResponse = await request.post(
+          `${checklistsApiUrl}/${id}/steps`,
+          {
+            data: {
+              text,
+              type: 'Choice',
+              options: [{ text: 'Yes' }, { text: 'No' }],
+            },
+          },
+        )
+        expect(stepResponse.status()).toBe(201)
+        return (await stepResponse.json()) as {
+          id: number
+          options: { id: number }[]
+        }
+      }
+      const first = await createChoice('First')
+      const second = await createChoice('Second')
+      const runResponse = await request.post(`${checklistsApiUrl}/${id}/runs`)
+      const runId = ((await runResponse.json()) as { id: number }).id
+
+      const rejected = await request.put(
+        `http://localhost:5269/api/runs/${runId}/steps/${first.id}`,
+        { data: { optionId: second.options[0].id } },
+      )
+
+      expect(rejected.status()).toBe(400)
+    })
+
     test('a completed run rejects changes', async ({ request }) => {
       const {
         id,

@@ -31,4 +31,11 @@ public class ChecklistRunStep
 
     /// <summary>The value entered for a number step, or null when there isn't one.</summary>
     public decimal? ResponseNumber { get; set; }
+
+    /// <summary>The option picked for a choice step, or null when there isn't one or it has since been removed.</summary>
+    public int? SelectedOptionId { get; set; }
+
+    /// <summary>The picked option's text when it was picked, so later edits don't change past runs.</summary>
+    [MaxLength(200)]
+    public string? SelectedOptionText { get; set; }
 }

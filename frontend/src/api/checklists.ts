@@ -6,7 +6,7 @@ export type Checklist = {
 }
 
 // What a step asks for when the checklist is filled out, in the order the type picker lists them.
-export const stepTypes = ['Checkbox', 'Text', 'Number'] as const
+export const stepTypes = ['Checkbox', 'Text', 'Number', 'Choice'] as const
 
 export type StepType = (typeof stepTypes)[number]
 
@@ -14,13 +14,27 @@ export const stepTypeLabels: Record<StepType, string> = {
   Checkbox: 'Checkbox',
   Text: 'Text input',
   Number: 'Number',
+  Choice: 'Multiple choice',
 }
 
+export type StepOption = {
+  id: number
+  text: string
+}
+
+// An option as it's sent: one the step already has keeps its id, and a new one has none.
+export type StepOptionInput = {
+  id?: number
+  text: string
+}
+
+// Only a choice step has options, in the order they're listed.
 export type ChecklistStep = {
   id: number
   text: string
   type: StepType
   sortOrder: number
+  options: StepOption[]
   // The other steps of the checklist that must be done before this one.
   dependsOnStepIds: number[]
 }
@@ -132,17 +146,27 @@ function stepsUrl(checklistId: number) {
   return `${checklistsUrl}/${checklistId}/steps`
 }
 
+// A step as it's sent. options are a choice step's, and replace the ones it had; other types send none.
+// dependsOnStepIds are the steps of the checklist that must be done before this one. Left out, an existing step
+// keeps the ones it has and a new step gets none.
+export type StepInput = {
+  text: string
+  type: StepType
+  options?: StepOptionInput[]
+  dependsOnStepIds?: number[]
+}
+
 async function saveStep(
   url: string,
   method: 'POST' | 'PUT',
-  step: { text: string; type: StepType; dependsOnStepIds?: number[] },
+  { text, type, options = [], dependsOnStepIds }: StepInput,
 ) {
   const response = await fetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(step),
+    body: JSON.stringify({ text, type, options, dependsOnStepIds }),
   })
 
   // A 400 explains what's wrong, such as prerequisites that would make a cycle, so pass that on.
@@ -151,37 +175,27 @@ async function saveStep(
     const message = Object.values(error.errors ?? {}).flat()[0]
     throw new ApiError(400, message ?? 'Unable to save step.')
   }
+  // A 409 means a fill-out picked an option this removes while it saved, so saving again works.
+  if (response.status === 409) {
+    const error = (await response.json()) as ErrorResponse
+    throw new ApiError(409, error.message ?? 'Unable to save step.')
+  }
   if (!response.ok) {
     throw new Error('Unable to save step.')
   }
   return (await response.json()) as ChecklistStep
 }
 
-export function createStep(
-  checklistId: number,
-  text: string,
-  type: StepType,
-  dependsOnStepIds: number[],
-) {
-  return saveStep(stepsUrl(checklistId), 'POST', {
-    text,
-    type,
-    dependsOnStepIds,
-  })
+export function createStep(checklistId: number, step: StepInput) {
+  return saveStep(stepsUrl(checklistId), 'POST', step)
 }
 
 export function updateStep(
   checklistId: number,
   stepId: number,
-  text: string,
-  type: StepType,
-  dependsOnStepIds: number[],
+  step: StepInput,
 ) {
-  return saveStep(`${stepsUrl(checklistId)}/${stepId}`, 'PUT', {
-    text,
-    type,
-    dependsOnStepIds,
-  })
+  return saveStep(`${stepsUrl(checklistId)}/${stepId}`, 'PUT', step)
 }
 
 // Takes every step id of the checklist in the new order and returns the steps in that order.

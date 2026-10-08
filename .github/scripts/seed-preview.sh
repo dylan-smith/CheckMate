@@ -4,7 +4,8 @@
 # to be ready.
 #
 # A checklist's runs are past fill-outs. Each run has a response for each step, in order, with the body the API
-# takes for that step's type (null to leave it blank), and is completed if it says so. They're filled out in the
+# takes for that step's type (null to leave it blank), except that a choice step's is {"option": "<its text>"}.
+# A run is completed if it says so. They're filled out in the
 # order listed, so the last is the newest, and all of them get the time of the seed itself.
 #
 # Every deployment starts the preview over: it deletes every checklist first, and their steps and fill-outs with
@@ -34,24 +35,33 @@ for i in $(seq 0 $((count - 1))); do
   id="$(jq -c "{name: .[${i}].name}" "${seed_file}" | api -X POST --data @- "${API_URL}/api/checklists" | jq -r .id)"
   steps="$(jq ".[${i}].steps | length" "${seed_file}")"
   step_ids=()
+  step_options=()
   # The same IDs by text. A step's dependsOn names its prerequisites by text, and they come earlier in the list, so
   # they've been created by the time it is.
   step_ids_by_text='{}'
   for j in $(seq 0 $((steps - 1))); do
-    step="$(jq -c ".[${i}].steps[${j}]" "${seed_file}")"
-    body="$(jq -c --argjson ids "${step_ids_by_text}" \
-      '{text, type, dependsOnStepIds: [(.dependsOn // [])[] | $ids[.] // error("No earlier step \"\(.)\"")]}' \
-      <<<"${step}")"
-    step_id="$(api -X POST --data "${body}" "${API_URL}/api/checklists/${id}/steps" | jq -r .id)"
-    step_ids+=("${step_id}")
-    step_ids_by_text="$(jq -c --argjson step "${step}" --argjson id "${step_id}" '. + {($step.text): $id}' \
-      <<<"${step_ids_by_text}")"
+    # The step is sent as it's written, except that dependsOn becomes the IDs the API takes.
+    body="$(jq -c --argjson i "${i}" --argjson j "${j}" --argjson ids "${step_ids_by_text}" '
+      .[$i].steps[$j]
+      | del(.dependsOn) + {dependsOnStepIds: [(.dependsOn // [])[] | $ids[.] // error("No earlier step \"\(.)\"")]}' \
+      "${seed_file}")"
+    step="$(api -X POST --data "${body}" "${API_URL}/api/checklists/${id}/steps")"
+    step_ids+=("$(jq -r .id <<<"${step}")")
+    step_options+=("$(jq -c .options <<<"${step}")")
+    step_ids_by_text="$(jq -c --argjson step "${step}" '. + {($step.text): $step.id}' <<<"${step_ids_by_text}")"
   done
   runs="$(jq ".[${i}].runs // [] | length" "${seed_file}")"
   for r in $(seq 0 $((runs - 1))); do
     run_id="$(api -X POST "${API_URL}/api/checklists/${id}/runs" | jq -r .id)"
     for j in "${!step_ids[@]}"; do
-      response="$(jq -c ".[${i}].runs[${r}].responses[${j}]" "${seed_file}")"
+      # A choice step's option only has an id once the step is added, so the seed names it by its text instead.
+      response="$(jq -c --argjson i "${i}" --argjson r "${r}" --argjson j "${j}" \
+        --argjson options "${step_options[j]}" '
+        .[$i].runs[$r].responses[$j]
+        | if type == "object" and has("option") then
+            .option as $text
+            | {optionId: (first($options[] | select(.text == $text) | .id) // error("No option \"\($text)\""))}
+          else . end' "${seed_file}")"
       if [ "${response}" != "null" ]; then
         api -X PUT --data "${response}" "${API_URL}/api/runs/${run_id}/steps/${step_ids[j]}" --output /dev/null
       fi

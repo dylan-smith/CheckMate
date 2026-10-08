@@ -1,6 +1,6 @@
 import { apiBaseUrl } from '../config'
 import { ApiError } from './checklists'
-import type { StepType } from './checklists'
+import type { StepOption, StepType } from './checklists'
 
 // stepId is null once the step has been deleted from the checklist. The text and type are what the step had
 // when the run started, so they stay the same after the step is edited or deleted.
@@ -13,12 +13,21 @@ export type RunStep = {
   // The value entered for a text or number step.
   responseText: string | null
   responseNumber: number | null
+  // A choice step's current options, which are empty once the step is deleted. selectedOptionText is the
+  // picked option's text when it was picked, and selectedOptionId is null once that option is removed.
+  options: StepOption[]
+  selectedOptionId: number | null
+  selectedOptionText: string | null
 }
 
 // A checkbox step sends isDone. A text step sends its text, and is done when the text isn't empty.
-// A number step sends its number, and is done when it isn't null.
+// A number step sends its number, and is done when it isn't null. A choice step sends the picked
+// option's id, and is done when it isn't null.
 export type RunStepUpdate =
-  { isDone: boolean } | { text: string } | { number: number | null }
+  | { isDone: boolean }
+  | { text: string }
+  | { number: number | null }
+  | { optionId: number | null }
 
 export type ChecklistRun = {
   id: number
