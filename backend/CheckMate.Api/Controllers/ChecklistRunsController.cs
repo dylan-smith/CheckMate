@@ -246,16 +246,19 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
     [HttpDelete("{runId:int}")]
     public async Task<IActionResult> Delete(int runId)
     {
-        // SQL Server cascades the delete to the run's steps, but the in-memory provider only cascades to tracked
-        // entities, so load them too.
-        var run = await dbContext.ChecklistRuns
-            .Include(item => item.Steps)
-            .FirstOrDefaultAsync(item => item.Id == runId);
+        var run = await dbContext.ChecklistRuns.FirstOrDefaultAsync(item => item.Id == runId);
 
         if (run is null)
         {
             logger.LogWarning("Run {RunId} not found for deletion", runId);
             return NotFound();
+        }
+
+        // SQL Server cascades the delete to the run's steps through the foreign key, but the in-memory provider only
+        // cascades to tracked entities, so load them first there.
+        if (!dbContext.Database.IsRelational())
+        {
+            await dbContext.ChecklistRunSteps.Where(step => step.RunId == runId).LoadAsync();
         }
 
         dbContext.ChecklistRuns.Remove(run);
