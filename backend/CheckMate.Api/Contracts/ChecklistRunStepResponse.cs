@@ -6,6 +6,11 @@ namespace CheckMate.Api.Contracts;
 /// The options a choice step offers now, which can be picked while the run is open. They're the step's current
 /// options, so they're empty once the step is deleted; <paramref name="SelectedOptionText"/> keeps what was picked.
 /// </param>
+/// <param name="DependsOnStepIds">
+/// The steps of the run that must be done before this one. Like the options, they're the step's current
+/// prerequisites, leaving out any added to the checklist after the run started.
+/// </param>
+/// <param name="IsLocked">Whether one of those steps isn't done yet, so this one can't be filled in.</param>
 public record ChecklistRunStepResponse(
     int? StepId,
     string Text,
@@ -16,9 +21,15 @@ public record ChecklistRunStepResponse(
     decimal? ResponseNumber,
     IReadOnlyList<StepOptionResponse> Options,
     int? SelectedOptionId,
-    string? SelectedOptionText)
+    string? SelectedOptionText,
+    IReadOnlyList<int> DependsOnStepIds,
+    bool IsLocked)
 {
-    public static ChecklistRunStepResponse From(ChecklistRunStep step, IEnumerable<StepOption> options)
+    public static ChecklistRunStepResponse From(
+        ChecklistRunStep step,
+        IEnumerable<StepOption> options,
+        IEnumerable<int> dependsOnStepIds,
+        bool isLocked)
     {
         var optionResponses = StepOptionResponse.FromAll(options);
 
@@ -38,6 +49,8 @@ public record ChecklistRunStepResponse(
             step.ResponseNumber,
             optionResponses,
             selectedOptionId,
-            step.SelectedOptionText);
+            step.SelectedOptionText,
+            [.. dependsOnStepIds.Order()],
+            isLocked);
     }
 }

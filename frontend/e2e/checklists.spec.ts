@@ -453,6 +453,10 @@ test.describe('Checklist management', () => {
         page.getByRole('checkbox', { name: 'Turn on lights' }),
       ).not.toBeChecked()
 
+      // Every step must be done before the run can be completed.
+      await page.getByRole('checkbox', { name: 'Turn on lights' }).check()
+      await expect(page.getByText('2 of 2 done')).toBeVisible()
+
       const runUrl = page.url()
       await page.getByRole('button', { name: 'Complete' }).click()
       // Completing goes back to the checklists page, with a toast that goes away by itself.
@@ -524,6 +528,8 @@ test.describe('Checklist management', () => {
       await cash.fill('$300')
       await cash.blur()
       await expect(page.getByText('1 of 2 done')).toBeVisible()
+      await page.getByRole('checkbox', { name: 'Lock door' }).check()
+      await expect(page.getByText('2 of 2 done')).toBeVisible()
 
       const runUrl = page.url()
       await page.getByRole('button', { name: 'Complete' }).click()
@@ -694,6 +700,104 @@ test.describe('Checklist management', () => {
       expect(rejected.status()).toBe(400)
     })
 
+    test('walks a dependency chain, showing each step once its prerequisites are done', async ({
+      page,
+      request,
+    }) => {
+      // Prep depends on nothing, Cook on Prep, and Serve on Prep and Cook.
+      const {
+        id,
+        stepIds: [prepId],
+      } = await createChecklistWithSteps(request, 'Dinner', ['Prep'])
+      const addStep = async (text: string, dependsOnStepIds: number[]) => {
+        const response = await request.post(`${checklistsApiUrl}/${id}/steps`, {
+          data: { text, dependsOnStepIds },
+        })
+        expect(response.status()).toBe(201)
+        return ((await response.json()) as { id: number }).id
+      }
+      const cookId = await addStep('Cook', [prepId])
+      await addStep('Serve', [prepId, cookId])
+
+      await page.goto(`/checklists/${id}`)
+      await page.getByRole('button', { name: 'Fill out' }).click()
+      await expect(page).toHaveURL(/\/runs\/\d+$/)
+
+      const toDo = page.getByRole('list', { name: 'To do' })
+      const completed = page.getByRole('list', { name: 'Completed' })
+      const prep = page.getByRole('checkbox', { name: 'Prep' })
+      const cookBox = page.getByRole('checkbox', { name: 'Cook' })
+      const serve = page.getByRole('checkbox', { name: 'Serve' })
+
+      await expect(toDo.getByRole('checkbox')).toHaveCount(1)
+      await expect(toDo.getByRole('checkbox', { name: 'Prep' })).toBeVisible()
+      await expect(cookBox).toHaveCount(0)
+      await expect(serve).toHaveCount(0)
+
+      await prep.check()
+      await expect(
+        completed.getByRole('checkbox', { name: 'Prep' }),
+      ).toBeChecked()
+      await expect(toDo.getByRole('checkbox', { name: 'Cook' })).toBeVisible()
+      await expect(serve).toHaveCount(0)
+
+      await cookBox.check()
+      await expect(toDo.getByRole('checkbox', { name: 'Serve' })).toBeVisible()
+      // Prep can't be un-done while Cook, which depends on it, is done.
+      await expect(prep).toBeDisabled()
+      await expect(
+        page.getByText('Can\'t be un-done while "Cook" is done.'),
+      ).toBeVisible()
+
+      // The state survives a reload.
+      await page.reload()
+      await expect(completed.getByRole('checkbox')).toHaveCount(2)
+      await expect(toDo.getByRole('checkbox', { name: 'Serve' })).toBeVisible()
+
+      await serve.check()
+      await expect(page.getByText('Every step is done.')).toBeVisible()
+      await expect(page.getByText('3 of 3 done')).toBeVisible()
+      await expect(serve).toBeEnabled()
+
+      await page.getByRole('button', { name: 'Complete' }).click()
+      await expect(page.getByRole('alert')).toHaveText('Completed "Dinner".')
+    })
+
+    test('the API enforces the dependency rules', async ({ request }) => {
+      const {
+        id,
+        stepIds: [firstId],
+      } = await createChecklistWithSteps(request, 'In order', ['First'])
+      const secondResponse = await request.post(
+        `${checklistsApiUrl}/${id}/steps`,
+        { data: { text: 'Second', dependsOnStepIds: [firstId] } },
+      )
+      const secondId = ((await secondResponse.json()) as { id: number }).id
+      const runResponse = await request.post(`${checklistsApiUrl}/${id}/runs`)
+      const run = (await runResponse.json()) as {
+        id: number
+        steps: { stepId: number; isLocked: boolean }[]
+      }
+      expect(run.steps.map((step) => step.isLocked)).toEqual([false, true])
+      const runUrl = `http://localhost:5269/api/runs/${run.id}`
+      const tick = (stepId: number, isDone: boolean) =>
+        request.put(`${runUrl}/steps/${stepId}`, { data: { isDone } })
+
+      // The second step is locked until the first is done.
+      expect((await tick(secondId, true)).status()).toBe(400)
+      expect((await tick(firstId, true)).ok()).toBe(true)
+      expect((await tick(secondId, true)).ok()).toBe(true)
+
+      // The first can't be un-done while the second is done.
+      expect((await tick(firstId, false)).status()).toBe(400)
+      expect((await tick(secondId, false)).ok()).toBe(true)
+
+      // A run can only be completed once every step is done.
+      expect((await request.post(`${runUrl}/complete`)).status()).toBe(400)
+      expect((await tick(secondId, true)).ok()).toBe(true)
+      expect((await request.post(`${runUrl}/complete`)).ok()).toBe(true)
+    })
+
     test('a completed run rejects changes', async ({ request }) => {
       const {
         id,
@@ -704,12 +808,19 @@ test.describe('Checklist management', () => {
       const { id: runId } = (await runResponse.json()) as { id: number }
       const runUrl = `http://localhost:5269/api/runs/${runId}`
 
+      expect(
+        (
+          await request.put(`${runUrl}/steps/${stepId}`, {
+            data: { isDone: true },
+          })
+        ).ok(),
+      ).toBe(true)
       expect((await request.post(`${runUrl}/complete`)).ok()).toBe(true)
 
       expect(
         (
           await request.put(`${runUrl}/steps/${stepId}`, {
-            data: { isDone: true },
+            data: { isDone: false },
           })
         ).status(),
       ).toBe(409)
@@ -778,6 +889,15 @@ test.describe('Checklist management', () => {
       const runResponse = await request.post(`${checklistsApiUrl}/${id}/runs`)
       expect(runResponse.ok()).toBe(true)
       const { id: runId } = (await runResponse.json()) as { id: number }
+      // Done before it's deleted, since a deleted step that wasn't done is left out of an open run.
+      expect(
+        (
+          await request.put(
+            `http://localhost:5269/api/runs/${runId}/steps/${deletedId}`,
+            { data: { isDone: true } },
+          )
+        ).ok(),
+      ).toBe(true)
 
       const stepsUrl = `${checklistsApiUrl}/${id}/steps`
       expect(
