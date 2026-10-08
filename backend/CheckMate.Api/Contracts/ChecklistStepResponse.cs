@@ -7,11 +7,18 @@ public record ChecklistStepResponse(
     string Text,
     StepType Type,
     int SortOrder,
-    IReadOnlyList<StepOptionResponse> Options)
+    IReadOnlyList<StepOptionResponse> Options,
+    IReadOnlyList<int> DependsOnStepIds)
 {
-    /// <summary>Needs the step's options loaded.</summary>
+    /// <summary>Needs the step's options and <see cref="ChecklistStep.DependsOn"/> loaded.</summary>
     public static ChecklistStepResponse From(ChecklistStep step)
     {
-        return new(step.Id, step.Text, step.Type, step.SortOrder, StepOptionResponse.FromAll(step.Options));
+        return new(
+            step.Id,
+            step.Text,
+            step.Type,
+            step.SortOrder,
+            StepOptionResponse.FromAll(step.Options),
+            [.. step.DependsOn.Select(dependency => dependency.DependsOnStepId).Order()]);
     }
 }

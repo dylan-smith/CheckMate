@@ -245,6 +245,92 @@ function OptionsEditor({ idPrefix, options, onChange }: OptionsEditorProps) {
   )
 }
 
+type PrerequisitesFieldProps = {
+  id: string
+  // The steps that can be picked, in checklist order.
+  options: ChecklistStep[]
+  value: number[]
+  onChange: (stepIds: number[]) => void
+}
+
+function PrerequisitesField({
+  id,
+  options,
+  value,
+  onChange,
+}: PrerequisitesFieldProps) {
+  return (
+    <TextField
+      id={id}
+      select
+      label="Depends on"
+      value={value}
+      onChange={(event) => {
+        // A multiple select gives the chosen values as an array, kept here in checklist order.
+        const selected: unknown = event.target.value
+        if (Array.isArray(selected)) {
+          onChange(
+            options
+              .filter((step) => selected.includes(step.id))
+              .map((step) => step.id),
+          )
+        }
+      }}
+      slotProps={{
+        select: {
+          multiple: true,
+          // Shows "None" rather than an empty field, so the label has to stay above it.
+          displayEmpty: true,
+          renderValue: () => describePrerequisites(options, value) || 'None',
+        },
+        inputLabel: { shrink: true },
+      }}
+      size="small"
+      sx={{ width: { xs: '100%', sm: 200 }, flexShrink: 0 }}
+    >
+      {options.map((step) => (
+        <MenuItem key={step.id} value={step.id}>
+          {/* The option is already announced as selected, so the check mark is only visual. */}
+          <Box
+            component="span"
+            aria-hidden="true"
+            sx={{ width: 24, flexShrink: 0, fontWeight: 'bold' }}
+          >
+            {value.includes(step.id) ? '✓' : ''}
+          </Box>
+          <ListItemText
+            primary={step.text}
+            sx={{ my: 0, overflowWrap: 'anywhere' }}
+          />
+        </MenuItem>
+      ))}
+    </TextField>
+  )
+}
+
+// The text of the steps a step depends on, in checklist order.
+function describePrerequisites(steps: ChecklistStep[], stepIds: number[]) {
+  return steps
+    .filter((step) => stepIds.includes(step.id))
+    .map((step) => step.text)
+    .join(', ')
+}
+
+// The hint under a step in the list, or undefined when there's nothing to add.
+function describeStep(step: ChecklistStep, steps: ChecklistStep[]) {
+  const prerequisites = describePrerequisites(steps, step.dependsOnStepIds)
+  const parts = [
+    // Checkbox is the usual type, so only the others are called out, and a choice step with its options.
+    step.type === 'Checkbox'
+      ? ''
+      : step.type === 'Choice'
+        ? `${stepTypeLabels.Choice}: ${step.options.map((option) => option.text).join(', ')}`
+        : stepTypeLabels[step.type],
+    prerequisites && `Depends on: ${prerequisites}`,
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' · ') : undefined
+}
+
 type DragHandleProps = {
   step: ChecklistStep
   disabled: boolean
@@ -333,10 +419,12 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
   const [newText, setNewText] = useState('')
   const [newType, setNewType] = useState<StepType>('Checkbox')
   const [newOptions, setNewOptions] = useState<OptionDraft[]>([])
+  const [newDependsOn, setNewDependsOn] = useState<number[]>([])
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editText, setEditText] = useState('')
   const [editType, setEditType] = useState<StepType>('Checkbox')
   const [editOptions, setEditOptions] = useState<OptionDraft[]>([])
+  const [editDependsOn, setEditDependsOn] = useState<number[]>([])
   // Only one change runs at a time, so the list can't get out of step with the API.
   const [busy, setBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -417,19 +505,24 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     setErrorMessage('')
 
     try {
-      const created = await createStep(
-        checklistId,
-        trimmedText,
-        newType,
+      const created = await createStep(checklistId, {
+        text: trimmedText,
+        type: newType,
         options,
-      )
+        dependsOnStepIds: newDependsOn,
+      })
       trackEvent('StepAdded')
       setSteps((current) => [...current, created])
       setNewText('')
       setNewType('Checkbox')
       setNewOptions([])
+      setNewDependsOn([])
     } catch (error) {
-      trackException(error, { operation: 'addStep' })
+      // A rejected step, such as one whose prerequisite was deleted elsewhere, is the user's to fix, not a failure
+      // to report.
+      if (!(error instanceof ApiError)) {
+        trackException(error, { operation: 'addStep' })
+      }
       setErrorMessage(describeFetchError(error, 'Unable to save step.'))
     } finally {
       setBusy(false)
@@ -441,6 +534,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     setEditText(step.text)
     setEditType(step.type)
     setEditOptions(step.options.map(toDraft))
+    setEditDependsOn(step.dependsOnStepIds)
     setErrorMessage('')
   }
 
@@ -470,20 +564,20 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     setErrorMessage('')
 
     try {
-      const saved = await updateStep(
-        checklistId,
-        stepId,
-        trimmedText,
-        editType,
+      const saved = await updateStep(checklistId, stepId, {
+        text: trimmedText,
+        type: editType,
         options,
-      )
+        dependsOnStepIds: editDependsOn,
+      })
       trackEvent('StepUpdated')
       setSteps((current) =>
         current.map((step) => (step.id === saved.id ? saved : step)),
       )
       setEditingId(null)
     } catch (error) {
-      // An option picked while saving is the user's to try again, not a failure to report.
+      // A rejected change, such as prerequisites that make a cycle, or an option picked while saving is the user's
+      // to fix or try again, not a failure to report.
       if (!(error instanceof ApiError)) {
         trackException(error, { operation: 'updateStep' })
       }
@@ -500,7 +594,24 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
     try {
       await deleteStep(checklistId, stepId)
       trackEvent('StepDeleted')
-      setSteps((current) => current.filter((step) => step.id !== stepId))
+      // The API also takes the step out of other steps' prerequisites, so do the same here.
+      setSteps((current) =>
+        current
+          .filter((step) => step.id !== stepId)
+          .map((step) =>
+            step.dependsOnStepIds.includes(stepId)
+              ? {
+                  ...step,
+                  dependsOnStepIds: step.dependsOnStepIds.filter(
+                    (id) => id !== stepId,
+                  ),
+                }
+              : step,
+          ),
+      )
+      // An open editor or the new step may have picked it too, and saving either would be rejected.
+      setEditDependsOn((current) => current.filter((id) => id !== stepId))
+      setNewDependsOn((current) => current.filter((id) => id !== stepId))
       if (editingId === stepId) {
         setEditingId(null)
       }
@@ -587,24 +698,26 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
         sx={{
           display: 'flex',
           alignItems: 'center',
-          gap: 1,
+          gap: { xs: 0.5, sm: 1 },
           width: '100%',
         }}
       >
         {handle}
         <ListItemText
           primary={step.text}
-          // Checkbox is the usual type, so only the others are called out.
-          secondary={
-            step.type === 'Checkbox'
-              ? undefined
-              : step.type === 'Choice'
-                ? `${stepTypeLabels.Choice}: ${step.options.map((option) => option.text).join(', ')}`
-                : stepTypeLabels[step.type]
-          }
+          secondary={describeStep(step, steps)}
           sx={{ overflowWrap: 'anywhere' }}
         />
-        <Stack direction="row" spacing={1}>
+        {/* On a narrow screen the controls sit closer together and the buttons are only as wide as their labels,
+            leaving more of the row for the step's text. */}
+        <Stack
+          direction="row"
+          spacing={{ xs: 0, sm: 1 }}
+          sx={{
+            flexShrink: 0,
+            '& .MuiButton-root': { minWidth: { xs: 0, sm: 64 } },
+          }}
+        >
           <IconButton
             id={isCopy ? undefined : moveButtonId(step.id, 'up')}
             size="small"
@@ -712,6 +825,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                     editingId === step.id ? (
                       <Box
                         component="form"
+                        aria-label={`Edit step "${step.text}"`}
                         onSubmit={(event) => void handleUpdate(event, step.id)}
                         sx={{ display: 'grid', gap: 1, width: '100%' }}
                       >
@@ -719,7 +833,12 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                           sx={{
                             display: 'flex',
                             flexDirection: { xs: 'column', sm: 'row' },
-                            gap: 1,
+                            // The type and prerequisite fields leave the text too little room on one row until
+                            // md, so below that the text gets a line of its own.
+                            flexWrap: { sm: 'wrap', md: 'nowrap' },
+                            // Stacked fields need more room, since each label sits above its field's border.
+                            columnGap: 1,
+                            rowGap: 2,
                           }}
                         >
                           <TextField
@@ -732,13 +851,26 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
                             slotProps={{ htmlInput: { maxLength: 500 } }}
                             required
                             size="small"
-                            sx={{ flexGrow: 1 }}
+                            sx={{
+                              flexGrow: 1,
+                              flexBasis: { sm: '100%', md: 'auto' },
+                            }}
                           />
                           <StepTypeField
                             id={`step-${step.id}-type`}
                             value={editType}
                             onChange={changeEditType}
                           />
+                          {steps.length > 1 && (
+                            <PrerequisitesField
+                              id={`step-${step.id}-depends-on`}
+                              options={steps.filter(
+                                (item) => item.id !== step.id,
+                              )}
+                              value={editDependsOn}
+                              onChange={setEditDependsOn}
+                            />
+                          )}
                           <Stack direction="row" spacing={1}>
                             <Button
                               type="submit"
@@ -803,6 +935,7 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
 
       <Box
         component="form"
+        aria-label="Add a step"
         onSubmit={(event) => void handleAdd(event)}
         sx={{ display: 'grid', gap: 1 }}
       >
@@ -810,7 +943,11 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
           sx={{
             display: 'flex',
             flexDirection: { xs: 'column', sm: 'row' },
-            gap: 1,
+            // Like the edit form, the text gets a line of its own until md once there's a prerequisite field.
+            flexWrap: { sm: 'wrap', md: 'nowrap' },
+            // Stacked fields need more room, since each label sits above its field's border.
+            columnGap: 1,
+            rowGap: 2,
           }}
         >
           <TextField
@@ -820,13 +957,27 @@ function ChecklistSteps({ checklistId, initialSteps }: ChecklistStepsProps) {
             onChange={(event) => setNewText(event.target.value)}
             slotProps={{ htmlInput: { maxLength: 500 } }}
             size="small"
-            sx={{ flexGrow: 1 }}
+            sx={{
+              flexGrow: 1,
+              ...(steps.length > 0 && {
+                flexBasis: { sm: '100%', md: 'auto' },
+              }),
+            }}
           />
           <StepTypeField
             id="new-step-type"
             value={newType}
             onChange={changeNewType}
           />
+          {/* Any step already on the checklist can be a new step's prerequisite. */}
+          {steps.length > 0 && (
+            <PrerequisitesField
+              id="new-step-depends-on"
+              options={steps}
+              value={newDependsOn}
+              onChange={setNewDependsOn}
+            />
+          )}
           <Button type="submit" variant="contained" disabled={busy}>
             Add step
           </Button>

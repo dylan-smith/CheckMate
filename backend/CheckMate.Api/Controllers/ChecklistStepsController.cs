@@ -33,6 +33,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         var steps = await dbContext.ChecklistSteps
             .AsNoTracking()
             .Include(step => step.Options)
+            .Include(step => step.DependsOn)
             .Where(step => step.ChecklistId == checklistId)
             .OrderBy(step => step.SortOrder)
             .ThenBy(step => step.Id)
@@ -49,6 +50,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         var step = await dbContext.ChecklistSteps
             .AsNoTracking()
             .Include(item => item.Options)
+            .Include(item => item.DependsOn)
             .FirstOrDefaultAsync(item => item.Id == stepId && item.ChecklistId == checklistId);
 
         if (step is null)
@@ -85,6 +87,15 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             return ValidationProblem(ModelState);
         }
 
+        var dependsOnStepIds = request.DependsOnStepIds?.Distinct().ToList() ?? [];
+
+        if (await ValidateDependenciesAsync(checklistId, null, dependsOnStepIds) is { } dependencyError)
+        {
+            logger.LogWarning("Rejected prerequisites for a new step in checklist {ChecklistId}", checklistId);
+            ModelState.AddModelError(nameof(request.DependsOnStepIds), dependencyError);
+            return ValidationProblem(ModelState);
+        }
+
         // New steps go at the end of the checklist.
         var maxSortOrder = await dbContext.ChecklistSteps
             .Where(item => item.ChecklistId == checklistId)
@@ -96,7 +107,8 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             Text = trimmedText,
             Type = request.Type,
             SortOrder = (maxSortOrder ?? -1) + 1,
-            Options = [.. options.Select((option, index) => new StepOption { Text = option.Text, SortOrder = index })]
+            Options = [.. options.Select((option, index) => new StepOption { Text = option.Text, SortOrder = index })],
+            DependsOn = [.. dependsOnStepIds.Select(dependsOnStepId => new StepDependency { DependsOnStepId = dependsOnStepId })]
         };
 
         dbContext.ChecklistSteps.Add(step);
@@ -112,6 +124,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
     {
         var step = await dbContext.ChecklistSteps
             .Include(item => item.Options)
+            .Include(item => item.DependsOn)
             .FirstOrDefaultAsync(item => item.Id == stepId && item.ChecklistId == checklistId);
 
         if (step is null)
@@ -133,6 +146,25 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         if (options is null)
         {
             return ValidationProblem(ModelState);
+        }
+
+        // Null leaves the prerequisites as they are, so a client that doesn't know about them can't clear them.
+        if (request.DependsOnStepIds is not null)
+        {
+            var dependsOnStepIds = request.DependsOnStepIds.Distinct().ToList();
+
+            if (await ValidateDependenciesAsync(checklistId, stepId, dependsOnStepIds) is { } dependencyError)
+            {
+                logger.LogWarning("Rejected prerequisites for step {StepId} of checklist {ChecklistId}", stepId, checklistId);
+                ModelState.AddModelError(nameof(request.DependsOnStepIds), dependencyError);
+                return ValidationProblem(ModelState);
+            }
+
+            var unchanged = step.DependsOn.Select(dependency => dependency.DependsOnStepId).ToHashSet();
+            step.DependsOn.RemoveAll(dependency => !dependsOnStepIds.Contains(dependency.DependsOnStepId));
+            step.DependsOn.AddRange(dependsOnStepIds
+                .Where(dependsOnStepId => !unchanged.Contains(dependsOnStepId))
+                .Select(dependsOnStepId => new StepDependency { DependsOnStepId = dependsOnStepId }));
         }
 
         step.Text = trimmedText;
@@ -174,6 +206,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
 
         var steps = await dbContext.ChecklistSteps
             .Include(step => step.Options)
+            .Include(step => step.DependsOn)
             .Where(step => step.ChecklistId == checklistId)
             .ToDictionaryAsync(step => step.Id);
 
@@ -231,6 +264,12 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             // deleted option's foreign key instead of failing the delete.
             dbContext.Entry(runStep).Property(item => item.SelectedOptionId).IsModified = true;
         }
+
+        // The database doesn't cascade to the steps that depend on this one (see 0008-CreateStepDependenciesTable.sql),
+        // and the in-memory provider only cascades to tracked rows, so load both directions to delete them with it.
+        await dbContext.StepDependencies
+            .Where(dependency => dependency.StepId == stepId || dependency.DependsOnStepId == stepId)
+            .LoadAsync();
 
         dbContext.ChecklistSteps.Remove(step);
         await dbContext.SaveChangesAsync();
@@ -346,5 +385,59 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
     private Task<bool> ChecklistExistsAsync(int checklistId)
     {
         return dbContext.Checklists.AsNoTracking().AnyAsync(item => item.Id == checklistId);
+    }
+
+    /// <summary>
+    /// Checks that a step's prerequisites are other steps of its checklist and that the ones it adds don't make a
+    /// cycle.
+    /// </summary>
+    /// <param name="stepId">The step being changed, or null for a new step, which nothing can depend on yet.</param>
+    /// <returns>A message for the caller when they aren't valid, or null when they are.</returns>
+    private async Task<string?> ValidateDependenciesAsync(int checklistId, int? stepId, List<int> dependsOnStepIds)
+    {
+        // No prerequisites can't name a wrong step or make a cycle, so there's nothing to load.
+        if (dependsOnStepIds.Count == 0)
+        {
+            return null;
+        }
+
+        if (stepId is int selfId && dependsOnStepIds.Contains(selfId))
+        {
+            return "A step can't depend on itself.";
+        }
+
+        var steps = await dbContext.ChecklistSteps
+            .AsNoTracking()
+            .Include(step => step.DependsOn)
+            .Where(step => step.ChecklistId == checklistId)
+            .ToDictionaryAsync(step => step.Id);
+
+        if (!dependsOnStepIds.All(steps.ContainsKey))
+        {
+            return "A step can only depend on other steps of the same checklist.";
+        }
+
+        if (stepId is not int changedStepId)
+        {
+            return null;
+        }
+
+        // Only an added prerequisite can make a cycle, and it does when it already depends on this step. Keeping or
+        // removing prerequisites is always allowed, so a cycle left by two edits saved at once can still be undone.
+        var existing = steps[changedStepId].DependsOn.Select(dependency => dependency.DependsOnStepId).ToHashSet();
+        var graph = steps.Values.ToDictionary<ChecklistStep, int, IReadOnlyCollection<int>>(
+            step => step.Id,
+            step => [.. step.DependsOn.Select(dependency => dependency.DependsOnStepId)]);
+
+        foreach (var added in dependsOnStepIds.Where(dependsOnStepId => !existing.Contains(dependsOnStepId)))
+        {
+            if (StepDependencyGraph.FindPath(graph, added, changedStepId) is { } path)
+            {
+                var loop = path.Prepend(changedStepId).Select(id => $"\"{steps[id].Text}\"");
+                return $"Steps can't depend on each other in a loop: {string.Join(" depends on ", loop)}.";
+            }
+        }
+
+        return null;
     }
 }

@@ -686,6 +686,7 @@ describe('App', () => {
           type: 'Checkbox',
           sortOrder: 0,
           options: [],
+          dependsOnStepIds: [],
         },
         {
           id: 11,
@@ -693,6 +694,7 @@ describe('App', () => {
           type: 'Checkbox',
           sortOrder: 1,
           options: [],
+          dependsOnStepIds: [],
         },
       ],
     }
@@ -728,6 +730,7 @@ describe('App', () => {
               type: 'Checkbox',
               sortOrder: 2,
               options: [],
+              dependsOnStepIds: [],
             },
             201,
           )
@@ -754,6 +757,7 @@ describe('App', () => {
             text: 'Walk dog',
             type: 'Checkbox',
             options: [],
+            dependsOnStepIds: [],
           }),
         }),
       )
@@ -811,6 +815,7 @@ describe('App', () => {
             type: 'Checkbox',
             sortOrder: 0,
             options: [],
+            dependsOnStepIds: [],
           })
         }
         return jsonResponse(checklistWithSteps)
@@ -839,6 +844,7 @@ describe('App', () => {
             text: 'Make tea',
             type: 'Checkbox',
             options: [],
+            dependsOnStepIds: [],
           }),
         }),
       )
@@ -981,6 +987,7 @@ describe('App', () => {
               type: 'Checkbox',
               sortOrder: 0,
               options: [],
+              dependsOnStepIds: [],
             },
             {
               id: 10,
@@ -988,6 +995,7 @@ describe('App', () => {
               type: 'Checkbox',
               sortOrder: 1,
               options: [],
+              dependsOnStepIds: [],
             },
           ])
         }
@@ -1137,6 +1145,7 @@ describe('App', () => {
               type: 'Checkbox',
               sortOrder: 0,
               options: [],
+              dependsOnStepIds: [],
             },
             {
               id: 10,
@@ -1144,6 +1153,7 @@ describe('App', () => {
               type: 'Checkbox',
               sortOrder: 1,
               options: [],
+              dependsOnStepIds: [],
             },
           ])
         }
@@ -1199,7 +1209,14 @@ describe('App', () => {
       mockFetch(async (_url, init) => {
         if (init?.method === 'POST') {
           return jsonResponse(
-            { id: 12, text: 'Notes', type: 'Text', sortOrder: 2, options: [] },
+            {
+              id: 12,
+              text: 'Notes',
+              type: 'Text',
+              sortOrder: 2,
+              options: [],
+              dependsOnStepIds: [],
+            },
             201,
           )
         }
@@ -1234,7 +1251,12 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/1\/steps$/),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ text: 'Notes', type: 'Text', options: [] }),
+          body: JSON.stringify({
+            text: 'Notes',
+            type: 'Text',
+            options: [],
+            dependsOnStepIds: [],
+          }),
         }),
       )
     })
@@ -1250,6 +1272,7 @@ describe('App', () => {
             type: 'Text',
             sortOrder: 0,
             options: [],
+            dependsOnStepIds: [],
           })
         }
         return jsonResponse(checklistWithSteps)
@@ -1279,9 +1302,401 @@ describe('App', () => {
             text: 'Make coffee',
             type: 'Text',
             options: [],
+            dependsOnStepIds: [],
           }),
         }),
       )
+    })
+
+    describe('prerequisites', () => {
+      const checklistWithThreeSteps = {
+        id: 1,
+        name: 'Morning',
+        steps: [
+          ...checklistWithSteps.steps,
+          {
+            id: 12,
+            text: 'Walk dog',
+            type: 'Checkbox',
+            sortOrder: 2,
+            options: [],
+            dependsOnStepIds: [],
+          },
+        ],
+      }
+
+      // The step editor and the new step form both have a prerequisite picker, so queries go through the form.
+      function editor() {
+        return within(screen.getByRole('form', { name: /^Edit step / }))
+      }
+
+      function newStepForm() {
+        return within(screen.getByRole('form', { name: 'Add a step' }))
+      }
+
+      it('picks prerequisites for a new step', async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'POST') {
+            return jsonResponse(
+              {
+                id: 12,
+                text: 'Walk dog',
+                type: 'Checkbox',
+                sortOrder: 2,
+                options: [],
+                dependsOnStepIds: [10, 11],
+              },
+              201,
+            )
+          }
+          return jsonResponse(checklistWithSteps)
+        })
+
+        renderAt('/checklists/1')
+
+        await user.type(await screen.findByLabelText('New step'), 'Walk dog')
+        const picker = newStepForm().getByRole('combobox', {
+          name: 'Depends on',
+        })
+        expect(picker).toHaveTextContent('None')
+        await user.click(picker)
+        // Every step already on the checklist is offered.
+        await user.click(screen.getByRole('option', { name: 'Read email' }))
+        await user.click(screen.getByRole('option', { name: 'Make coffee' }))
+        await user.keyboard('{Escape}')
+        expect(picker).toHaveTextContent('Make coffee, Read email')
+        await user.click(screen.getByRole('button', { name: 'Add step' }))
+
+        await waitFor(() => {
+          expect(screen.getAllByRole('listitem')[2]).toHaveTextContent(
+            'Walk dogDepends on: Make coffee, Read email',
+          )
+        })
+        expect(fetch).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/checklists\/1\/steps$/),
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({
+              text: 'Walk dog',
+              type: 'Checkbox',
+              options: [],
+              dependsOnStepIds: [10, 11],
+            }),
+          }),
+        )
+        // The picker starts over for the next step, which can now also depend on the one just added.
+        expect(picker).toHaveTextContent('None')
+        await user.click(picker)
+        expect(
+          screen.getByRole('option', { name: 'Walk dog' }),
+        ).toBeInTheDocument()
+      })
+
+      it("doesn't offer prerequisites for a checklist's first step", async () => {
+        mockFetch(async () => jsonResponse({ id: 1, name: 'Empty', steps: [] }))
+
+        renderAt('/checklists/1')
+
+        await screen.findByLabelText('New step')
+        expect(
+          screen.queryByRole('combobox', { name: 'Depends on' }),
+        ).not.toBeInTheDocument()
+      })
+
+      it('shows why the API rejected a new step without reporting it', async () => {
+        const user = userEvent.setup()
+        const message =
+          'A step can only depend on other steps of the same checklist.'
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'POST') {
+            return jsonResponse(
+              {
+                title: 'Validation failed',
+                errors: { DependsOnStepIds: [message] },
+              },
+              400,
+            )
+          }
+          return jsonResponse(checklistWithSteps)
+        })
+
+        renderAt('/checklists/1')
+
+        await user.type(await screen.findByLabelText('New step'), 'Walk dog')
+        await user.click(
+          newStepForm().getByRole('combobox', { name: 'Depends on' }),
+        )
+        await user.click(screen.getByRole('option', { name: 'Make coffee' }))
+        await user.keyboard('{Escape}')
+        await user.click(screen.getByRole('button', { name: 'Add step' }))
+
+        expect(await screen.findByText(message)).toBeInTheDocument()
+        // What was typed and picked stays, so it can be fixed and added again.
+        expect(screen.getByLabelText('New step')).toHaveValue('Walk dog')
+        expect(
+          newStepForm().getByRole('combobox', { name: 'Depends on' }),
+        ).toHaveTextContent('Make coffee')
+        expect(trackException).not.toHaveBeenCalled()
+      })
+
+      it("drops a deleted step from the new step's prerequisites", async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'DELETE') {
+            return new Response(null, { status: 204 })
+          }
+          return jsonResponse(checklistWithSteps)
+        })
+
+        renderAt('/checklists/1')
+
+        const picker = await waitFor(() =>
+          newStepForm().getByRole('combobox', { name: 'Depends on' }),
+        )
+        await user.click(picker)
+        await user.click(screen.getByRole('option', { name: 'Make coffee' }))
+        await user.click(screen.getByRole('option', { name: 'Read email' }))
+        await user.keyboard('{Escape}')
+        await user.click(
+          screen.getByRole('button', { name: 'Delete step "Make coffee"' }),
+        )
+
+        await waitFor(() => {
+          expect(screen.getAllByRole('listitem')).toHaveLength(1)
+        })
+        expect(picker).toHaveTextContent('Read email')
+        expect(picker).not.toHaveTextContent('Make coffee')
+      })
+
+      it('picks prerequisites in the step editor and lists them', async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'PUT') {
+            return jsonResponse({
+              id: 12,
+              text: 'Walk dog',
+              type: 'Checkbox',
+              sortOrder: 2,
+              options: [],
+              dependsOnStepIds: [10, 11],
+            })
+          }
+          return jsonResponse(checklistWithThreeSteps)
+        })
+
+        renderAt('/checklists/1')
+
+        await user.click(
+          await screen.findByRole('button', { name: 'Edit step "Walk dog"' }),
+        )
+        const picker = editor().getByRole('combobox', { name: 'Depends on' })
+        expect(picker).toHaveTextContent('None')
+        await user.click(picker)
+        // A step can't depend on itself, so it isn't offered.
+        expect(
+          screen.queryByRole('option', { name: 'Walk dog' }),
+        ).not.toBeInTheDocument()
+        await user.click(screen.getByRole('option', { name: 'Read email' }))
+        await user.click(screen.getByRole('option', { name: 'Make coffee' }))
+        expect(
+          screen.getByRole('option', { name: 'Make coffee' }),
+        ).toHaveAttribute('aria-selected', 'true')
+        await user.keyboard('{Escape}')
+        // The picker lists them in checklist order, not the order they were picked.
+        expect(picker).toHaveTextContent('Make coffee, Read email')
+        await user.click(screen.getByRole('button', { name: 'Save' }))
+
+        await waitFor(() => {
+          expect(screen.getAllByRole('listitem')[2]).toHaveTextContent(
+            'Walk dogDepends on: Make coffee, Read email',
+          )
+        })
+        expect(fetch).toHaveBeenCalledWith(
+          expect.stringMatching(/\/api\/checklists\/1\/steps\/12$/),
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({
+              text: 'Walk dog',
+              type: 'Checkbox',
+              options: [],
+              dependsOnStepIds: [10, 11],
+            }),
+          }),
+        )
+      })
+
+      it("doesn't offer prerequisites when there's only one step", async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async () =>
+          jsonResponse({
+            ...checklistWithSteps,
+            steps: [checklistWithSteps.steps[0]],
+          }),
+        )
+
+        renderAt('/checklists/1')
+
+        await user.click(
+          await screen.findByRole('button', {
+            name: 'Edit step "Make coffee"',
+          }),
+        )
+        expect(
+          editor().queryByRole('combobox', { name: 'Depends on' }),
+        ).not.toBeInTheDocument()
+      })
+
+      it('shows why the API rejected the prerequisites without reporting it', async () => {
+        const user = userEvent.setup()
+        const message =
+          'Steps can\'t depend on each other in a loop: "Make coffee" depends on "Read email" depends on "Make coffee".'
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'PUT') {
+            return jsonResponse(
+              {
+                title: 'Validation failed',
+                errors: { DependsOnStepIds: [message] },
+              },
+              400,
+            )
+          }
+          return jsonResponse({
+            ...checklistWithSteps,
+            steps: [
+              checklistWithSteps.steps[0],
+              { ...checklistWithSteps.steps[1], dependsOnStepIds: [10] },
+            ],
+          })
+        })
+
+        renderAt('/checklists/1')
+
+        await user.click(
+          await screen.findByRole('button', {
+            name: 'Edit step "Make coffee"',
+          }),
+        )
+        await user.click(editor().getByRole('combobox', { name: 'Depends on' }))
+        await user.click(screen.getByRole('option', { name: 'Read email' }))
+        await user.keyboard('{Escape}')
+        await user.click(screen.getByRole('button', { name: 'Save' }))
+
+        expect(await screen.findByText(message)).toBeInTheDocument()
+        // The editor stays open so the prerequisites can be changed.
+        expect(
+          editor().getByRole('combobox', { name: 'Depends on' }),
+        ).toHaveTextContent('Read email')
+        expect(trackException).not.toHaveBeenCalled()
+      })
+
+      it('drops a deleted step from the prerequisites it was in', async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'DELETE') {
+            return new Response(null, { status: 204 })
+          }
+          return jsonResponse({
+            ...checklistWithThreeSteps,
+            steps: [
+              checklistWithThreeSteps.steps[0],
+              checklistWithThreeSteps.steps[1],
+              {
+                ...checklistWithThreeSteps.steps[2],
+                options: [],
+                dependsOnStepIds: [10, 11],
+              },
+            ],
+          })
+        })
+
+        renderAt('/checklists/1')
+
+        const walkDog = (await screen.findAllByRole('listitem'))[2]
+        expect(walkDog).toHaveTextContent('Depends on: Make coffee, Read email')
+        await user.click(
+          screen.getByRole('button', { name: 'Delete step "Make coffee"' }),
+        )
+
+        await waitFor(() => {
+          expect(screen.getAllByRole('listitem')).toHaveLength(2)
+        })
+        expect(screen.getAllByRole('listitem')[1]).toHaveTextContent(
+          'Walk dogDepends on: Read email',
+        )
+        expect(screen.getAllByRole('listitem')[1]).not.toHaveTextContent(
+          'Make coffee',
+        )
+        await user.click(
+          screen.getByRole('button', { name: 'Edit step "Walk dog"' }),
+        )
+        expect(
+          editor().getByRole('combobox', { name: 'Depends on' }),
+        ).toHaveTextContent('Read email')
+      })
+
+      it('drops a step deleted while the editor that picked it is open', async () => {
+        const user = userEvent.setup()
+
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'DELETE') {
+            return new Response(null, { status: 204 })
+          }
+          if (init?.method === 'PUT') {
+            return jsonResponse({
+              id: 11,
+              text: 'Read email',
+              type: 'Checkbox',
+              sortOrder: 1,
+              options: [],
+              dependsOnStepIds: [],
+            })
+          }
+          return jsonResponse({
+            ...checklistWithSteps,
+            steps: [
+              checklistWithSteps.steps[0],
+              { ...checklistWithSteps.steps[1], dependsOnStepIds: [10] },
+            ],
+          })
+        })
+
+        renderAt('/checklists/1')
+
+        await user.click(
+          await screen.findByRole('button', { name: 'Edit step "Read email"' }),
+        )
+        await user.click(
+          screen.getByRole('button', { name: 'Delete step "Make coffee"' }),
+        )
+        await waitFor(() => {
+          expect(screen.getAllByRole('listitem')).toHaveLength(1)
+        })
+        // With only one step left the picker is hidden, so the deleted step can't be left picked in it.
+        await user.click(screen.getByRole('button', { name: 'Save' }))
+
+        await waitFor(() => {
+          expect(fetch).toHaveBeenCalledWith(
+            expect.stringMatching(/\/api\/checklists\/1\/steps\/11$/),
+            expect.objectContaining({
+              method: 'PUT',
+              body: JSON.stringify({
+                text: 'Read email',
+                type: 'Checkbox',
+                options: [],
+                dependsOnStepIds: [],
+              }),
+            }),
+          )
+        })
+      })
     })
 
     it('adds a multiple choice step with its options in order', async () => {
@@ -1300,6 +1715,7 @@ describe('App', () => {
                 { id: 2, text: 'Sunny' },
                 { id: 3, text: 'Snowy' },
               ],
+              dependsOnStepIds: [],
             },
             201,
           )
@@ -1341,6 +1757,7 @@ describe('App', () => {
             text: 'Weather',
             type: 'Choice',
             options: [{ text: 'Rainy' }, { text: 'Sunny' }, { text: 'Snowy' }],
+            dependsOnStepIds: [],
           }),
         }),
       )
@@ -1386,6 +1803,7 @@ describe('App', () => {
           { id: 2, text: 'Rainy' },
           { id: 3, text: 'Snowy' },
         ],
+        dependsOnStepIds: [],
       }
 
       mockFetch(async (_url, init) => {
@@ -1428,6 +1846,7 @@ describe('App', () => {
               { id: 1, text: 'Bright' },
               { id: 3, text: 'Snowy' },
             ],
+            dependsOnStepIds: [],
           }),
         }),
       )
@@ -1447,6 +1866,7 @@ describe('App', () => {
           { id: 2, text: 'Rainy' },
           { id: 3, text: 'Snowy' },
         ],
+        dependsOnStepIds: [],
       }
       mockFetch(async (_url, init) =>
         init?.method === 'PUT'

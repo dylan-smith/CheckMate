@@ -17,4 +17,10 @@ public class ChecklistStepRequest
     /// </summary>
     [MaxLength(50)]
     public IReadOnlyList<StepOptionRequest>? Options { get; set; }
+
+    /// <summary>
+    /// The other steps of the checklist that must be done before this one. Null leaves an existing step's
+    /// prerequisites as they are, and gives a new step none.
+    /// </summary>
+    public IReadOnlyList<int>? DependsOnStepIds { get; set; }
 }

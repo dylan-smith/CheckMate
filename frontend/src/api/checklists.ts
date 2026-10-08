@@ -35,6 +35,8 @@ export type ChecklistStep = {
   type: StepType
   sortOrder: number
   options: StepOption[]
+  // The other steps of the checklist that must be done before this one.
+  dependsOnStepIds: number[]
 }
 
 // A single checklist comes back with its steps in order.
@@ -44,6 +46,11 @@ export type ChecklistDetail = Checklist & {
 
 type ErrorResponse = {
   message?: string
+}
+
+// The body of a 400 from the API, with the messages for each invalid field.
+type ValidationErrorResponse = {
+  errors?: Record<string, string[]>
 }
 
 // Thrown for a response the caller should show to the user as is, such as a 409 for a duplicate name.
@@ -139,21 +146,35 @@ function stepsUrl(checklistId: number) {
   return `${checklistsUrl}/${checklistId}/steps`
 }
 
+// A step as it's sent. options are a choice step's, and replace the ones it had; other types send none.
+// dependsOnStepIds are the steps of the checklist that must be done before this one. Left out, an existing step
+// keeps the ones it has and a new step gets none.
+export type StepInput = {
+  text: string
+  type: StepType
+  options?: StepOptionInput[]
+  dependsOnStepIds?: number[]
+}
+
 async function saveStep(
   url: string,
   method: 'POST' | 'PUT',
-  text: string,
-  type: StepType,
-  options: StepOptionInput[],
+  { text, type, options = [], dependsOnStepIds }: StepInput,
 ) {
   const response = await fetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ text, type, options }),
+    body: JSON.stringify({ text, type, options, dependsOnStepIds }),
   })
 
+  // A 400 explains what's wrong, such as prerequisites that would make a cycle, so pass that on.
+  if (response.status === 400) {
+    const error = (await response.json()) as ValidationErrorResponse
+    const message = Object.values(error.errors ?? {}).flat()[0]
+    throw new ApiError(400, message ?? 'Unable to save step.')
+  }
   // A 409 means a fill-out picked an option this removes while it saved, so saving again works.
   if (response.status === 409) {
     const error = (await response.json()) as ErrorResponse
@@ -165,30 +186,16 @@ async function saveStep(
   return (await response.json()) as ChecklistStep
 }
 
-// options are the choice step's options and replace the ones it had. Other types send none.
-export function createStep(
-  checklistId: number,
-  text: string,
-  type: StepType,
-  options: StepOptionInput[] = [],
-) {
-  return saveStep(stepsUrl(checklistId), 'POST', text, type, options)
+export function createStep(checklistId: number, step: StepInput) {
+  return saveStep(stepsUrl(checklistId), 'POST', step)
 }
 
 export function updateStep(
   checklistId: number,
   stepId: number,
-  text: string,
-  type: StepType,
-  options: StepOptionInput[] = [],
+  step: StepInput,
 ) {
-  return saveStep(
-    `${stepsUrl(checklistId)}/${stepId}`,
-    'PUT',
-    text,
-    type,
-    options,
-  )
+  return saveStep(`${stepsUrl(checklistId)}/${stepId}`, 'PUT', step)
 }
 
 // Takes every step id of the checklist in the new order and returns the steps in that order.

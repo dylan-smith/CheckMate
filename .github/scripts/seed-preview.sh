@@ -36,11 +36,19 @@ for i in $(seq 0 $((count - 1))); do
   steps="$(jq ".[${i}].steps | length" "${seed_file}")"
   step_ids=()
   step_options=()
+  # The same IDs by text. A step's dependsOn names its prerequisites by text, and they come earlier in the list, so
+  # they've been created by the time it is.
+  step_ids_by_text='{}'
   for j in $(seq 0 $((steps - 1))); do
-    step="$(jq -c ".[${i}].steps[${j}]" "${seed_file}" |
-      api -X POST --data @- "${API_URL}/api/checklists/${id}/steps")"
+    # The step is sent as it's written, except that dependsOn becomes the IDs the API takes.
+    body="$(jq -c --argjson i "${i}" --argjson j "${j}" --argjson ids "${step_ids_by_text}" '
+      .[$i].steps[$j]
+      | del(.dependsOn) + {dependsOnStepIds: [(.dependsOn // [])[] | $ids[.] // error("No earlier step \"\(.)\"")]}' \
+      "${seed_file}")"
+    step="$(api -X POST --data "${body}" "${API_URL}/api/checklists/${id}/steps")"
     step_ids+=("$(jq -r .id <<<"${step}")")
     step_options+=("$(jq -c .options <<<"${step}")")
+    step_ids_by_text="$(jq -c --argjson step "${step}" '. + {($step.text): $step.id}' <<<"${step_ids_by_text}")"
   done
   runs="$(jq ".[${i}].runs // [] | length" "${seed_file}")"
   for r in $(seq 0 $((runs - 1))); do
