@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CheckMate.Api.Tests;
 
-public class ChecklistRunsControllerTests
+public partial class ChecklistRunsControllerTests
 {
     [Fact]
     public async Task Start_CreatesRunWithEveryStepInOrder()
@@ -93,8 +93,8 @@ public class ChecklistRunsControllerTests
         var checklist = await AddChecklistAsync(dbContext, "Daily");
         var other = await AddChecklistAsync(dbContext, "Weekly");
         var startedAt = new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero);
-        var completed = new ChecklistRun { ChecklistId = checklist.Id, StartedAt = startedAt, CompletedAt = startedAt.AddMinutes(5) };
-        var inProgress = new ChecklistRun { ChecklistId = checklist.Id, StartedAt = startedAt.AddDays(1) };
+        var completed = new ChecklistRun { ClientKey = Guid.NewGuid(), ChecklistId = checklist.Id, StartedAt = startedAt, CompletedAt = startedAt.AddMinutes(5) };
+        var inProgress = new ChecklistRun { ClientKey = Guid.NewGuid(), ChecklistId = checklist.Id, StartedAt = startedAt.AddDays(1) };
         dbContext.ChecklistRuns.AddRange(
             completed,
             inProgress,
@@ -106,8 +106,8 @@ public class ChecklistRunsControllerTests
         var runs = Assert.IsType<List<ChecklistRunSummaryResponse>>(Assert.IsType<OkObjectResult>(result.Result).Value);
         Assert.Equal(
             [
-                new ChecklistRunSummaryResponse(inProgress.Id, startedAt.AddDays(1), null),
-                new ChecklistRunSummaryResponse(completed.Id, startedAt, startedAt.AddMinutes(5)),
+                new ChecklistRunSummaryResponse(inProgress.Id, inProgress.ClientKey, startedAt.AddDays(1), null),
+                new ChecklistRunSummaryResponse(completed.Id, completed.ClientKey, startedAt, startedAt.AddMinutes(5)),
             ],
             runs);
     }
@@ -989,19 +989,25 @@ public class ChecklistRunsControllerTests
         int checklistId;
         int stepId;
         int runId;
+        Guid clientKey;
         await using (var otherContext = TestDb.Create(databaseName, TestDb.OtherUserId))
         {
             checklistId = (await AddChecklistAsync(otherContext, "Theirs")).Id;
             stepId = (await AddStepAsync(otherContext, checklistId, "Their step")).Id;
-            runId = GetRun(await CreateController(otherContext).Start(checklistId)).Id;
+            var run = GetRun(await CreateController(otherContext).Start(checklistId));
+            runId = run.Id;
+            clientKey = run.ClientKey;
         }
 
         await using var dbContext = CreateDbContext(databaseName);
         var controller = CreateController(dbContext);
+        var theirStep = new RunSyncStepRequest { StepId = stepId, Text = "Their step", IsDone = true };
 
         Assert.IsType<NotFoundResult>((await controller.Start(checklistId)).Result);
         Assert.IsType<NotFoundResult>((await controller.GetForChecklist(checklistId)).Result);
         Assert.IsType<NotFoundResult>((await controller.GetById(runId)).Result);
+        Assert.IsType<NotFoundResult>((await controller.GetByKey(clientKey)).Result);
+        Assert.IsType<NotFoundResult>((await controller.Sync(checklistId, clientKey, SyncRequest(DateTimeOffset.UtcNow, null, theirStep))).Result);
         Assert.IsType<NotFoundResult>((await controller.UpdateStep(runId, stepId, new RunStepRequest { IsDone = true })).Result);
         Assert.IsType<NotFoundResult>((await controller.Complete(runId)).Result);
         Assert.False((await dbContext.ChecklistRunSteps.SingleAsync()).IsDone);
