@@ -19,7 +19,7 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import { Link, useNavigate, useParams } from 'react-router'
 import { ApiError, describeFetchError } from '../api/checklists'
-import { completeRun, getRun, saveRunStep } from '../api/runs'
+import { completeRun, deleteRun, getRun, saveRunStep } from '../api/runs'
 import type { StepType } from '../api/checklists'
 import type { ChecklistRun, RunStep, RunStepUpdate } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
@@ -87,9 +87,12 @@ type InputStepFieldProps = {
   kind: InputKind
   disabled: boolean
   showSaved: boolean
-  onSave: (update: RunStepUpdate) => Promise<RunStep | null>
+  // hasFocus says whether the field had focus when it saved, so it can get it back if the save moves the step.
+  onSave: (update: RunStepUpdate, hasFocus: boolean) => Promise<RunStep | null>
   // Lets completing the run save this field first.
   registerSaveDraft: (saveDraft: SaveDraft | null) => void
+  // Set when a save moved the step to the other section while it had focus, which mounts the field again.
+  focusOnMount: boolean
 }
 
 // Saved when the field loses focus or Enter is pressed, and only if the value changed.
@@ -100,10 +103,18 @@ function InputStepField({
   showSaved,
   onSave,
   registerSaveDraft,
+  focusOnMount,
 }: InputStepFieldProps) {
   const [draft, setDraft] = useState(() => kind.format(step))
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (focusOnMount) {
+      inputRef.current?.focus()
+    }
+  }, [focusOnMount])
   // Kept in refs as well, since completing the run can call saveDraft after awaiting other saves, and
   // by then the values from the render that created it are out of date.
   const draftRef = useRef(draft)
@@ -128,7 +139,10 @@ function InputStepField({
     const request = (async () => {
       setSaving(true)
       try {
-        const saved = await onSave(parsed.update)
+        const saved = await onSave(
+          parsed.update,
+          inputRef.current === document.activeElement,
+        )
         if (!saved) {
           // Keep what was typed so it can be tried again.
           return false
@@ -171,6 +185,7 @@ function InputStepField({
       sx={{ width: '100%' }}
     >
       <TextField
+        inputRef={inputRef}
         label={step.text}
         // Once the run is complete, show what was saved.
         value={showSaved ? kind.format(step) : draft}
@@ -205,6 +220,8 @@ type ChoiceStepFieldProps = {
   disabled: boolean
   // Once the run is complete, or the step is deleted, it shows what was picked rather than the options.
   showSaved: boolean
+  // False while a done step depends on this one, so another option can be picked but the pick can't be cleared.
+  canClear: boolean
   onPick: (optionId: number | null) => void
 }
 
@@ -212,6 +229,7 @@ function ChoiceStepField({
   step,
   disabled,
   showSaved,
+  canClear,
   onPick,
 }: ChoiceStepFieldProps) {
   // The picked option was removed from the step since, so say what it was.
@@ -246,7 +264,7 @@ function ChoiceStepField({
       <Button
         type="button"
         size="small"
-        disabled={disabled}
+        disabled={disabled || !canClear}
         aria-label={`Clear "${step.text}"`}
         onClick={() => onPick(null)}
       >
@@ -268,7 +286,7 @@ function ChoiceStepField({
           size="small"
           fullWidth
         >
-          <MenuItem value="">
+          <MenuItem value="" disabled={!canClear}>
             <em>None</em>
           </MenuItem>
           {step.options.map((option) => (
@@ -315,6 +333,9 @@ function RunView({ id }: { id: number }) {
     new Set(),
   )
   const [completing, setCompleting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  // The text or number step whose field had focus when it last saved, so it keeps focus if that moves the step.
+  const [refocusStepId, setRefocusStepId] = useState<number | null>(null)
   // Set by a 409, before the reload that fetches the completed run, so the page can't be edited if that fails.
   const [completedElsewhere, setCompletedElsewhere] = useState(false)
   const [reloadFailed, setReloadFailed] = useState(false)
@@ -388,6 +409,35 @@ function RunView({ id }: { id: number }) {
     }
   }
 
+  // A 400 means the change isn't allowed yet, such as a step whose prerequisites were un-done in another tab. Show
+  // why, and fetch the run again so it shows which steps can be filled in now.
+  async function showRejectedChange(error: ApiError) {
+    setErrorMessage(error.message)
+    try {
+      const loaded = await getRun(id)
+      if (loaded === null) {
+        setNotFound(true)
+      } else {
+        setRun(loaded)
+      }
+    } catch {
+      // The error already shown explains what went wrong, so keep showing the run as it was.
+    }
+  }
+
+  // Sends a 409 to showCompletedRun and a 400 to showRejectedChange, and reports whether it was either.
+  async function showApiError(error: unknown) {
+    if (!(error instanceof ApiError)) {
+      return false
+    }
+    if (error.status === 409) {
+      await showCompletedRun(error)
+    } else {
+      await showRejectedChange(error)
+    }
+    return true
+  }
+
   function setStep(stepId: number, change: (step: RunStep) => RunStep) {
     setRun(
       (current) =>
@@ -436,9 +486,7 @@ function RunView({ id }: { id: number }) {
           selectedOptionId: previousOptionId,
         }))
       }
-      if (error instanceof ApiError) {
-        await showCompletedRun(error)
-      } else {
+      if (!(await showApiError(error))) {
         trackException(error, { operation: 'saveRunStep' })
         setErrorMessage(describeFetchError(error, 'Unable to save step.'))
       }
@@ -454,6 +502,8 @@ function RunView({ id }: { id: number }) {
 
   // Saves a tick or a picked option straight away.
   function handleToggle(stepId: number, update: RunStepUpdate) {
+    // Focus is on this control now, so a field mounted again later mustn't take it.
+    setRefocusStepId(null)
     const tick = handleSave(stepId, update)
     pendingTicks.current.add(tick)
     void tick.finally(() => pendingTicks.current.delete(tick))
@@ -484,9 +534,7 @@ function RunView({ id }: { id: number }) {
         state: { notice: `Completed "${completed.checklistName}".` },
       })
     } catch (error) {
-      if (error instanceof ApiError) {
-        await showCompletedRun(error)
-      } else {
+      if (!(await showApiError(error))) {
         trackException(error, { operation: 'completeRun' })
         setErrorMessage(
           describeFetchError(error, 'Unable to complete this fill-out.'),
@@ -497,8 +545,143 @@ function RunView({ id }: { id: number }) {
     }
   }
 
+  // Deletes the run whether it's in progress or complete, and goes back to its checklist.
+  async function handleDelete(checklistId: number) {
+    setDeleting(true)
+    setErrorMessage('')
+
+    try {
+      await deleteRun(id)
+      trackEvent('RunDeleted')
+      void navigate(`/checklists/${checklistId}`)
+    } catch (error) {
+      trackException(error, { operation: 'deleteRun' })
+      setErrorMessage(
+        describeFetchError(error, 'Unable to delete this fill-out.'),
+      )
+      setDeleting(false)
+    }
+  }
+
   const isComplete = run?.completedAt != null || completedElsewhere
-  const doneCount = run?.steps.filter((step) => step.isDone).length ?? 0
+  const steps = run?.steps ?? []
+  const doneCount = steps.filter((step) => step.isDone).length
+  // Worked out from the steps as shown, rather than each step's isLocked, so a tick unlocks the steps after it
+  // straight away.
+  const doneStepIds = new Set(
+    steps.filter((step) => step.isDone).map((step) => step.stepId),
+  )
+  // A step deleted from the checklist before it was done can't be done any more, so an open run leaves it out.
+  const isOpenStep = (step: RunStep) => !step.isDone && step.stepId !== null
+  const isLocked = (step: RunStep) =>
+    step.dependsOnStepIds.some((stepId) => !doneStepIds.has(stepId))
+  const isToDo = (step: RunStep) => isOpenStep(step) && !isLocked(step)
+  const toDoCount = steps.filter(isToDo).length
+  const lockedCount = steps.filter(
+    (step) => isOpenStep(step) && isLocked(step),
+  ).length
+  const stepCount = isComplete
+    ? steps.length
+    : steps.filter((step) => step.isDone || step.stepId !== null).length
+
+  function renderStep(step: RunStep, index: number) {
+    const { stepId } = step
+    // A step deleted from the checklist can't be saved any more.
+    const disabled = isComplete || completing || deleting || stepId === null
+    const kind = inputKinds[step.type]
+    // A done step can't be un-done while a done step depends on it, so those steps are un-done first.
+    const doneDependents =
+      isComplete || !step.isDone
+        ? []
+        : steps.filter(
+            (other) =>
+              other.isDone &&
+              stepId !== null &&
+              other.dependsOnStepIds.includes(stepId),
+          )
+    const canUndo = doneDependents.length === 0
+    return (
+      <ListItem
+        key={stepId ?? `deleted-${index}`}
+        disableGutters
+        sx={{ flexDirection: 'column', alignItems: 'flex-start' }}
+      >
+        {step.type === 'Choice' ? (
+          <ChoiceStepField
+            step={step}
+            disabled={
+              disabled || (stepId !== null && savingStepIds.has(stepId))
+            }
+            showSaved={isComplete || stepId === null}
+            canClear={canUndo}
+            onPick={(optionId) => {
+              if (stepId !== null) {
+                handleToggle(stepId, { optionId })
+              }
+            }}
+          />
+        ) : kind ? (
+          <InputStepField
+            step={step}
+            kind={kind}
+            disabled={disabled}
+            showSaved={isComplete}
+            onSave={(update, hasFocus) => {
+              if (stepId === null) {
+                return Promise.resolve(null)
+              }
+              setRefocusStepId(hasFocus ? stepId : null)
+              return handleSave(stepId, update)
+            }}
+            focusOnMount={refocusStepId === stepId}
+            registerSaveDraft={(saveDraft) => {
+              if (stepId === null) {
+                return
+              }
+              if (saveDraft) {
+                saveDrafts.current.set(stepId, saveDraft)
+              } else {
+                saveDrafts.current.delete(stepId)
+              }
+            }}
+          />
+        ) : (
+          <FormControlLabel
+            sx={{ overflowWrap: 'anywhere' }}
+            control={
+              <Checkbox
+                checked={step.isDone}
+                disabled={
+                  disabled ||
+                  savingStepIds.has(stepId) ||
+                  (step.isDone && !canUndo)
+                }
+                onChange={(event) => {
+                  if (stepId !== null) {
+                    handleToggle(stepId, {
+                      isDone: event.target.checked,
+                    })
+                  }
+                }}
+              />
+            }
+            label={step.text}
+          />
+        )}
+        {!canUndo && (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ overflowWrap: 'anywhere' }}
+          >
+            Can&apos;t be un-done while{' '}
+            {doneDependents.map((other) => `"${other.text}"`).join(', ')}{' '}
+            {doneDependents.length === 1 ? 'is' : 'are'} done.
+          </Typography>
+        )}
+      </ListItem>
+    )
+  }
 
   return (
     <Stack spacing={2}>
@@ -556,74 +739,48 @@ function RunView({ id }: { id: number }) {
               <Typography color="text.secondary" sx={{ my: 2 }}>
                 This checklist has no steps.
               </Typography>
-            ) : (
+            ) : isComplete ? (
+              // A completed run is a record of what was done, so it shows every step in the checklist's order.
               <List aria-label="Steps" sx={{ my: 1 }}>
-                {run.steps.map((step, index) => {
-                  const { stepId } = step
-                  // A step deleted from the checklist can't be saved any more.
-                  const disabled = isComplete || completing || stepId === null
-                  const kind = inputKinds[step.type]
-                  return (
-                    <ListItem key={stepId ?? `deleted-${index}`} disableGutters>
-                      {step.type === 'Choice' ? (
-                        <ChoiceStepField
-                          step={step}
-                          disabled={
-                            disabled ||
-                            (stepId !== null && savingStepIds.has(stepId))
-                          }
-                          showSaved={isComplete || stepId === null}
-                          onPick={(optionId) => {
-                            if (stepId !== null) {
-                              handleToggle(stepId, { optionId })
-                            }
-                          }}
-                        />
-                      ) : kind ? (
-                        <InputStepField
-                          step={step}
-                          kind={kind}
-                          disabled={disabled}
-                          showSaved={isComplete}
-                          onSave={(update) =>
-                            stepId === null
-                              ? Promise.resolve(null)
-                              : handleSave(stepId, update)
-                          }
-                          registerSaveDraft={(saveDraft) => {
-                            if (stepId === null) {
-                              return
-                            }
-                            if (saveDraft) {
-                              saveDrafts.current.set(stepId, saveDraft)
-                            } else {
-                              saveDrafts.current.delete(stepId)
-                            }
-                          }}
-                        />
-                      ) : (
-                        <FormControlLabel
-                          sx={{ overflowWrap: 'anywhere' }}
-                          control={
-                            <Checkbox
-                              checked={step.isDone}
-                              disabled={disabled || savingStepIds.has(stepId)}
-                              onChange={(event) => {
-                                if (stepId !== null) {
-                                  handleToggle(stepId, {
-                                    isDone: event.target.checked,
-                                  })
-                                }
-                              }}
-                            />
-                          }
-                          label={step.text}
-                        />
-                      )}
-                    </ListItem>
-                  )
-                })}
+                {run.steps.map(renderStep)}
               </List>
+            ) : (
+              <>
+                <Typography variant="h6" component="h3" sx={{ mt: 2 }}>
+                  To do
+                </Typography>
+                {toDoCount > 0 ? (
+                  <List aria-label="To do" sx={{ my: 1 }}>
+                    {run.steps.map(
+                      (step, index) => isToDo(step) && renderStep(step, index),
+                    )}
+                  </List>
+                ) : (
+                  // There's always a step to do while one isn't done, since prerequisites can't form a cycle.
+                  <Typography color="text.secondary" sx={{ my: 1 }}>
+                    Every step is done.
+                  </Typography>
+                )}
+                {lockedCount > 0 && (
+                  <Typography color="text.secondary" sx={{ mb: 1 }}>
+                    {lockedCount === 1
+                      ? '1 more step shows up once the steps it depends on are done.'
+                      : `${lockedCount} more steps show up once the steps they depend on are done.`}
+                  </Typography>
+                )}
+                {doneCount > 0 && (
+                  <>
+                    <Typography variant="h6" component="h3" sx={{ mt: 2 }}>
+                      Completed
+                    </Typography>
+                    <List aria-label="Completed" sx={{ my: 1 }}>
+                      {run.steps.map(
+                        (step, index) => step.isDone && renderStep(step, index),
+                      )}
+                    </List>
+                  </>
+                )}
+              </>
             )}
 
             <Box
@@ -636,19 +793,31 @@ function RunView({ id }: { id: number }) {
               }}
             >
               <Typography color="text.secondary">
-                {doneCount} of {run.steps.length} done
+                {doneCount} of {stepCount} done
               </Typography>
-              {!isComplete && (
+              <Stack direction="row" spacing={1}>
                 <Button
                   type="button"
-                  variant="contained"
-                  // Not disabled while steps save: completing waits for those saves itself.
-                  disabled={completing}
-                  onClick={() => void handleComplete()}
+                  color="error"
+                  variant="outlined"
+                  disabled={completing || deleting}
+                  aria-label="Delete fill-out"
+                  onClick={() => void handleDelete(run.checklistId)}
                 >
-                  {completing ? 'Completing…' : 'Complete'}
+                  {deleting ? 'Deleting…' : 'Delete'}
                 </Button>
-              )}
+                {!isComplete && (
+                  <Button
+                    type="button"
+                    variant="contained"
+                    // Not disabled while steps save: completing waits for those saves itself.
+                    disabled={completing || deleting}
+                    onClick={() => void handleComplete()}
+                  >
+                    {completing ? 'Completing…' : 'Complete'}
+                  </Button>
+                )}
+              </Stack>
             </Box>
           </Paper>
         )

@@ -1,0 +1,18 @@
+# CodeQL configuration for the C# analysis in ci.yml, which runs the security-and-quality suite minus these rules.
+query-filters:
+  # The API is unauthenticated by design and won't get authorization, so every action would be flagged.
+  - exclude:
+      id:
+        - cs/web/missing-function-level-access-control
+        - cs/web/insecure-direct-object-reference
+  # XML documentation comments aren't required.
+  - exclude:
+      id:
+        - cs/xmldoc/missing-xmldoc
+        - cs/xmldoc/missing-summary
+        - cs/xmldoc/missing-parameter
+        - cs/xmldoc/missing-type-parameter
+        - cs/xmldoc/missing-return
+        - cs/xmldoc/missing-exception
+        - cs/xmldoc/unknown-parameter
+        - cs/xmldoc/unknown-type-parameter

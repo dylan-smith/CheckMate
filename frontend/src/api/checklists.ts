@@ -50,7 +50,7 @@ type ErrorResponse = {
 }
 
 // The body of a 400 from the API, with the messages for each invalid field.
-type ValidationErrorResponse = {
+export type ValidationErrorResponse = {
   errors?: Record<string, string[]>
 }
 
