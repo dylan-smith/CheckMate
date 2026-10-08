@@ -153,6 +153,11 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options, Cu
         modelBuilder.Entity<ChecklistRun>()
             .HasQueryFilter(run => run.UserId == CurrentUserId);
 
+        // A device's key for a run only has to be unique among one user's runs, which is all a sync looks through.
+        modelBuilder.Entity<ChecklistRun>()
+            .HasIndex(run => new { run.UserId, run.ClientKey })
+            .IsUnique();
+
         modelBuilder.Entity<ChecklistRun>()
             .HasOne<Checklist>()
             .WithMany()

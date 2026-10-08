@@ -30,3 +30,18 @@ DELETE {{CheckMate.Api_HostAddress}}/api/checklists/1
 Accept: {{contentType}}
 
 ###
+
+# Syncs a run a device filled out, which may have happened offline. Sending it again changes nothing.
+PUT {{CheckMate.Api_HostAddress}}/api/checklists/1/runs/6f1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+Content-Type: {{contentType}}
+Accept: {{contentType}}
+
+{
+  "startedAt": "2026-10-01T08:00:00Z",
+  "completedAt": null,
+  "steps": [
+    { "stepId": 1, "text": "Tick", "type": "Checkbox", "isDone": true, "completedAt": "2026-10-01T08:01:00Z" }
+  ]
+}
+
+###
