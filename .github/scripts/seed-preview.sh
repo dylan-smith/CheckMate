@@ -19,7 +19,8 @@ set -euo pipefail
 seed_file=.github/scripts/preview-seed-data.json
 
 api() {
-  curl --fail-with-body --silent --show-error --max-time 60 -H 'Content-Type: application/json' \n    -H "Authorization: Bearer ${API_AUTH_TOKEN}" "$@"
+  curl --fail-with-body --silent --show-error --max-time 60 -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer ${API_AUTH_TOKEN}" "$@"
 }
 
 # Only reads are retried: a retried POST or DELETE whose first attempt did go through would fail or duplicate.
