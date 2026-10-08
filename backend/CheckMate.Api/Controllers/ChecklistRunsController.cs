@@ -348,28 +348,32 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return NotFound();
         }
 
-        var run = await dbContext.ChecklistRuns
+        // The run as synced before, or null the first time.
+        var existing = await dbContext.ChecklistRuns
             .Include(item => item.Steps)
             .FirstOrDefaultAsync(item => item.ClientKey == clientKey);
 
-        if (run is not null && run.ChecklistId != checklistId)
+        if (existing is not null)
         {
-            logger.LogWarning("Rejected sync of run {RunId} under checklist {ChecklistId}, which isn't its checklist", run.Id, checklistId);
-            return Conflict(new { message = OtherChecklistMessage });
-        }
-
-        if (run?.CompletedAt is not null)
-        {
-            // A completed run never changes. A device that has it complete too is sending its completion again, say
-            // after losing the reply, so it gets the run as saved. One that has it open is trying to change it.
-            if (request.CompletedAt is null)
+            if (existing.ChecklistId != checklistId)
             {
-                logger.LogWarning("Rejected sync of completed run {RunId}", run.Id);
-                return Conflict(new { message = CompletedRunMessage });
+                logger.LogWarning("Rejected sync of run {RunId} under checklist {ChecklistId}, which isn't its checklist", existing.Id, checklistId);
+                return Conflict(new { message = OtherChecklistMessage });
             }
 
-            logger.LogInformation("Run {RunId} synced again after it was completed", run.Id);
-            return Ok(await ToResponseAsync(run, checklist.Name));
+            if (existing.CompletedAt is not null)
+            {
+                // A completed run never changes. A device that has it complete too is sending its completion again,
+                // say after losing the reply, so it gets the run as saved. One that has it open is trying to change it.
+                if (request.CompletedAt is null)
+                {
+                    logger.LogWarning("Rejected sync of completed run {RunId}", existing.Id);
+                    return Conflict(new { message = CompletedRunMessage });
+                }
+
+                logger.LogInformation("Run {RunId} synced again after it was completed", existing.Id);
+                return Ok(await ToResponseAsync(existing, checklist.Name));
+            }
         }
 
         if (request.Steps.Select(step => step.StepId).Distinct().Count() != request.Steps.Count)
@@ -400,11 +404,11 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             .Where(step => step.ChecklistId == checklistId)
             .ToDictionaryAsync(step => step.Id);
 
-        var isNew = run is null;
         // The request's steps paired with the run's, with each one's position in the request for error messages.
         var steps = new List<(RunSyncStepRequest Request, ChecklistRunStep RunStep, int Index)>();
+        ChecklistRun run;
 
-        if (run is null)
+        if (existing is null)
         {
             run = new ChecklistRun
             {
@@ -424,6 +428,8 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         }
         else
         {
+            run = existing;
+
             // A step the run no longer has was deleted from the checklist since the run was synced, so it can't be
             // filled in any more. Steps the request leaves out are left as they are.
             foreach (var (step, index) in request.Steps.Select((step, index) => (step, index)))
@@ -515,7 +521,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             logger.LogWarning("Moved {Count} times of a run of checklist {ChecklistId} that were still to come back to now", clampedTimes, checklistId);
         }
 
-        if (!isNew)
+        if (existing is not null)
         {
             // As in UpdateStep, so the save can't change a run completed since it was read.
             dbContext.Entry(run).Property(item => item.CompletedAt).IsModified = true;
@@ -540,7 +546,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         {
             // Two syncs of a new run overlapped and the other one saved first, so its key is taken now. The device's
             // next sync finds that run.
-            if (isNew && await dbContext.ChecklistRuns.AsNoTracking().AnyAsync(item => item.ClientKey == clientKey))
+            if (existing is null && await dbContext.ChecklistRuns.AsNoTracking().AnyAsync(item => item.ClientKey == clientKey))
             {
                 logger.LogWarning("Rejected sync of a run of checklist {ChecklistId} created by another request while saving", checklistId);
                 return Conflict(new { message = SyncedElsewhereMessage });
@@ -566,7 +572,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
         var response = await ToResponseAsync(run, checklist.Name);
 
-        if (isNew)
+        if (existing is null)
         {
             logger.LogInformation("Synced new run {RunId} of checklist {ChecklistId}", run.Id, checklistId);
             return CreatedAtAction(nameof(GetById), new { runId = run.Id }, response);

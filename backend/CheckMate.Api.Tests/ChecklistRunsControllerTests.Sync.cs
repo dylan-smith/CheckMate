@@ -76,7 +76,7 @@ public partial class ChecklistRunsControllerTests
         var created = Assert.IsType<CreatedAtActionResult>(result.Result);
         Assert.Equal(nameof(ChecklistRunsController.GetById), created.ActionName);
         var run = Assert.IsType<ChecklistRunResponse>(created.Value);
-        Assert.Equal((key, checklist.Id, "Daily", StartedAt, (DateTimeOffset?)null), (run.ClientKey, run.ChecklistId, run.ChecklistName, run.StartedAt, run.CompletedAt));
+        Assert.Equal((key, checklist.Id, "Daily", StartedAt, null), (run.ClientKey, run.ChecklistId, run.ChecklistName, run.StartedAt, run.CompletedAt));
         Assert.Collection(run.Steps,
             step =>
             {
@@ -95,7 +95,7 @@ public partial class ChecklistRunsControllerTests
             },
             step =>
             {
-                Assert.Equal((weather.Id, StepType.Choice, false, (int?)null), (step.StepId, step.Type, step.IsDone, step.SelectedOptionId));
+                Assert.Equal((weather.Id, StepType.Choice, false, null), (step.StepId, step.Type, step.IsDone, step.SelectedOptionId));
                 Assert.Null(step.CompletedAt);
                 Assert.Equal(["Sunny", "Rainy"], step.Options.Select(option => option.Text));
             });
@@ -168,7 +168,7 @@ public partial class ChecklistRunsControllerTests
             SyncStep(depth, number: 30, completedAt: StartedAt.AddMinutes(4)))));
 
         Assert.Collection(run.Steps,
-            step => Assert.Equal((false, (DateTimeOffset?)null), (step.IsDone, step.CompletedAt)),
+            step => Assert.Equal((false, null), (step.IsDone, step.CompletedAt)),
             step => Assert.Equal(("Second", true), (step.ResponseText, step.IsDone)),
             step => Assert.Equal((30m, true, StartedAt.AddMinutes(4)), (step.ResponseNumber, step.IsDone, step.CompletedAt)));
         Assert.Equal(1, await dbContext.ChecklistRuns.CountAsync());
@@ -189,7 +189,7 @@ public partial class ChecklistRunsControllerTests
         var run = GetRun(await controller.Sync(checklist.Id, key, SyncRequest(StartedAt, null, second)));
 
         var runStep = Assert.Single(run.Steps);
-        Assert.Equal(("As the device showed it", StepType.Checkbox, false, (string?)null), (runStep.Text, runStep.Type, runStep.IsDone, runStep.ResponseText));
+        Assert.Equal(("As the device showed it", StepType.Checkbox, false, null), (runStep.Text, runStep.Type, runStep.IsDone, runStep.ResponseText));
     }
 
     [Fact]
@@ -209,7 +209,7 @@ public partial class ChecklistRunsControllerTests
         Assert.NotNull(run.CompletedAt);
         Assert.Collection(run.Steps,
             runStep => Assert.Equal(step.Id, runStep.StepId),
-            runStep => Assert.Equal(((int?)null, "Gone", "Still answered", true), (runStep.StepId, runStep.Text, runStep.ResponseText, runStep.IsDone)));
+            runStep => Assert.Equal((null, "Gone", "Still answered", true), (runStep.StepId, runStep.Text, runStep.ResponseText, runStep.IsDone)));
     }
 
     [Fact]
@@ -254,7 +254,7 @@ public partial class ChecklistRunsControllerTests
         var run = Assert.IsType<ChecklistRunResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
         Assert.Collection(run.Steps,
             step => Assert.True(step.IsDone),
-            step => Assert.Equal(((int?)null, "Before"), (step.StepId, step.ResponseText)));
+            step => Assert.Equal((null, "Before"), (step.StepId, step.ResponseText)));
     }
 
     [Fact]
@@ -270,7 +270,7 @@ public partial class ChecklistRunsControllerTests
             SyncRequest(StartedAt, null, SyncStep(weather, optionId: 999, optionText: " Foggy ", completedAt: StartedAt.AddMinutes(1)))));
 
         var step = Assert.Single(run.Steps);
-        Assert.Equal((true, (int?)null, "Foggy"), (step.IsDone, step.SelectedOptionId, step.SelectedOptionText));
+        Assert.Equal((true, null, "Foggy"), (step.IsDone, step.SelectedOptionId, step.SelectedOptionText));
     }
 
     [Fact]
@@ -531,7 +531,7 @@ public partial class ChecklistRunsControllerTests
         var run = GetRun(await CreateController(dbContext).Sync(checklist.Id, Guid.NewGuid(), SyncRequest(StartedAt, null, SyncStep(step, completedAt: StartedAt.AddMinutes(1)))));
 
         var runStep = Assert.Single(run.Steps);
-        Assert.Equal((false, (DateTimeOffset?)null), (runStep.IsDone, runStep.CompletedAt));
+        Assert.Equal((false, null), (runStep.IsDone, runStep.CompletedAt));
     }
 
     [Fact]
