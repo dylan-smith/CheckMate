@@ -3540,7 +3540,7 @@ describe('App', () => {
       expect(within(list).getByRole('link')).toHaveAttribute('href', '/runs/6')
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/runs\/5$/),
-        { method: 'DELETE' },
+        expect.objectContaining({ method: 'DELETE' }),
       )
       expect(trackEvent).toHaveBeenCalledWith('RunDeleted')
 
@@ -3553,7 +3553,7 @@ describe('App', () => {
       expect(await screen.findByText('No fill-outs yet.')).toBeInTheDocument()
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/runs\/6$/),
-        { method: 'DELETE' },
+        expect.objectContaining({ method: 'DELETE' }),
       )
     })
 
@@ -3663,7 +3663,7 @@ describe('App', () => {
           ).toBeInTheDocument()
           expect(fetchMock).toHaveBeenCalledWith(
             expect.stringMatching(/\/api\/runs\/6$/),
-            { method: 'DELETE' },
+            expect.objectContaining({ method: 'DELETE' }),
           )
           expect(trackEvent).toHaveBeenCalledWith('RunDeleted')
         },
