@@ -359,6 +359,30 @@ public class ChecklistStepsControllerTests
     }
 
     [Fact]
+    public async Task Update_Throws_WhenSaveFailsAfterClearingAPickOfARemovedOption()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        ChecklistStepResponse step;
+        int checklistId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            checklistId = (await AddChecklistAsync(setupContext, "Daily")).Id;
+            step = GetStep(await CreateController(setupContext).Create(checklistId, ChoiceRequest("Weather", "Sunny", "Rainy")));
+            // A run that had already picked the option this update removes, so the update clears that pick.
+            await AddRunWithPickAsync(setupContext, checklistId, step, step.Options[1].Id);
+        }
+
+        // Some other failure. The failed save leaves the run's pick as it was, which mustn't look like a new one.
+        await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(() =>
+            throw new DbUpdateException("Something else")));
+        var request = ChoiceRequest("Weather", "Sunny", "Cloudy");
+        request.Options![0].Id = step.Options[0].Id;
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => CreateController(dbContext).Update(checklistId, step.Id, request));
+    }
+
+    [Fact]
     public async Task Update_Throws_WhenSaveFailsWithoutRemovingOptions()
     {
         var databaseName = Guid.NewGuid().ToString();

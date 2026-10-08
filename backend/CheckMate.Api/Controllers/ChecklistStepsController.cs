@@ -137,7 +137,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
 
         step.Text = trimmedText;
         step.Type = request.Type;
-        var removedIds = await ReplaceOptionsAsync(step, options);
+        var (removedIds, clearedRunStepIds) = await ReplaceOptionsAsync(step, options);
 
         try
         {
@@ -147,8 +147,9 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         {
             // A fill-out that picked one of the removed options after ReplaceOptionsAsync cleared the runs that had
             // fails the option's foreign key. Nothing was saved, and trying again clears that pick too. Any other
-            // failure isn't that, so it's thrown on.
-            if (!await IsAnyOptionPickedAsync(removedIds))
+            // failure isn't that, so it's thrown on. The failed save left the runs this cleared with their picks,
+            // so those don't count.
+            if (!await IsAnyOptionPickedAsync(removedIds, clearedRunStepIds))
             {
                 throw;
             }
@@ -281,21 +282,27 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
         return ModelState.IsValid ? trimmed : null;
     }
 
-    // Whether a run has picked any of these options, as saved in the database rather than as this request read it.
-    private Task<bool> IsAnyOptionPickedAsync(List<int> optionIds)
+    // Whether a run other than the given ones has picked any of these options, as saved in the database rather than
+    // as this request read it.
+    private Task<bool> IsAnyOptionPickedAsync(List<int> optionIds, List<int> exceptRunStepIds)
     {
         return dbContext.ChecklistRunSteps
             .AsNoTracking()
-            .AnyAsync(runStep => runStep.SelectedOptionId != null && optionIds.Contains(runStep.SelectedOptionId.Value));
+            .AnyAsync(runStep => runStep.SelectedOptionId != null
+                && optionIds.Contains(runStep.SelectedOptionId.Value)
+                && !exceptRunStepIds.Contains(runStep.Id));
     }
 
     // Updates the options that are kept, adds the new ones and removes the rest, so a kept option keeps its ID.
-    // Returns the IDs of the ones removed.
-    private async Task<List<int>> ReplaceOptionsAsync(ChecklistStep step, List<StepOptionRequest> options)
+    // Returns the IDs of the ones removed, and of the run steps whose pick of one of them it cleared.
+    private async Task<(List<int> RemovedIds, List<int> ClearedRunStepIds)> ReplaceOptionsAsync(
+        ChecklistStep step,
+        List<StepOptionRequest> options)
     {
         var keptIds = options.Where(option => option.Id is not null).Select(option => option.Id!.Value).ToHashSet();
         var removed = step.Options.Where(option => !keptIds.Contains(option.Id)).ToList();
         var removedIds = removed.Select(option => option.Id).ToList();
+        List<int> clearedRunStepIds = [];
 
         if (removed.Count > 0)
         {
@@ -307,6 +314,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             foreach (var runStep in runSteps)
             {
                 runStep.SelectedOptionId = null;
+                clearedRunStepIds.Add(runStep.Id);
             }
 
             foreach (var option in removed)
@@ -332,7 +340,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             }
         }
 
-        return removedIds;
+        return (removedIds, clearedRunStepIds);
     }
 
     private Task<bool> ChecklistExistsAsync(int checklistId)

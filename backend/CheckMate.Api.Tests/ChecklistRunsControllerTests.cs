@@ -465,6 +465,40 @@ public class ChecklistRunsControllerTests
     }
 
     [Fact]
+    public async Task GetById_SendsAPickOfAnOptionNoLongerOnTheStepAsRemoved()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        int runId;
+        int rainyId;
+
+        await using (var setupContext = CreateDbContext(databaseName))
+        {
+            var checklist = await AddChecklistAsync(setupContext, "Daily");
+            var step = await AddChoiceStepAsync(setupContext, checklist.Id, "Weather", "Sunny", "Rainy");
+            rainyId = step.Options[1].Id;
+            var controller = CreateController(setupContext);
+            runId = GetRun(await controller.Start(checklist.Id)).Id;
+            await controller.UpdateStep(runId, step.Id, new RunStepRequest { OptionId = rainyId });
+        }
+
+        // The option goes between reading the run and reading the options, so the run still names it. The
+        // in-memory provider has no foreign keys, and this context hasn't read the run, so the pick stays.
+        await using (var otherContext = CreateDbContext(databaseName))
+        {
+            otherContext.StepOptions.Remove(await otherContext.StepOptions.SingleAsync(option => option.Id == rainyId));
+            await otherContext.SaveChangesAsync();
+        }
+
+        await using var dbContext = CreateDbContext(databaseName);
+        Assert.Equal(rainyId, (await dbContext.ChecklistRunSteps.SingleAsync()).SelectedOptionId);
+
+        var runStep = Assert.Single(GetRun(await CreateController(dbContext).GetById(runId)).Steps);
+
+        Assert.Equal((null, "Rainy", true), (runStep.SelectedOptionId, runStep.SelectedOptionText, runStep.IsDone));
+        Assert.Equal(["Sunny"], runStep.Options.Select(option => option.Text));
+    }
+
+    [Fact]
     public async Task GetById_KeepsPickedOptionText_AfterChoiceStepIsDeleted()
     {
         await using var dbContext = CreateDbContext();

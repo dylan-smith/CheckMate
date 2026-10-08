@@ -20,6 +20,14 @@ public record ChecklistRunStepResponse(
 {
     public static ChecklistRunStepResponse From(ChecklistRunStep step, IEnumerable<StepOption> options)
     {
+        var optionResponses = StepOptionResponse.FromAll(options);
+
+        // The run step and the options are read separately, so an option removed in between can still be picked
+        // here. It's sent as removed (a null ID with its text kept), like one removed earlier.
+        var selectedOptionId = optionResponses.Any(option => option.Id == step.SelectedOptionId)
+            ? step.SelectedOptionId
+            : null;
+
         return new(
             step.StepId,
             step.StepText,
@@ -28,8 +36,8 @@ public record ChecklistRunStepResponse(
             step.CompletedAt,
             step.ResponseText,
             step.ResponseNumber,
-            StepOptionResponse.FromAll(options),
-            step.SelectedOptionId,
+            optionResponses,
+            selectedOptionId,
             step.SelectedOptionText);
     }
 }
