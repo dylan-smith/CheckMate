@@ -78,6 +78,9 @@ npm run test:e2e
 - The schema is owned by DbUp scripts in `backend/CheckMate.Database/Scripts/`, not EF Core
   migrations. For a schema change, add a new numbered script (e.g. `0002-Description.sql`) and
   never edit one that has already shipped. Keep the EF model in `CheckMate.Api` in sync with it.
+- When the schema changes, review the preview seed data (`.github/scripts/preview-seed-data.json`,
+  loaded through the API by `.github/scripts/seed-preview.sh`) and update it if needed, so new
+  previews show the new data (e.g. a new step type, or a new field on checklists or fill-outs).
 - Production is Azure SQL serverless, which auto-pauses. Keep the transient-error retry handling
   in `Program.cs` and `DbUpRunner.cs` intact.
 

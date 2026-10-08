@@ -38,6 +38,13 @@ export type ChecklistRun = {
   steps: RunStep[]
 }
 
+// One past fill-out in the checklist page's history, without its steps.
+export type ChecklistRunSummary = {
+  id: number
+  startedAt: string
+  completedAt: string | null
+}
+
 type ErrorResponse = {
   message?: string
 }
@@ -63,6 +70,19 @@ export async function startRun(checklistId: number) {
     throw new Error('Unable to start filling out the checklist.')
   }
   return (await response.json()) as ChecklistRun
+}
+
+// Newest first.
+export async function getRuns(
+  checklistId: number,
+): Promise<ChecklistRunSummary[]> {
+  const response = await fetch(
+    `${apiBaseUrl}/api/checklists/${checklistId}/runs`,
+  )
+  if (!response.ok) {
+    throw new Error('Unable to load fill-outs.')
+  }
+  return (await response.json()) as ChecklistRunSummary[]
 }
 
 // Returns null when there's no run with this id.

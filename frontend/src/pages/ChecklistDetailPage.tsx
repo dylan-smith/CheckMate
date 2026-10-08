@@ -19,6 +19,7 @@ import {
 import type { ChecklistDetail as ChecklistDetailData } from '../api/checklists'
 import { startRun } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
+import ChecklistRuns from './ChecklistRuns'
 import ChecklistSteps from './ChecklistSteps'
 import NotFoundPage from './NotFoundPage'
 import { parseId } from './parseId'
@@ -213,6 +214,7 @@ function ChecklistDetail({ id }: { id: number }) {
               </Box>
             </Paper>
             <ChecklistSteps checklistId={id} initialSteps={checklist.steps} />
+            <ChecklistRuns checklistId={id} />
           </>
         )
       )}
