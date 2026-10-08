@@ -1379,7 +1379,7 @@ describe('App', () => {
       })
     })
 
-    it('shows the run with each step and a link back to the checklist', async () => {
+    it('shows the run with each step and a link back to the checklists', async () => {
       mockFetch(async () => jsonResponse(run))
 
       renderAt('/runs/5')
@@ -1393,8 +1393,8 @@ describe('App', () => {
       expect(screen.getByRole('checkbox', { name: 'Read email' })).toBeChecked()
       expect(screen.getByText('1 of 2 done')).toBeInTheDocument()
       expect(
-        screen.getByRole('link', { name: /Back to checklist/ }),
-      ).toHaveAttribute('href', '/checklists/3')
+        screen.getByRole('link', { name: /Back to checklists/ }),
+      ).toHaveAttribute('href', '/')
     })
 
     it('saves a tick straight away', async () => {

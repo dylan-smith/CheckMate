@@ -373,8 +373,8 @@ function RunView({ id }: { id: number }) {
     <Stack spacing={2}>
       {run && (
         <Box>
-          <Button component={Link} to={`/checklists/${run.checklistId}`}>
-            ← Back to checklist
+          <Button component={Link} to="/">
+            ← Back to checklists
           </Button>
         </Box>
       )}
