@@ -23,6 +23,23 @@ test('smoke: app loads and asks the user to sign in', async ({ page }) => {
   ).toBeVisible()
 })
 
+// The host has to serve these with the right types for the app to be installable and to open offline, which the
+// deploy script sets (see .github/scripts/deploy-frontend.sh).
+test('smoke: serves the web app manifest and service worker', async ({
+  page,
+}) => {
+  const manifest = await page.request.get('/manifest.webmanifest')
+  expect(manifest.ok()).toBe(true)
+  expect(manifest.headers()['content-type']).toContain(
+    'application/manifest+json',
+  )
+  expect(((await manifest.json()) as { name: string }).name).toBe('CheckMate')
+
+  const serviceWorker = await page.request.get('/sw.js')
+  expect(serviceWorker.ok()).toBe(true)
+  expect(serviceWorker.headers()['content-type']).toMatch(/javascript/)
+})
+
 test('smoke: can create, open, and delete a checklist', async ({ page }) => {
   const checklistName = `Smoke Test ${Date.now()}`
   await signIn(page)

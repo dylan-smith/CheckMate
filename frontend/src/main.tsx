@@ -6,6 +6,7 @@ import { BrowserRouter } from 'react-router'
 import './index.css'
 import App from './App.tsx'
 import ErrorBoundary from './ErrorBoundary.tsx'
+import UpdatePrompt from './pwa/UpdatePrompt.tsx'
 import { initTelemetry, trackException } from './telemetry.ts'
 
 initTelemetry()
@@ -47,6 +48,7 @@ createRoot(document.getElementById('root')!, {
   <StrictMode>
     <ThemeProvider theme={theme}>
       <CssBaseline />
+      <UpdatePrompt />
       <ErrorBoundary>
         <BrowserRouter>
           <App />
