@@ -4,7 +4,8 @@
 # to be ready.
 #
 # A checklist's runs are past fill-outs. Each run has a response for each step, in order, with the body the API
-# takes for that step's type (null to leave it blank), and is completed if it says so. They're filled out in the
+# takes for that step's type (null to leave it blank), except that a choice step's is {"option": "<its text>"}.
+# A run is completed if it says so. They're filled out in the
 # order listed, so the last is the newest, and all of them get the time of the seed itself.
 #
 # Every deployment starts the preview over: it deletes every checklist first, and their steps and fill-outs with
@@ -34,15 +35,25 @@ for i in $(seq 0 $((count - 1))); do
   id="$(jq -c "{name: .[${i}].name}" "${seed_file}" | api -X POST --data @- "${API_URL}/api/checklists" | jq -r .id)"
   steps="$(jq ".[${i}].steps | length" "${seed_file}")"
   step_ids=()
+  step_options=()
   for j in $(seq 0 $((steps - 1))); do
-    step_ids+=("$(jq -c ".[${i}].steps[${j}]" "${seed_file}" |
-      api -X POST --data @- "${API_URL}/api/checklists/${id}/steps" | jq -r .id)")
+    step="$(jq -c ".[${i}].steps[${j}]" "${seed_file}" |
+      api -X POST --data @- "${API_URL}/api/checklists/${id}/steps")"
+    step_ids+=("$(jq -r .id <<<"${step}")")
+    step_options+=("$(jq -c .options <<<"${step}")")
   done
   runs="$(jq ".[${i}].runs // [] | length" "${seed_file}")"
   for r in $(seq 0 $((runs - 1))); do
     run_id="$(api -X POST "${API_URL}/api/checklists/${id}/runs" | jq -r .id)"
     for j in "${!step_ids[@]}"; do
-      response="$(jq -c ".[${i}].runs[${r}].responses[${j}]" "${seed_file}")"
+      # A choice step's option only has an id once the step is added, so the seed names it by its text instead.
+      response="$(jq -c --argjson i "${i}" --argjson r "${r}" --argjson j "${j}" \
+        --argjson options "${step_options[j]}" '
+        .[$i].runs[$r].responses[$j]
+        | if type == "object" and has("option") then
+            .option as $text
+            | {optionId: (first($options[] | select(.text == $text) | .id) // error("No option \"\($text)\""))}
+          else . end' "${seed_file}")"
       if [ "${response}" != "null" ]; then
         api -X PUT --data "${response}" "${API_URL}/api/runs/${run_id}/steps/${step_ids[j]}" --output /dev/null
       fi

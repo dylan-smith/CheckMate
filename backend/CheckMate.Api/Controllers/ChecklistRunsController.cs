@@ -21,6 +21,8 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
     private const decimal MaxResponseNumber = 1_000_000_000m;
 
+    private const string OptionNotOnStepMessage = "The option must be one of this step's options.";
+
     [HttpPost("~/api/checklists/{checklistId:int}/runs")]
     public async Task<ActionResult<ChecklistRunResponse>> Start(int checklistId)
     {
@@ -60,7 +62,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
         logger.LogInformation("Started run {RunId} of checklist {ChecklistId}", run.Id, checklistId);
 
-        return CreatedAtAction(nameof(GetById), new { runId = run.Id }, ToResponse(run, checklist.Name));
+        return CreatedAtAction(nameof(GetById), new { runId = run.Id }, await ToResponseAsync(run, checklist.Name));
     }
 
     [HttpGet("~/api/checklists/{checklistId:int}/runs")]
@@ -103,7 +105,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return NotFound();
         }
 
-        return Ok(ToResponse(run, await GetChecklistNameAsync(run.ChecklistId)));
+        return Ok(await ToResponseAsync(run, await GetChecklistNameAsync(run.ChecklistId)));
     }
 
     [HttpPut("{runId:int}/steps/{stepId:int}")]
@@ -140,7 +142,23 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return ValidationProblem(ModelState);
         }
 
-        ApplyResponse(runStep, request);
+        StepOption? selectedOption = null;
+
+        if (runStep.StepType == StepType.Choice && request.OptionId is int optionId)
+        {
+            selectedOption = await dbContext.StepOptions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(option => option.Id == optionId && option.StepId == stepId);
+
+            if (selectedOption is null)
+            {
+                logger.LogWarning("Rejected option for step {StepId} in run {RunId} that isn't one of its options", stepId, runId);
+                ModelState.AddModelError(nameof(request.OptionId), OptionNotOnStepMessage);
+                return ValidationProblem(ModelState);
+            }
+        }
+
+        ApplyResponse(runStep, request, selectedOption);
 
         // Write the run's CompletedAt back unchanged, so the save checks the run is still open in the same
         // transaction (see IsConcurrencyToken in ChecklistDbContext) and can't change a run completed since it was read.
@@ -155,10 +173,24 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             logger.LogWarning("Rejected step update for run {RunId} completed while saving", runId);
             return Conflict(new { message = CompletedRunMessage });
         }
+        catch (DbUpdateException) when (selectedOption is not null)
+        {
+            // The option was removed from the step after it was checked above, so its foreign key failed the save.
+            if (await dbContext.StepOptions.AsNoTracking().AnyAsync(option => option.Id == selectedOption.Id))
+            {
+                throw;
+            }
+
+            logger.LogWarning("Rejected option for step {StepId} in run {RunId} removed while saving", stepId, runId);
+            ModelState.AddModelError(nameof(request.OptionId), OptionNotOnStepMessage);
+            return ValidationProblem(ModelState);
+        }
 
         logger.LogInformation("Saved step {StepId} in run {RunId}", stepId, runId);
 
-        return Ok(ChecklistRunStepResponse.From(runStep));
+        var options = await GetOptionsAsync([runStep]);
+
+        return Ok(ChecklistRunStepResponse.From(runStep, options[stepId]));
     }
 
     [HttpPost("{runId:int}/complete")]
@@ -195,7 +227,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
         logger.LogInformation("Completed run {RunId}", runId);
 
-        return Ok(ToResponse(run, await GetChecklistNameAsync(run.ChecklistId)));
+        return Ok(await ToResponseAsync(run, await GetChecklistNameAsync(run.ChecklistId)));
     }
 
     // Matches the DECIMAL(15, 6) ResponseNumber column, which would otherwise round or overflow.
@@ -204,8 +236,9 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         return Math.Abs(number) < MaxResponseNumber && decimal.Round(number, 6) == number;
     }
 
-    // Each step type reads its own field of the request and decides from it whether the step is done.
-    private static void ApplyResponse(ChecklistRunStep runStep, RunStepRequest request)
+    // Each step type reads its own field of the request and decides from it whether the step is done. A choice step
+    // uses the option the request picked, already checked to be one of its options.
+    private static void ApplyResponse(ChecklistRunStep runStep, RunStepRequest request, StepOption? selectedOption)
     {
         bool isDone;
 
@@ -219,6 +252,11 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             case StepType.Number:
                 runStep.ResponseNumber = request.Number;
                 isDone = runStep.ResponseNumber is not null;
+                break;
+            case StepType.Choice:
+                runStep.SelectedOptionId = selectedOption?.Id;
+                runStep.SelectedOptionText = selectedOption?.Text;
+                isDone = selectedOption is not null;
                 break;
             default:
                 isDone = request.IsDone;
@@ -242,12 +280,34 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             .SingleAsync();
     }
 
-    private static ChecklistRunResponse ToResponse(ChecklistRun run, string checklistName)
+    // The current options of each choice step, by step ID. A deleted step has none.
+    private async Task<ILookup<int, StepOption>> GetOptionsAsync(IEnumerable<ChecklistRunStep> runSteps)
     {
+        var stepIds = runSteps
+            .Where(step => step.StepType == StepType.Choice && step.StepId is not null)
+            .Select(step => step.StepId!.Value)
+            .ToList();
+
+        if (stepIds.Count == 0)
+        {
+            return Array.Empty<StepOption>().ToLookup(option => option.StepId);
+        }
+
+        var options = await dbContext.StepOptions
+            .AsNoTracking()
+            .Where(option => stepIds.Contains(option.StepId))
+            .ToListAsync();
+
+        return options.ToLookup(option => option.StepId);
+    }
+
+    private async Task<ChecklistRunResponse> ToResponseAsync(ChecklistRun run, string checklistName)
+    {
+        var options = await GetOptionsAsync(run.Steps);
         var steps = run.Steps
             .OrderBy(step => step.SortOrder)
             .ThenBy(step => step.Id)
-            .Select(ChecklistRunStepResponse.From)
+            .Select(step => ChecklistRunStepResponse.From(step, step.StepId is int stepId ? options[stepId] : []))
             .ToList();
 
         return new(run.Id, run.ChecklistId, checklistName, run.StartedAt, run.CompletedAt, steps);

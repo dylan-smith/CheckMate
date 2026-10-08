@@ -11,4 +11,10 @@ public class ChecklistStepRequest
 
     [EnumDataType(typeof(StepType))]
     public StepType Type { get; set; } = StepType.Checkbox;
+
+    /// <summary>
+    /// A choice step's options in the order to list them, which replace the ones it had. Other types have none.
+    /// </summary>
+    [MaxLength(50)]
+    public IReadOnlyList<StepOptionRequest>? Options { get; set; }
 }

@@ -16,7 +16,10 @@ public enum StepType
     Text = 1,
 
     /// <summary>Done once a number has been entered.</summary>
-    Number = 2
+    Number = 2,
+
+    /// <summary>Done once one of the step's options has been picked.</summary>
+    Choice = 3
 }
 
 /// <summary>Reads and writes a <see cref="StepType"/> by name only, so a number such as 1 is rejected.</summary>

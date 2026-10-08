@@ -6,7 +6,7 @@ export type Checklist = {
 }
 
 // What a step asks for when the checklist is filled out, in the order the type picker lists them.
-export const stepTypes = ['Checkbox', 'Text', 'Number'] as const
+export const stepTypes = ['Checkbox', 'Text', 'Number', 'Choice'] as const
 
 export type StepType = (typeof stepTypes)[number]
 
@@ -14,13 +14,27 @@ export const stepTypeLabels: Record<StepType, string> = {
   Checkbox: 'Checkbox',
   Text: 'Text input',
   Number: 'Number',
+  Choice: 'Multiple choice',
 }
 
+export type StepOption = {
+  id: number
+  text: string
+}
+
+// An option as it's sent: one the step already has keeps its id, and a new one has none.
+export type StepOptionInput = {
+  id?: number
+  text: string
+}
+
+// Only a choice step has options, in the order they're listed.
 export type ChecklistStep = {
   id: number
   text: string
   type: StepType
   sortOrder: number
+  options: StepOption[]
 }
 
 // A single checklist comes back with its steps in order.
@@ -130,23 +144,35 @@ async function saveStep(
   method: 'POST' | 'PUT',
   text: string,
   type: StepType,
+  options: StepOptionInput[],
 ) {
   const response = await fetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ text, type }),
+    body: JSON.stringify({ text, type, options }),
   })
 
+  // A 409 means a fill-out picked an option this removes while it saved, so saving again works.
+  if (response.status === 409) {
+    const error = (await response.json()) as ErrorResponse
+    throw new ApiError(409, error.message ?? 'Unable to save step.')
+  }
   if (!response.ok) {
     throw new Error('Unable to save step.')
   }
   return (await response.json()) as ChecklistStep
 }
 
-export function createStep(checklistId: number, text: string, type: StepType) {
-  return saveStep(stepsUrl(checklistId), 'POST', text, type)
+// options are the choice step's options and replace the ones it had. Other types send none.
+export function createStep(
+  checklistId: number,
+  text: string,
+  type: StepType,
+  options: StepOptionInput[] = [],
+) {
+  return saveStep(stepsUrl(checklistId), 'POST', text, type, options)
 }
 
 export function updateStep(
@@ -154,8 +180,15 @@ export function updateStep(
   stepId: number,
   text: string,
   type: StepType,
+  options: StepOptionInput[] = [],
 ) {
-  return saveStep(`${stepsUrl(checklistId)}/${stepId}`, 'PUT', text, type)
+  return saveStep(
+    `${stepsUrl(checklistId)}/${stepId}`,
+    'PUT',
+    text,
+    type,
+    options,
+  )
 }
 
 // Takes every step id of the checklist in the new order and returns the steps in that order.

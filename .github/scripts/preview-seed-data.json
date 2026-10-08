@@ -6,6 +6,15 @@
         "text": "Check the status dashboard for open incidents",
         "type": "Checkbox"
       },
+      {
+        "text": "Overall system status",
+        "type": "Choice",
+        "options": [
+          { "text": "Healthy" },
+          { "text": "Degraded" },
+          { "text": "Down" }
+        ]
+      },
       { "text": "Disk usage on the web server (%)", "type": "Number" },
       {
         "text": "Average API response time over the last hour (ms)",
@@ -22,6 +31,7 @@
         "complete": true,
         "responses": [
           { "isDone": true },
+          { "option": "Healthy" },
           { "number": 61 },
           { "number": 182 },
           { "isDone": true },
@@ -32,6 +42,7 @@
         "complete": true,
         "responses": [
           { "isDone": true },
+          { "option": "Degraded" },
           { "number": 64.5 },
           { "number": 240 },
           { "isDone": true },
@@ -42,7 +53,14 @@
       },
       {
         "complete": false,
-        "responses": [{ "isDone": true }, { "number": 66 }, null, null, null]
+        "responses": [
+          { "isDone": true },
+          { "option": "Healthy" },
+          { "number": 66 },
+          null,
+          null,
+          null
+        ]
       }
     ]
   },
@@ -50,6 +68,16 @@
     "name": "Production release",
     "steps": [
       { "text": "Release version number", "type": "Text" },
+      {
+        "text": "Release type",
+        "type": "Choice",
+        "options": [
+          { "text": "Major" },
+          { "text": "Minor" },
+          { "text": "Patch" },
+          { "text": "Hotfix" }
+        ]
+      },
       {
         "text": "Confirm all CI checks passed on the release commit",
         "type": "Checkbox"
@@ -71,6 +99,7 @@
         "complete": true,
         "responses": [
           { "text": "2.4.0" },
+          { "option": "Minor" },
           { "isDone": true },
           { "isDone": true },
           { "isDone": true },
@@ -89,6 +118,19 @@
         "type": "Checkbox"
       },
       { "text": "Order a laptop", "type": "Checkbox" },
+      {
+        "text": "Team they're joining",
+        "type": "Choice",
+        "options": [
+          { "text": "Platform" },
+          { "text": "Payments" },
+          { "text": "Mobile" },
+          { "text": "Web" },
+          { "text": "Data" },
+          { "text": "Security" },
+          { "text": "Support" }
+        ]
+      },
       { "text": "Assign an onboarding buddy", "type": "Text" },
       { "text": "Walk through the architecture overview", "type": "Checkbox" },
       {
@@ -102,6 +144,7 @@
         "responses": [
           { "isDone": true },
           { "isDone": true },
+          { "option": "Platform" },
           { "text": "Sam from the platform team" },
           null,
           null
@@ -113,6 +156,15 @@
     "name": "Weekly grocery run",
     "steps": [
       { "text": "Check what's left in the fridge", "type": "Checkbox" },
+      {
+        "text": "Which store",
+        "type": "Choice",
+        "options": [
+          { "text": "Corner shop" },
+          { "text": "Supermarket" },
+          { "text": "Farmers market" }
+        ]
+      },
       { "text": "Budget for this week ($)", "type": "Number" },
       { "text": "Anything special to pick up", "type": "Text" },
       { "text": "Bring reusable bags", "type": "Checkbox" }
@@ -122,6 +174,7 @@
         "complete": true,
         "responses": [
           { "isDone": true },
+          { "option": "Supermarket" },
           { "number": 150 },
           { "text": "Birthday cake for Saturday" },
           { "isDone": true }
@@ -129,7 +182,7 @@
       },
       {
         "complete": false,
-        "responses": [{ "isDone": true }, { "number": 140 }, null, null]
+        "responses": [{ "isDone": true }, null, { "number": 140 }, null, null]
       }
     ]
   },

@@ -14,4 +14,7 @@ public class RunStepRequest
 
     /// <summary>The value of a number step. It's done when this isn't null.</summary>
     public decimal? Number { get; set; }
+
+    /// <summary>The option picked for a choice step, which must be one of its options. It's done when this isn't null.</summary>
+    public int? OptionId { get; set; }
 }
