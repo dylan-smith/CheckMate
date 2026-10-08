@@ -63,6 +63,30 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         return CreatedAtAction(nameof(GetById), new { runId = run.Id }, ToResponse(run, checklist.Name));
     }
 
+    [HttpGet("~/api/checklists/{checklistId:int}/runs")]
+    public async Task<ActionResult<IEnumerable<ChecklistRunSummaryResponse>>> GetForChecklist(int checklistId)
+    {
+        logger.LogInformation("Retrieving runs of checklist {ChecklistId}", checklistId);
+
+        if (!await dbContext.Checklists.AnyAsync(item => item.Id == checklistId))
+        {
+            logger.LogWarning("Checklist {ChecklistId} not found for listing runs", checklistId);
+            return NotFound();
+        }
+
+        var runs = await dbContext.ChecklistRuns
+            .AsNoTracking()
+            .Where(run => run.ChecklistId == checklistId)
+            .OrderByDescending(run => run.StartedAt)
+            .ThenByDescending(run => run.Id)
+            .Select(run => new ChecklistRunSummaryResponse(run.Id, run.StartedAt, run.CompletedAt))
+            .ToListAsync();
+
+        logger.LogInformation("Retrieved {Count} runs of checklist {ChecklistId}", runs.Count, checklistId);
+
+        return Ok(runs);
+    }
+
     [HttpGet("{runId:int}")]
     public async Task<ActionResult<ChecklistRunResponse>> GetById(int runId)
     {

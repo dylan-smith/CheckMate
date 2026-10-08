@@ -618,6 +618,54 @@ test.describe('Checklist management', () => {
       expect((await request.post(`${runUrl}/complete`)).status()).toBe(409)
     })
 
+    test('lists past fill-outs, resumes one in progress and shows a completed one read-only', async ({
+      page,
+      request,
+    }) => {
+      const {
+        id,
+        stepIds: [stepId],
+      } = await createChecklistWithSteps(request, 'Weekly review', [
+        'Clear inbox',
+      ])
+      const startRun = async () => {
+        const response = await request.post(`${checklistsApiUrl}/${id}/runs`)
+        expect(response.ok()).toBe(true)
+        return `http://localhost:5269/api/runs/${((await response.json()) as { id: number }).id}`
+      }
+      const completedUrl = await startRun()
+      expect(
+        (
+          await request.put(`${completedUrl}/steps/${stepId}`, {
+            data: { isDone: true },
+          })
+        ).ok(),
+      ).toBe(true)
+      expect((await request.post(`${completedUrl}/complete`)).ok()).toBe(true)
+      await startRun()
+
+      await page.goto(`/checklists/${id}`)
+      const fillOuts = page
+        .getByRole('list', { name: 'Fill-outs' })
+        .getByRole('link')
+      await expect(fillOuts).toHaveCount(2)
+      // Newest first.
+      await expect(fillOuts.nth(0)).toContainText('In progress')
+      await expect(fillOuts.nth(1)).toContainText('Completed')
+
+      const clearInbox = page.getByRole('checkbox', { name: 'Clear inbox' })
+      await fillOuts.nth(0).click()
+      await expect(clearInbox).toBeEnabled()
+      await expect(clearInbox).not.toBeChecked()
+      await expect(page.getByRole('button', { name: 'Complete' })).toBeVisible()
+
+      await page.goBack()
+      await fillOuts.nth(1).click()
+      await expect(clearInbox).toBeChecked()
+      await expect(clearInbox).toBeDisabled()
+      await expect(page.getByRole('button', { name: 'Complete' })).toBeHidden()
+    })
+
     test('a past run keeps the step text after the step is edited or deleted', async ({
       page,
       request,
