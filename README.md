@@ -43,6 +43,12 @@ npm run dev
 
 The frontend dev server starts at `http://localhost:5173`. Set the `VITE_API_BASE_URL` environment variable if your backend runs on a different URL.
 
+### Offline and installing on a phone
+
+A production build registers a service worker that keeps the app itself (`index.html`, the bundles and the icons) on the device, so the app opens with no connection, and a web app manifest that lets it be installed on a phone's home screen (Chrome: menu → **Install app**; iOS Safari: Share → **Add to Home Screen**). The service worker caches nothing else: API calls, Google sign-in and telemetry always go to the network. When a new version is deployed, the app shows "A new version of CheckMate is available" with a **Reload** button; a user who ignores it gets the new version the next time the app is fully closed and opened again. Safari can clear a site's storage after seven days without a visit unless the app is installed on the home screen.
+
+The icons in `frontend/public` are generated from `favicon.svg`. To regenerate them after changing the logo, run `npx --yes @vite-pwa/assets-generator@2 --preset minimal-2023 public/favicon.svg` in `frontend` and keep `pwa-192x192.png`, `pwa-512x512.png` and `maskable-icon-512x512.png`.
+
 ### Sign-in
 
 Every API endpoint except `/health`, `/openapi/v1.json` and `/scalar` needs a signed-in user, sent as a bearer token. Checklists and fill-outs belong to the user who created them, and nobody else can see or change them. The API knows three kinds of token:
@@ -93,8 +99,10 @@ The output is written to `frontend/dist`.
 
 ```bash
 cd frontend
-npm run preview
+npm run build && npm run preview
 ```
+
+The service worker only exists in builds, not in the dev server, so this is where to try the app offline: in the browser's DevTools, open **Application → Service Workers** and tick **Offline**. If a stale build is confusing local testing, **Unregister** the service worker there.
 
 ## Deployment
 
@@ -102,7 +110,7 @@ npm run preview
 
    **Application Insights** — The API automatically sends telemetry to Azure Application Insights when a connection string is available. Set the `APPLICATIONINSIGHTS_CONNECTION_STRING` environment variable (or the `AzureMonitor:ConnectionString` app setting) to your Application Insights connection string. When using Azure App Service, you can connect Application Insights directly from the Azure Portal, which sets `APPLICATIONINSIGHTS_CONNECTION_STRING` automatically. Telemetry is silently disabled when neither value is configured (e.g. during local development).
 
-2. **Frontend** — Run `npm run build` in `frontend` and serve the contents of `frontend/dist` with any static file host (Azure Storage Account static website, Nginx, etc.). Set `VITE_API_BASE_URL` to the production API URL and `VITE_GOOGLE_CLIENT_ID` to the Google OAuth client ID before building. When using a different origin for the frontend, make sure the backend `Cors:AllowedOrigins` setting includes that frontend URL.
+2. **Frontend** — Run `npm run build` in `frontend` and serve the contents of `frontend/dist` with any static file host (Azure Storage Account static website, Nginx, etc.). Set `VITE_API_BASE_URL` to the production API URL and `VITE_GOOGLE_CLIENT_ID` to the Google OAuth client ID before building. When using a different origin for the frontend, make sure the backend `Cors:AllowedOrigins` setting includes that frontend URL. Serve `index.html`, `sw.js` and `manifest.webmanifest` with `Cache-Control: no-cache` (and the manifest as `application/manifest+json`) so browsers pick up new versions; the hashed files under `assets/` can be cached for a long time. `npm run deploy` (`.github/scripts/deploy-frontend.sh`) does this for the Azure Storage static website. To take the service worker back out of users' browsers, deploy a build with `selfDestroying: true` in `vite.config.ts` rather than just removing the plugin.
 
    **Application Insights** — The frontend sends page views, exceptions, API calls and checklist events to Application Insights using the Application Insights JavaScript SDK when `VITE_APPINSIGHTS_CONNECTION_STRING` is set at build time (CI reads it from the API's `APPLICATIONINSIGHTS_CONNECTION_STRING` app setting, so both report to the same resource). API calls carry a W3C `traceparent` header, so each browser request and the API request it triggers share one operation in Application Insights. The SDK sets `ai_user` and `ai_session` cookies to count users and sessions. Telemetry is disabled when the variable isn't set (local development, unit tests and E2E runs).
 

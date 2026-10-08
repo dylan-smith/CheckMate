@@ -72,6 +72,9 @@ npm run test:e2e
   typescript-eslint rules plus the jsx-a11y, Vitest, Testing Library and Playwright plugins, with
   `--max-warnings 0`.
 - Add or update tests for new or changed behavior.
+- The frontend is a PWA: a service worker (`vite-plugin-pwa` in `frontend/vite.config.ts`) serves the app itself
+  offline and caches nothing else. A new kind of file the app needs to open must match `workbox.globPatterns`,
+  and `.github/scripts/deploy-frontend.sh` sets the cache headers the service worker and manifest need.
 
 ### Sign-in and data ownership
 
