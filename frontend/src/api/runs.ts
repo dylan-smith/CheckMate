@@ -117,6 +117,14 @@ export async function saveRunStep(
   return (await response.json()) as RunStep
 }
 
+// A 404 means the run is already gone, which is what the caller wanted.
+export async function deleteRun(runId: number) {
+  const response = await fetch(`${runsUrl}/${runId}`, { method: 'DELETE' })
+  if (!response.ok && response.status !== 404) {
+    throw new Error('Unable to delete this fill-out.')
+  }
+}
+
 export async function completeRun(runId: number) {
   const response = await fetch(`${runsUrl}/${runId}/complete`, {
     method: 'POST',

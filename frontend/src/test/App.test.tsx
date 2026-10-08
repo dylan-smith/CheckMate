@@ -3266,6 +3266,184 @@ describe('App', () => {
         screen.queryByRole('button', { name: 'Complete' }),
       ).not.toBeInTheDocument()
     })
+
+    it('deletes a fill-out from the list, in progress or completed', async () => {
+      const user = userEvent.setup()
+      const fetchMock = mockFetch(
+        async (_url, init) =>
+          init?.method === 'DELETE'
+            ? new Response(null, { status: 204 })
+            : jsonResponse(checklist),
+        async () => jsonResponse([inProgress, completed]),
+      )
+
+      renderAt('/checklists/3')
+
+      await user.click(
+        await screen.findByRole('button', {
+          name: `Delete fill-out started ${local(completed.startedAt)}`,
+        }),
+      )
+
+      const list = screen.getByRole('list', { name: 'Fill-outs' })
+      await waitFor(() => {
+        expect(within(list).getAllByRole('link')).toHaveLength(1)
+      })
+      expect(within(list).getByRole('link')).toHaveAttribute('href', '/runs/6')
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/runs\/5$/),
+        { method: 'DELETE' },
+      )
+      expect(trackEvent).toHaveBeenCalledWith('RunDeleted')
+
+      await user.click(
+        screen.getByRole('button', {
+          name: `Delete fill-out started ${local(inProgress.startedAt)}`,
+        }),
+      )
+
+      expect(await screen.findByText('No fill-outs yet.')).toBeInTheDocument()
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/runs\/6$/),
+        { method: 'DELETE' },
+      )
+    })
+
+    it('treats 404 as a successful delete from the list', async () => {
+      const user = userEvent.setup()
+      mockFetch(
+        async (_url, init) =>
+          init?.method === 'DELETE'
+            ? new Response(null, { status: 404 })
+            : jsonResponse(checklist),
+        async () => jsonResponse([completed]),
+      )
+
+      renderAt('/checklists/3')
+      await user.click(
+        await screen.findByRole('button', { name: /^Delete fill-out/ }),
+      )
+
+      expect(await screen.findByText('No fill-outs yet.')).toBeInTheDocument()
+      expect(
+        screen.queryByText('Unable to delete this fill-out.'),
+      ).not.toBeInTheDocument()
+    })
+
+    it('keeps the fill-out and shows an error when deleting it fails', async () => {
+      const user = userEvent.setup()
+      mockFetch(
+        async (_url, init) =>
+          init?.method === 'DELETE'
+            ? new Response(null, { status: 500 })
+            : jsonResponse(checklist),
+        async () => jsonResponse([completed]),
+      )
+
+      renderAt('/checklists/3')
+      await user.click(
+        await screen.findByRole('button', { name: /^Delete fill-out/ }),
+      )
+
+      expect(
+        await screen.findByText('Unable to delete this fill-out.'),
+      ).toBeInTheDocument()
+      const list = screen.getByRole('list', { name: 'Fill-outs' })
+      expect(within(list).getByRole('link')).toHaveAttribute('href', '/runs/5')
+      expect(
+        screen.getByRole('button', { name: /^Delete fill-out/ }),
+      ).toBeEnabled()
+      expect(trackException).toHaveBeenCalledWith(expect.any(Error), {
+        operation: 'deleteRun',
+      })
+    })
+
+    describe('deleting from the fill-out page', () => {
+      function runResponse(completedAt: string | null) {
+        return jsonResponse({
+          id: 6,
+          checklistId: 3,
+          checklistName: 'Morning',
+          startedAt: inProgress.startedAt,
+          completedAt,
+          steps: [
+            {
+              stepId: 11,
+              text: 'Make coffee',
+              type: 'Checkbox',
+              isDone: false,
+              completedAt: null,
+              responseText: null,
+            },
+          ],
+        })
+      }
+
+      it.each([
+        ['in progress', null],
+        ['completed', '2026-10-07T08:30:00Z'],
+      ])(
+        'deletes a fill-out %s and goes back to its checklist',
+        async (_state, completedAt) => {
+          const user = userEvent.setup()
+          let deleted = false
+          const fetchMock = mockFetch(
+            async (url, init) => {
+              if (init?.method === 'DELETE') {
+                deleted = true
+                return new Response(null, { status: 204 })
+              }
+              return url.endsWith('/api/runs/6')
+                ? runResponse(completedAt)
+                : jsonResponse(checklist)
+            },
+            async () => jsonResponse(deleted ? [] : [inProgress]),
+          )
+
+          renderAt('/runs/6')
+          await user.click(
+            await screen.findByRole('button', { name: 'Delete fill-out' }),
+          )
+
+          expect(
+            await screen.findByText('No fill-outs yet.'),
+          ).toBeInTheDocument()
+          expect(
+            screen.getByRole('heading', { level: 2, name: 'Morning' }),
+          ).toBeInTheDocument()
+          expect(fetchMock).toHaveBeenCalledWith(
+            expect.stringMatching(/\/api\/runs\/6$/),
+            { method: 'DELETE' },
+          )
+          expect(trackEvent).toHaveBeenCalledWith('RunDeleted')
+        },
+      )
+
+      it('stays on the fill-out and shows an error when deleting it fails', async () => {
+        const user = userEvent.setup()
+        mockFetch(async (_url, init) =>
+          init?.method === 'DELETE'
+            ? new Response(null, { status: 500 })
+            : runResponse(null),
+        )
+
+        renderAt('/runs/6')
+        await user.click(
+          await screen.findByRole('button', { name: 'Delete fill-out' }),
+        )
+
+        expect(
+          await screen.findByText('Unable to delete this fill-out.'),
+        ).toBeInTheDocument()
+        expect(
+          screen.getByRole('checkbox', { name: 'Make coffee' }),
+        ).toBeEnabled()
+        expect(
+          screen.getByRole('button', { name: 'Delete fill-out' }),
+        ).toBeEnabled()
+        expect(screen.getByRole('button', { name: 'Complete' })).toBeEnabled()
+      })
+    })
   })
 
   describe('unknown routes', () => {

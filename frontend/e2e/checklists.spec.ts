@@ -764,6 +764,65 @@ test.describe('Checklist management', () => {
       await expect(page.getByRole('button', { name: 'Complete' })).toBeHidden()
     })
 
+    test('deletes fill-outs in progress and completed, from the list and from the fill-out', async ({
+      page,
+      request,
+    }) => {
+      const { id } = await createChecklistWithSteps(request, 'Cleanup', [
+        'Only step',
+      ])
+      const startRun = async () => {
+        const response = await request.post(`${checklistsApiUrl}/${id}/runs`)
+        expect(response.ok()).toBe(true)
+        return ((await response.json()) as { id: number }).id
+      }
+      const completedId = await startRun()
+      expect(
+        (
+          await request.post(
+            `http://localhost:5269/api/runs/${completedId}/complete`,
+          )
+        ).ok(),
+      ).toBe(true)
+      const inProgressId = await startRun()
+
+      await page.goto(`/checklists/${id}`)
+      const fillOuts = page.getByRole('list', { name: 'Fill-outs' })
+      await expect(fillOuts.getByRole('link')).toHaveCount(2)
+
+      // The completed one, from the list.
+      await fillOuts
+        .getByRole('listitem')
+        .filter({ hasText: 'Completed' })
+        .getByRole('button', { name: /^Delete fill-out/ })
+        .click()
+      await expect(fillOuts.getByRole('link')).toHaveCount(1)
+      await expect(fillOuts.getByRole('link')).toContainText('In progress')
+
+      // The one in progress, from its own page.
+      await fillOuts.getByRole('link').click()
+      await expect(page).toHaveURL(new RegExp(`/runs/${inProgressId}$`))
+      await expect(
+        page.getByRole('checkbox', { name: 'Only step' }),
+      ).toBeEnabled()
+      await page
+        .getByRole('button', { name: 'Delete fill-out', exact: true })
+        .click()
+      await expect(page).toHaveURL(new RegExp(`/checklists/${id}$`))
+      await expect(page.getByText('No fill-outs yet.')).toBeVisible()
+
+      // Both are gone for good.
+      await page.reload()
+      await expect(page.getByText('No fill-outs yet.')).toBeVisible()
+      for (const runId of [completedId, inProgressId]) {
+        expect(
+          (
+            await request.get(`http://localhost:5269/api/runs/${runId}`)
+          ).status(),
+        ).toBe(404)
+      }
+    })
+
     test('a past run keeps the step text after the step is edited or deleted', async ({
       page,
       request,

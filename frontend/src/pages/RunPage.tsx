@@ -19,7 +19,7 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import { Link, useNavigate, useParams } from 'react-router'
 import { ApiError, describeFetchError } from '../api/checklists'
-import { completeRun, getRun, saveRunStep } from '../api/runs'
+import { completeRun, deleteRun, getRun, saveRunStep } from '../api/runs'
 import type { StepType } from '../api/checklists'
 import type { ChecklistRun, RunStep, RunStepUpdate } from '../api/runs'
 import { trackEvent, trackException } from '../telemetry'
@@ -315,6 +315,7 @@ function RunView({ id }: { id: number }) {
     new Set(),
   )
   const [completing, setCompleting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   // Set by a 409, before the reload that fetches the completed run, so the page can't be edited if that fails.
   const [completedElsewhere, setCompletedElsewhere] = useState(false)
   const [reloadFailed, setReloadFailed] = useState(false)
@@ -497,6 +498,24 @@ function RunView({ id }: { id: number }) {
     }
   }
 
+  // Deletes the run whether it's in progress or complete, and goes back to its checklist.
+  async function handleDelete(checklistId: number) {
+    setDeleting(true)
+    setErrorMessage('')
+
+    try {
+      await deleteRun(id)
+      trackEvent('RunDeleted')
+      void navigate(`/checklists/${checklistId}`)
+    } catch (error) {
+      trackException(error, { operation: 'deleteRun' })
+      setErrorMessage(
+        describeFetchError(error, 'Unable to delete this fill-out.'),
+      )
+      setDeleting(false)
+    }
+  }
+
   const isComplete = run?.completedAt != null || completedElsewhere
   const doneCount = run?.steps.filter((step) => step.isDone).length ?? 0
 
@@ -561,7 +580,8 @@ function RunView({ id }: { id: number }) {
                 {run.steps.map((step, index) => {
                   const { stepId } = step
                   // A step deleted from the checklist can't be saved any more.
-                  const disabled = isComplete || completing || stepId === null
+                  const disabled =
+                    isComplete || completing || deleting || stepId === null
                   const kind = inputKinds[step.type]
                   return (
                     <ListItem key={stepId ?? `deleted-${index}`} disableGutters>
@@ -638,17 +658,29 @@ function RunView({ id }: { id: number }) {
               <Typography color="text.secondary">
                 {doneCount} of {run.steps.length} done
               </Typography>
-              {!isComplete && (
+              <Stack direction="row" spacing={1}>
                 <Button
                   type="button"
-                  variant="contained"
-                  // Not disabled while steps save: completing waits for those saves itself.
-                  disabled={completing}
-                  onClick={() => void handleComplete()}
+                  color="error"
+                  variant="outlined"
+                  disabled={completing || deleting}
+                  aria-label="Delete fill-out"
+                  onClick={() => void handleDelete(run.checklistId)}
                 >
-                  {completing ? 'Completing…' : 'Complete'}
+                  {deleting ? 'Deleting…' : 'Delete'}
                 </Button>
-              )}
+                {!isComplete && (
+                  <Button
+                    type="button"
+                    variant="contained"
+                    // Not disabled while steps save: completing waits for those saves itself.
+                    disabled={completing || deleting}
+                    onClick={() => void handleComplete()}
+                  >
+                    {completing ? 'Completing…' : 'Complete'}
+                  </Button>
+                )}
+              </Stack>
             </Box>
           </Paper>
         )

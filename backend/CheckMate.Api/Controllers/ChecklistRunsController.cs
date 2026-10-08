@@ -170,6 +170,12 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         }
         catch (DbUpdateConcurrencyException)
         {
+            if (!await RunExistsAsync(runId))
+            {
+                logger.LogWarning("Run {RunId} deleted while saving step {StepId}", runId, stepId);
+                return NotFound();
+            }
+
             logger.LogWarning("Rejected step update for run {RunId} completed while saving", runId);
             return Conflict(new { message = CompletedRunMessage });
         }
@@ -221,6 +227,12 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         }
         catch (DbUpdateConcurrencyException)
         {
+            if (!await RunExistsAsync(runId))
+            {
+                logger.LogWarning("Run {RunId} deleted while completing it", runId);
+                return NotFound();
+            }
+
             logger.LogWarning("Rejected completion of run {RunId} completed while saving", runId);
             return Conflict(new { message = CompletedRunMessage });
         }
@@ -228,6 +240,60 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         logger.LogInformation("Completed run {RunId}", runId);
 
         return Ok(await ToResponseAsync(run, await GetChecklistNameAsync(run.ChecklistId)));
+    }
+
+    // Deletes a run whether it's in progress or complete.
+    [HttpDelete("{runId:int}")]
+    public async Task<IActionResult> Delete(int runId)
+    {
+        // SQL Server cascades the delete to the run's steps, but the in-memory provider only cascades to tracked
+        // entities, so load them too.
+        var run = await dbContext.ChecklistRuns
+            .Include(item => item.Steps)
+            .FirstOrDefaultAsync(item => item.Id == runId);
+
+        if (run is null)
+        {
+            logger.LogWarning("Run {RunId} not found for deletion", runId);
+            return NotFound();
+        }
+
+        dbContext.ChecklistRuns.Remove(run);
+
+        try
+        {
+            await dbContext.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            // Another request deleted it first, which is what this one wanted.
+            if (!await RunExistsAsync(runId))
+            {
+                logger.LogWarning("Run {RunId} deleted by another request while deleting it", runId);
+                return NoContent();
+            }
+
+            // It was completed since it was read, and CompletedAt is a concurrency token, so delete it with the
+            // saved value. A run is only completed once, so this can't conflict again.
+            foreach (var entry in exception.Entries)
+            {
+                if (await entry.GetDatabaseValuesAsync() is { } databaseValues)
+                {
+                    entry.OriginalValues.SetValues(databaseValues);
+                }
+            }
+
+            await dbContext.SaveChangesAsync();
+        }
+
+        logger.LogInformation("Deleted run {RunId}", runId);
+
+        return NoContent();
+    }
+
+    private async Task<bool> RunExistsAsync(int runId)
+    {
+        return await dbContext.ChecklistRuns.AsNoTracking().AnyAsync(item => item.Id == runId);
     }
 
     // Matches the DECIMAL(15, 6) ResponseNumber column, which would otherwise round or overflow.
