@@ -23,6 +23,10 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
     private const string OptionNotOnStepMessage = "The option must be one of this step's options.";
 
+    private const string LockedStepMessage = "This step can't be filled in until the steps it depends on are done.";
+
+    private const string UnfinishedStepsMessage = "Every step must be done before the run can be completed.";
+
     [HttpPost("~/api/checklists/{checklistId:int}/runs")]
     public async Task<ActionResult<ChecklistRunResponse>> Start(int checklistId)
     {
@@ -119,8 +123,11 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             return NotFound();
         }
 
-        var runStep = await dbContext.ChecklistRunSteps
-            .FirstOrDefaultAsync(item => item.RunId == runId && item.StepId == stepId);
+        // All of the run's steps, since whether this one can change depends on the steps it's linked to.
+        var runSteps = await dbContext.ChecklistRunSteps
+            .Where(item => item.RunId == runId)
+            .ToListAsync();
+        var runStep = runSteps.FirstOrDefault(item => item.StepId == stepId);
 
         if (runStep is null)
         {
@@ -132,6 +139,15 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         {
             logger.LogWarning("Rejected step update for completed run {RunId}", runId);
             return Conflict(new { message = CompletedRunMessage });
+        }
+
+        var dependsOn = await GetDependsOnAsync(runSteps);
+
+        if (IsLocked(runStep, runSteps, dependsOn))
+        {
+            logger.LogWarning("Rejected update of locked step {StepId} in run {RunId}", stepId, runId);
+            ModelState.AddModelError(string.Empty, LockedStepMessage);
+            return ValidationProblem(ModelState);
         }
 
         // A value that isn't a number at all is already rejected when the request is read.
@@ -158,7 +174,28 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
             }
         }
 
+        var wasDone = runStep.IsDone;
+
         ApplyResponse(runStep, request, selectedOption);
+
+        // A done step that depends on this one would then have a prerequisite that isn't done, so it's un-done first.
+        if (wasDone && !runStep.IsDone)
+        {
+            var doneDependents = runSteps
+                .Where(item => item.IsDone && item.StepId is int id && dependsOn[id].Contains(stepId))
+                .OrderBy(item => item.SortOrder)
+                .Select(item => $"\"{item.StepText}\"")
+                .ToList();
+
+            if (doneDependents.Count > 0)
+            {
+                logger.LogWarning("Rejected un-doing step {StepId} in run {RunId} while steps that depend on it are done", stepId, runId);
+                ModelState.AddModelError(
+                    string.Empty,
+                    $"Un-do {string.Join(", ", doneDependents)} first, since {(doneDependents.Count == 1 ? "it depends" : "they depend")} on this step.");
+                return ValidationProblem(ModelState);
+            }
+        }
 
         // Write the run's CompletedAt back unchanged, so the save checks the run is still open in the same
         // transaction (see IsConcurrencyToken in ChecklistDbContext) and can't change a run completed since it was read.
@@ -196,7 +233,7 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
 
         var options = await GetOptionsAsync([runStep]);
 
-        return Ok(ChecklistRunStepResponse.From(runStep, options[stepId]));
+        return Ok(ChecklistRunStepResponse.From(runStep, options[stepId], dependsOn[stepId], false));
     }
 
     [HttpPost("{runId:int}/complete")]
@@ -216,6 +253,14 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         {
             logger.LogWarning("Rejected completion of already completed run {RunId}", runId);
             return Conflict(new { message = CompletedRunMessage });
+        }
+
+        // A step deleted from the checklist can't be filled in any more, so it doesn't hold the run back.
+        if (run.Steps.Any(step => !step.IsDone && step.StepId is not null))
+        {
+            logger.LogWarning("Rejected completion of run {RunId} with steps that aren't done", runId);
+            ModelState.AddModelError(string.Empty, UnfinishedStepsMessage);
+            return ValidationProblem(ModelState);
         }
 
         run.CompletedAt = DateTimeOffset.UtcNow;
@@ -370,13 +415,45 @@ public class ChecklistRunsController(ChecklistDbContext dbContext, ILogger<Check
         return options.ToLookup(option => option.StepId);
     }
 
+    // The steps each step of the run depends on now, by step ID, leaving out any that aren't in the run because they
+    // were added to the checklist after it started. A deleted step has none, and none depend on it any more.
+    private async Task<ILookup<int, int>> GetDependsOnAsync(IReadOnlyCollection<ChecklistRunStep> runSteps)
+    {
+        var stepIds = runSteps
+            .Where(step => step.StepId is not null)
+            .Select(step => step.StepId!.Value)
+            .ToList();
+
+        if (stepIds.Count == 0)
+        {
+            return Array.Empty<StepDependency>().ToLookup(dependency => dependency.StepId, dependency => dependency.DependsOnStepId);
+        }
+
+        var dependencies = await dbContext.StepDependencies
+            .AsNoTracking()
+            .Where(dependency => stepIds.Contains(dependency.StepId) && stepIds.Contains(dependency.DependsOnStepId))
+            .ToListAsync();
+
+        return dependencies.ToLookup(dependency => dependency.StepId, dependency => dependency.DependsOnStepId);
+    }
+
+    // A step is locked while a step it depends on isn't done, and can't be filled in until it is.
+    private static bool IsLocked(ChecklistRunStep step, IEnumerable<ChecklistRunStep> runSteps, ILookup<int, int> dependsOn)
+    {
+        return step.StepId is int stepId
+            && runSteps.Any(item => !item.IsDone && item.StepId is int id && dependsOn[stepId].Contains(id));
+    }
+
     private async Task<ChecklistRunResponse> ToResponseAsync(ChecklistRun run, string checklistName)
     {
         var options = await GetOptionsAsync(run.Steps);
+        var dependsOn = await GetDependsOnAsync(run.Steps);
         var steps = run.Steps
             .OrderBy(step => step.SortOrder)
             .ThenBy(step => step.Id)
-            .Select(step => ChecklistRunStepResponse.From(step, step.StepId is int stepId ? options[stepId] : []))
+            .Select(step => step.StepId is int stepId
+                ? ChecklistRunStepResponse.From(step, options[stepId], dependsOn[stepId], IsLocked(step, run.Steps, dependsOn))
+                : ChecklistRunStepResponse.From(step, [], [], false))
             .ToList();
 
         return new(run.Id, run.ChecklistId, checklistName, run.StartedAt, run.CompletedAt, steps);

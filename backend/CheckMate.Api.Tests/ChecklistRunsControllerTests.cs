@@ -551,12 +551,13 @@ public class ChecklistRunsControllerTests
         var step = await AddStepAsync(dbContext, checklist.Id, "Step");
         var controller = CreateController(dbContext);
         var runId = GetRun(await controller.Start(checklist.Id)).Id;
-        await controller.Complete(runId);
+        await controller.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = true });
+        Assert.IsType<OkObjectResult>((await controller.Complete(runId)).Result);
 
-        var result = await controller.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = true });
+        var result = await controller.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = false });
 
         Assert.IsType<ConflictObjectResult>(result.Result);
-        Assert.False((await dbContext.ChecklistRunSteps.SingleAsync()).IsDone);
+        Assert.True((await dbContext.ChecklistRunSteps.SingleAsync()).IsDone);
     }
 
     [Fact]
@@ -564,9 +565,10 @@ public class ChecklistRunsControllerTests
     {
         await using var dbContext = CreateDbContext();
         var checklist = await AddChecklistAsync(dbContext, "Daily");
-        await AddStepAsync(dbContext, checklist.Id, "Step");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Step");
         var controller = CreateController(dbContext);
         var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = true });
         var before = DateTimeOffset.UtcNow;
 
         var result = await controller.Complete(runId);
@@ -643,11 +645,11 @@ public class ChecklistRunsControllerTests
         await using var dbContext = CreateDbContext(databaseName, new BeforeSaveInterceptor(async () =>
             Assert.IsType<OkObjectResult>((await CreateController(otherContext).Complete(runId)).Result)));
 
-        var result = await CreateController(dbContext).UpdateStep(runId, stepId, new RunStepRequest { IsDone = true });
+        var result = await CreateController(dbContext).UpdateStep(runId, stepId, new RunStepRequest { IsDone = false });
 
         Assert.IsType<ConflictObjectResult>(result.Result);
         await using var checkContext = CreateDbContext(databaseName);
-        Assert.False((await checkContext.ChecklistRunSteps.SingleAsync()).IsDone);
+        Assert.True((await checkContext.ChecklistRunSteps.SingleAsync()).IsDone);
         Assert.NotNull((await checkContext.ChecklistRuns.SingleAsync()).CompletedAt);
     }
 
@@ -774,13 +776,193 @@ public class ChecklistRunsControllerTests
         Assert.IsType<NotFoundResult>(result.Result);
     }
 
+    [Fact]
+    public async Task GetById_LocksStepsUntilTheStepsTheyDependOnAreDone()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        var third = await AddStepAsync(dbContext, checklist.Id, "Third", 2);
+        await AddDependencyAsync(dbContext, second, first);
+        await AddDependencyAsync(dbContext, third, first);
+        await AddDependencyAsync(dbContext, third, second);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+
+        var started = GetRun(await controller.GetById(runId));
+
+        Assert.Equal([[], [first.Id], [first.Id, second.Id]], started.Steps.Select(step => step.DependsOnStepIds));
+        Assert.Equal([false, true, true], started.Steps.Select(step => step.IsLocked));
+
+        await controller.UpdateStep(runId, first.Id, new RunStepRequest { IsDone = true });
+        var afterFirst = GetRun(await controller.GetById(runId));
+
+        Assert.Equal([false, false, true], afterFirst.Steps.Select(step => step.IsLocked));
+    }
+
+    [Fact]
+    public async Task GetById_LeavesOutPrerequisitesAddedAfterTheRunStarted()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var step = await AddStepAsync(dbContext, checklist.Id, "Step");
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        // Added after the run started, so the run doesn't include it and can't wait for it.
+        var later = await AddStepAsync(dbContext, checklist.Id, "Later", 1);
+        await AddDependencyAsync(dbContext, step, later);
+
+        var runStep = Assert.Single(GetRun(await controller.GetById(runId)).Steps);
+
+        Assert.Empty(runStep.DependsOnStepIds);
+        Assert.False(runStep.IsLocked);
+        Assert.IsType<OkObjectResult>((await controller.UpdateStep(runId, step.Id, new RunStepRequest { IsDone = true })).Result);
+    }
+
+    [Fact]
+    public async Task UpdateStep_ReturnsValidationProblem_AndDoesNotSave_WhenStepIsLocked()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1, StepType.Text);
+        await AddDependencyAsync(dbContext, second, first);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+
+        var result = await controller.UpdateStep(runId, second.Id, new RunStepRequest { Text = "Too soon" });
+
+        Assert.Equal(
+            "This step can't be filled in until the steps it depends on are done.",
+            GetValidationMessage(result.Result));
+        var saved = await dbContext.ChecklistRunSteps.SingleAsync(step => step.StepId == second.Id);
+        Assert.Equal((false, null), (saved.IsDone, saved.ResponseText));
+    }
+
+    [Fact]
+    public async Task UpdateStep_ReturnsValidationProblem_WhenUndoingAStepThatADoneStepDependsOn()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0, StepType.Text);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        var third = await AddStepAsync(dbContext, checklist.Id, "Third", 2);
+        await AddDependencyAsync(dbContext, second, first);
+        await AddDependencyAsync(dbContext, third, first);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.UpdateStep(runId, first.Id, new RunStepRequest { Text = "Done" });
+        await controller.UpdateStep(runId, second.Id, new RunStepRequest { IsDone = true });
+        await controller.UpdateStep(runId, third.Id, new RunStepRequest { IsDone = true });
+
+        var result = await controller.UpdateStep(runId, first.Id, new RunStepRequest { Text = "" });
+
+        Assert.Equal(
+            "Un-do \"Second\", \"Third\" first, since they depend on this step.",
+            GetValidationMessage(result.Result));
+        dbContext.ChangeTracker.Clear();
+        var saved = await dbContext.ChecklistRunSteps.SingleAsync(step => step.StepId == first.Id);
+        Assert.Equal((true, "Done"), (saved.IsDone, saved.ResponseText));
+    }
+
+    [Fact]
+    public async Task UpdateStep_ChangesAStepThatADoneStepDependsOn_WhenItStaysDone()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0, StepType.Text);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        await AddDependencyAsync(dbContext, second, first);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.UpdateStep(runId, first.Id, new RunStepRequest { Text = "Before" });
+        await controller.UpdateStep(runId, second.Id, new RunStepRequest { IsDone = true });
+
+        var result = await controller.UpdateStep(runId, first.Id, new RunStepRequest { Text = "After" });
+
+        var saved = Assert.IsType<ChecklistRunStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(("After", true), (saved.ResponseText, saved.IsDone));
+    }
+
+    [Fact]
+    public async Task UpdateStep_UndoesAStep_OnceTheStepsThatDependOnItAreUndone()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        var second = await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        await AddDependencyAsync(dbContext, second, first);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.UpdateStep(runId, first.Id, new RunStepRequest { IsDone = true });
+        await controller.UpdateStep(runId, second.Id, new RunStepRequest { IsDone = true });
+        await controller.UpdateStep(runId, second.Id, new RunStepRequest { IsDone = false });
+
+        var result = await controller.UpdateStep(runId, first.Id, new RunStepRequest { IsDone = false });
+
+        Assert.False(Assert.IsType<ChecklistRunStepResponse>(Assert.IsType<OkObjectResult>(result.Result).Value).IsDone);
+        Assert.Equal([false, true], GetRun(await controller.GetById(runId)).Steps.Select(step => step.IsLocked));
+    }
+
+    [Fact]
+    public async Task Complete_ReturnsValidationProblem_AndStaysOpen_WhenAStepIsNotDone()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var first = await AddStepAsync(dbContext, checklist.Id, "First", 0);
+        await AddStepAsync(dbContext, checklist.Id, "Second", 1);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.UpdateStep(runId, first.Id, new RunStepRequest { IsDone = true });
+
+        var result = await controller.Complete(runId);
+
+        Assert.Equal("Every step must be done before the run can be completed.", GetValidationMessage(result.Result));
+        Assert.Null((await dbContext.ChecklistRuns.SingleAsync()).CompletedAt);
+    }
+
+    [Fact]
+    public async Task Complete_IgnoresStepsDeletedBeforeTheyWereDone()
+    {
+        await using var dbContext = CreateDbContext();
+        var checklist = await AddChecklistAsync(dbContext, "Daily");
+        var kept = await AddStepAsync(dbContext, checklist.Id, "Kept", 0);
+        var deleted = await AddStepAsync(dbContext, checklist.Id, "Deleted", 1);
+        var controller = CreateController(dbContext);
+        var runId = GetRun(await controller.Start(checklist.Id)).Id;
+        await controller.UpdateStep(runId, kept.Id, new RunStepRequest { IsDone = true });
+        var stepsController = new ChecklistStepsController(dbContext, NullLogger<ChecklistStepsController>.Instance);
+        Assert.IsType<NoContentResult>(await stepsController.Delete(checklist.Id, deleted.Id));
+        dbContext.ChangeTracker.Clear();
+
+        var result = await controller.Complete(runId);
+
+        Assert.NotNull(GetRun(result).CompletedAt);
+    }
+
+    // The step is ticked, so the run can be completed.
     private static async Task<(int RunId, int StepId)> StartRunWithOneStepAsync(string databaseName)
     {
         await using var dbContext = CreateDbContext(databaseName);
         var checklist = await AddChecklistAsync(dbContext, "Daily");
         var step = await AddStepAsync(dbContext, checklist.Id, "Step");
-        var run = GetRun(await CreateController(dbContext).Start(checklist.Id));
+        var controller = CreateController(dbContext);
+        var run = GetRun(await controller.Start(checklist.Id));
+        await controller.UpdateStep(run.Id, step.Id, new RunStepRequest { IsDone = true });
         return (run.Id, step.Id);
+    }
+
+    private static async Task AddDependencyAsync(ChecklistDbContext dbContext, ChecklistStep step, ChecklistStep dependsOn)
+    {
+        dbContext.StepDependencies.Add(new StepDependency { StepId = step.Id, DependsOnStepId = dependsOn.Id });
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static string GetValidationMessage(ActionResult? result)
+    {
+        var problem = Assert.IsType<ValidationProblemDetails>(Assert.IsType<ObjectResult>(result).Value);
+        return Assert.Single(Assert.Single(problem.Errors).Value);
     }
 
     private static ChecklistRunResponse GetRun(ActionResult<ChecklistRunResponse> result)

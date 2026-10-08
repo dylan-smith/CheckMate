@@ -1923,6 +1923,8 @@ describe('App', () => {
       steps: [
         {
           stepId: 11,
+          dependsOnStepIds: [],
+          isLocked: false,
           text: 'Make coffee',
           type: 'Checkbox',
           isDone: false,
@@ -1931,6 +1933,8 @@ describe('App', () => {
         },
         {
           stepId: 12,
+          dependsOnStepIds: [],
+          isLocked: false,
           text: 'Read email',
           type: 'Checkbox',
           isDone: true,
@@ -2062,6 +2066,8 @@ describe('App', () => {
         init?.method === 'PUT'
           ? jsonResponse({
               stepId: 11,
+              dependsOnStepIds: [],
+              isLocked: false,
               text: 'Make coffee',
               isDone: true,
               completedAt: '2026-10-06T08:05:00Z',
@@ -2264,9 +2270,207 @@ describe('App', () => {
       ).not.toBeInTheDocument()
     })
 
+    describe('prerequisites', () => {
+      function checkboxStep(
+        stepId: number,
+        text: string,
+        dependsOnStepIds: number[],
+        isDone = false,
+      ) {
+        return {
+          stepId,
+          text,
+          type: 'Checkbox',
+          isDone,
+          completedAt: null,
+          responseText: null,
+          dependsOnStepIds,
+          isLocked: false,
+        }
+      }
+
+      // Pack depends on Wash, and Leave on both.
+      const chainRun = {
+        ...run,
+        steps: [
+          checkboxStep(11, 'Wash', []),
+          checkboxStep(12, 'Pack', [11]),
+          checkboxStep(13, 'Leave', [11, 12]),
+        ],
+      }
+
+      function respondToTick(init: RequestInit, url: string) {
+        const stepId = Number(url.split('/').pop())
+        const step = chainRun.steps.find((item) => item.stepId === stepId)
+        const { isDone } = JSON.parse(init.body as string) as {
+          isDone: boolean
+        }
+        return jsonResponse({ ...step, isDone })
+      }
+
+      it('shows only the steps that can be done, and the rest as they unlock', async () => {
+        const user = userEvent.setup()
+        mockFetch(async (url, init) =>
+          init?.method === 'PUT'
+            ? respondToTick(init, url)
+            : jsonResponse(chainRun),
+        )
+
+        renderAt('/runs/5')
+
+        const toDo = await screen.findByRole('list', { name: 'To do' })
+        expect(within(toDo).getAllByRole('checkbox')).toEqual([
+          within(toDo).getByRole('checkbox', { name: 'Wash' }),
+        ])
+        expect(
+          screen.getByText(
+            '2 more steps show up once the steps they depend on are done.',
+          ),
+        ).toBeInTheDocument()
+        expect(
+          screen.queryByRole('list', { name: 'Completed' }),
+        ).not.toBeInTheDocument()
+        expect(screen.getByText('0 of 3 done')).toBeInTheDocument()
+
+        await user.click(screen.getByRole('checkbox', { name: 'Wash' }))
+
+        expect(
+          within(
+            await screen.findByRole('list', { name: 'Completed' }),
+          ).getByRole('checkbox', { name: 'Wash' }),
+        ).toBeChecked()
+        expect(
+          within(screen.getByRole('list', { name: 'To do' })).getByRole(
+            'checkbox',
+            { name: 'Pack' },
+          ),
+        ).not.toBeChecked()
+        expect(
+          screen.queryByRole('checkbox', { name: 'Leave' }),
+        ).not.toBeInTheDocument()
+        expect(
+          screen.getByText(
+            '1 more step shows up once the steps it depends on are done.',
+          ),
+        ).toBeInTheDocument()
+
+        await user.click(screen.getByRole('checkbox', { name: 'Pack' }))
+        await user.click(await screen.findByRole('checkbox', { name: 'Leave' }))
+
+        expect(
+          await screen.findByText('Every step is done.'),
+        ).toBeInTheDocument()
+        expect(screen.getByText('3 of 3 done')).toBeInTheDocument()
+      })
+
+      it('does not let a step be un-done while a done step depends on it', async () => {
+        const user = userEvent.setup()
+        mockFetch(async (url, init) =>
+          init?.method === 'PUT'
+            ? respondToTick(init, url)
+            : jsonResponse({
+                ...chainRun,
+                steps: [
+                  checkboxStep(11, 'Wash', [], true),
+                  checkboxStep(12, 'Pack', [11], true),
+                  checkboxStep(13, 'Leave', [11, 12]),
+                ],
+              }),
+        )
+
+        renderAt('/runs/5')
+
+        expect(
+          await screen.findByRole('checkbox', { name: 'Wash' }),
+        ).toBeDisabled()
+        expect(
+          screen.getByText('Can\'t be un-done while "Pack" is done.'),
+        ).toBeInTheDocument()
+
+        await user.click(screen.getByRole('checkbox', { name: 'Pack' }))
+
+        // Unticking Pack hides Leave again and lets Wash be unticked.
+        expect(
+          within(screen.getByRole('list', { name: 'To do' })).getByRole(
+            'checkbox',
+            { name: 'Pack' },
+          ),
+        ).not.toBeChecked()
+        expect(
+          screen.queryByRole('checkbox', { name: 'Leave' }),
+        ).not.toBeInTheDocument()
+        await waitFor(() => {
+          expect(screen.getByRole('checkbox', { name: 'Wash' })).toBeEnabled()
+        })
+        expect(screen.queryByText(/Can't be un-done/)).not.toBeInTheDocument()
+      })
+
+      it('shows why a save was rejected and loads the run again', async () => {
+        const user = userEvent.setup()
+        const message =
+          "This step can't be filled in until the steps it depends on are done."
+        let loads = 0
+        mockFetch(async (_url, init) => {
+          if (init?.method === 'PUT') {
+            return jsonResponse({ errors: { '': [message] } }, 400)
+          }
+          loads += 1
+          // Another tab un-did Wash after this one loaded the run.
+          return jsonResponse(
+            loads === 1
+              ? {
+                  ...chainRun,
+                  steps: [
+                    checkboxStep(11, 'Wash', [], true),
+                    ...chainRun.steps.slice(1),
+                  ],
+                }
+              : chainRun,
+          )
+        })
+
+        renderAt('/runs/5')
+        await user.click(await screen.findByRole('checkbox', { name: 'Pack' }))
+
+        expect(await screen.findByText(message)).toBeInTheDocument()
+        await waitFor(() => {
+          expect(
+            screen.queryByRole('checkbox', { name: 'Pack' }),
+          ).not.toBeInTheDocument()
+        })
+        expect(screen.getByRole('checkbox', { name: 'Wash' })).not.toBeChecked()
+        expect(trackException).not.toHaveBeenCalled()
+      })
+
+      it('shows why completing was rejected and keeps the run open', async () => {
+        const user = userEvent.setup()
+        const message =
+          'Every step must be done before the run can be completed.'
+        mockFetch(async (_url, init) =>
+          init?.method === 'POST'
+            ? jsonResponse({ errors: { '': [message] } }, 400)
+            : jsonResponse(chainRun),
+        )
+
+        renderAt('/runs/5')
+        await user.click(
+          await screen.findByRole('button', { name: 'Complete' }),
+        )
+
+        expect(await screen.findByText(message)).toBeInTheDocument()
+        expect(screen.getByRole('checkbox', { name: 'Wash' })).toBeEnabled()
+        expect(
+          screen.getByRole('button', { name: 'Complete' }),
+        ).toBeInTheDocument()
+        expect(trackException).not.toHaveBeenCalled()
+      })
+    })
+
     describe('text steps', () => {
       const notesStep = {
         stepId: 13,
+        dependsOnStepIds: [],
+        isLocked: false,
         text: 'Notes',
         type: 'Text',
         isDone: false,
@@ -2323,7 +2527,13 @@ describe('App', () => {
         await user.type(field, 'All good{Enter}')
 
         expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
-        expect(field).toHaveFocus()
+        // It's done now, so it moves to the completed steps and keeps focus there.
+        expect(
+          within(screen.getByRole('list', { name: 'Completed' })).getByRole(
+            'textbox',
+            { name: 'Notes' },
+          ),
+        ).toHaveFocus()
         await user.tab()
         expect(fetchMock).toHaveBeenCalledTimes(2)
       })
@@ -2551,6 +2761,8 @@ describe('App', () => {
     describe('number steps', () => {
       const temperatureStep = {
         stepId: 14,
+        dependsOnStepIds: [],
+        isLocked: false,
         text: 'Fridge temperature',
         type: 'Number',
         isDone: false,
@@ -2594,7 +2806,10 @@ describe('App', () => {
         await user.tab()
 
         expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
-        expect(field).toHaveValue(String(number))
+        // Being done, it's shown again in the completed steps.
+        expect(
+          screen.getByRole('textbox', { name: 'Fridge temperature' }),
+        ).toHaveValue(String(number))
         expect(fetchMock).toHaveBeenCalledWith(
           expect.stringMatching(/\/api\/runs\/5\/steps\/14$/),
           expect.objectContaining({
@@ -2824,6 +3039,8 @@ describe('App', () => {
     describe('multiple choice steps', () => {
       const weather = {
         stepId: 13,
+        dependsOnStepIds: [],
+        isLocked: false,
         text: 'Weather',
         type: 'Choice',
         isDone: false,
@@ -3046,14 +3263,24 @@ describe('App', () => {
       })
     })
 
-    it('keeps a deleted step but does not let it be ticked', async () => {
+    it('keeps a deleted step that was done but does not let it be unticked', async () => {
       mockFetch(async () =>
         jsonResponse({
           ...run,
           steps: [
             {
               stepId: null,
+              dependsOnStepIds: [],
+              isLocked: false,
               text: 'Old step',
+              isDone: true,
+              completedAt: null,
+            },
+            {
+              stepId: null,
+              dependsOnStepIds: [],
+              isLocked: false,
+              text: 'Never done',
               isDone: false,
               completedAt: null,
             },
@@ -3066,6 +3293,11 @@ describe('App', () => {
       expect(
         await screen.findByRole('checkbox', { name: 'Old step' }),
       ).toBeDisabled()
+      // A deleted step that wasn't done can't be done any more, so it doesn't hold the run back.
+      expect(
+        screen.queryByRole('checkbox', { name: 'Never done' }),
+      ).not.toBeInTheDocument()
+      expect(screen.getByText('1 of 1 done')).toBeInTheDocument()
     })
 
     it('shows not found when the run does not exist', async () => {
@@ -3186,6 +3418,8 @@ describe('App', () => {
                 steps: [
                   {
                     stepId: 11,
+                    dependsOnStepIds: [],
+                    isLocked: false,
                     text: 'Make coffee',
                     type: 'Checkbox',
                     isDone: true,
@@ -3224,6 +3458,8 @@ describe('App', () => {
                 steps: [
                   {
                     stepId: 11,
+                    dependsOnStepIds: [],
+                    isLocked: false,
                     text: 'Make coffee',
                     type: 'Checkbox',
                     isDone: true,
@@ -3232,6 +3468,8 @@ describe('App', () => {
                   },
                   {
                     stepId: 12,
+                    dependsOnStepIds: [],
+                    isLocked: false,
                     text: 'Read email',
                     type: 'Checkbox',
                     isDone: false,
@@ -3369,6 +3607,8 @@ describe('App', () => {
           steps: [
             {
               stepId: 11,
+              dependsOnStepIds: [],
+              isLocked: false,
               text: 'Make coffee',
               type: 'Checkbox',
               isDone: false,

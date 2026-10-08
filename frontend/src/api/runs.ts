@@ -1,6 +1,10 @@
 import { apiBaseUrl } from '../config'
 import { ApiError } from './checklists'
-import type { StepOption, StepType } from './checklists'
+import type {
+  StepOption,
+  StepType,
+  ValidationErrorResponse,
+} from './checklists'
 
 // stepId is null once the step has been deleted from the checklist. The text and type are what the step had
 // when the run started, so they stay the same after the step is edited or deleted.
@@ -18,6 +22,10 @@ export type RunStep = {
   options: StepOption[]
   selectedOptionId: number | null
   selectedOptionText: string | null
+  // The steps of the run that must be done before this one, which are its current prerequisites like its
+  // options are. It's locked, and can't be filled in, while one of them isn't done.
+  dependsOnStepIds: number[]
+  isLocked: boolean
 }
 
 // A checkbox step sends isDone. A text step sends its text, and is done when the text isn't empty.
@@ -58,6 +66,15 @@ async function throwIfCompleted(response: Response) {
   if (response.status === 409) {
     const error = (await response.json()) as ErrorResponse
     throw new ApiError(409, error.message ?? completedMessage)
+  }
+}
+
+// A 400 explains why the change isn't allowed yet, such as a step whose prerequisites aren't done, so pass that on.
+async function throwIfRejected(response: Response, fallback: string) {
+  if (response.status === 400) {
+    const error = (await response.json()) as ValidationErrorResponse
+    const message = Object.values(error.errors ?? {}).flat()[0]
+    throw new ApiError(400, message ?? fallback)
   }
 }
 
@@ -111,6 +128,7 @@ export async function saveRunStep(
   })
 
   await throwIfCompleted(response)
+  await throwIfRejected(response, 'Unable to save step.')
   if (!response.ok) {
     throw new Error('Unable to save step.')
   }
@@ -131,6 +149,7 @@ export async function completeRun(runId: number) {
   })
 
   await throwIfCompleted(response)
+  await throwIfRejected(response, 'Unable to complete this fill-out.')
   if (!response.ok) {
     throw new Error('Unable to complete this fill-out.')
   }
