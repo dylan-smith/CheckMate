@@ -719,26 +719,26 @@ test.describe('Checklist management', () => {
       await page.getByRole('button', { name: 'Fill out' }).click()
       await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/)
 
-      const toDo = page.getByRole('list', { name: 'To do' })
-      const completed = page.getByRole('list', { name: 'Completed' })
+      const steps = page.getByRole('list', { name: 'Steps' })
       const prep = page.getByRole('checkbox', { name: 'Prep' })
       const cookBox = page.getByRole('checkbox', { name: 'Cook' })
       const serve = page.getByRole('checkbox', { name: 'Serve' })
 
-      await expect(toDo.getByRole('checkbox')).toHaveCount(1)
-      await expect(toDo.getByRole('checkbox', { name: 'Prep' })).toBeVisible()
+      await expect(steps.getByRole('checkbox')).toHaveCount(1)
+      await expect(steps.getByRole('checkbox', { name: 'Prep' })).toBeVisible()
       await expect(cookBox).toHaveCount(0)
       await expect(serve).toHaveCount(0)
 
       await prep.check()
-      await expect(
-        completed.getByRole('checkbox', { name: 'Prep' }),
-      ).toBeChecked()
-      await expect(toDo.getByRole('checkbox', { name: 'Cook' })).toBeVisible()
+      // Prep stays where it is, and Cook shows up after it.
+      await expect(prep).toBeChecked()
+      await expect(steps.getByRole('checkbox').nth(1)).toHaveAccessibleName(
+        'Cook',
+      )
       await expect(serve).toHaveCount(0)
 
       await cookBox.check()
-      await expect(toDo.getByRole('checkbox', { name: 'Serve' })).toBeVisible()
+      await expect(serve).toBeVisible()
       // Prep can't be un-done while Cook, which depends on it, is done.
       await expect(prep).toBeDisabled()
       await expect(
@@ -747,11 +747,10 @@ test.describe('Checklist management', () => {
 
       // The state survives a reload.
       await page.reload()
-      await expect(completed.getByRole('checkbox')).toHaveCount(2)
-      await expect(toDo.getByRole('checkbox', { name: 'Serve' })).toBeVisible()
+      await expect(steps.getByRole('checkbox')).toHaveCount(3)
+      await expect(serve).not.toBeChecked()
 
       await serve.check()
-      await expect(page.getByText('Every step is done.')).toBeVisible()
       await expect(page.getByText('3 of 3 done')).toBeVisible()
       await expect(serve).toBeEnabled()
 

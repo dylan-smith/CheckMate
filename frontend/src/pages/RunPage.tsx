@@ -697,7 +697,6 @@ function RunView({ clientKey }: { clientKey: string }) {
   const isLocked = (step: LocalRunStep) =>
     step.dependsOnStepIds.some((stepId) => !doneStepIds.has(stepId))
   const isToDo = (step: LocalRunStep) => isOpenStep(step) && !isLocked(step)
-  const toDoCount = steps.filter(isToDo).length
   const lockedCount = steps.filter(
     (step) => isOpenStep(step) && isLocked(step),
   ).length
@@ -873,46 +872,22 @@ function RunView({ clientKey }: { clientKey: string }) {
               <Typography color="text.secondary" sx={{ my: 2 }}>
                 This checklist has no steps.
               </Typography>
-            ) : isComplete ? (
-              // A completed run is a record of what was done, so it shows every step in the checklist's order.
-              <List aria-label="Steps" sx={{ my: 1 }}>
-                {run.steps.map(renderStep)}
-              </List>
             ) : (
               <>
-                <Typography variant="h6" component="h3" sx={{ mt: 2 }}>
-                  To do
-                </Typography>
-                {toDoCount > 0 ? (
-                  <List aria-label="To do" sx={{ my: 1 }}>
-                    {run.steps.map(
-                      (step, index) => isToDo(step) && renderStep(step, index),
-                    )}
-                  </List>
-                ) : (
-                  // There's always a step to do while one isn't done, since prerequisites can't form a cycle.
-                  <Typography color="text.secondary" sx={{ my: 1 }}>
-                    Every step is done.
-                  </Typography>
-                )}
-                {lockedCount > 0 && (
+                {/* Steps keep their place in the checklist's order as they're done. A completed run shows every step. */}
+                <List aria-label="Steps" sx={{ my: 1 }}>
+                  {run.steps.map(
+                    (step, index) =>
+                      (isComplete || step.isDone || isToDo(step)) &&
+                      renderStep(step, index),
+                  )}
+                </List>
+                {!isComplete && lockedCount > 0 && (
                   <Typography color="text.secondary" sx={{ mb: 1 }}>
                     {lockedCount === 1
                       ? '1 more step shows up once the steps it depends on are done.'
                       : `${lockedCount} more steps show up once the steps they depend on are done.`}
                   </Typography>
-                )}
-                {doneCount > 0 && (
-                  <>
-                    <Typography variant="h6" component="h3" sx={{ mt: 2 }}>
-                      Completed
-                    </Typography>
-                    <List aria-label="Completed" sx={{ my: 1 }}>
-                      {run.steps.map(
-                        (step, index) => step.isDone && renderStep(step, index),
-                      )}
-                    </List>
-                  </>
                 )}
               </>
             )}

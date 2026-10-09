@@ -2453,33 +2453,28 @@ describe('App', () => {
 
         renderAt(runPath)
 
-        const toDo = await screen.findByRole('list', { name: 'To do' })
-        expect(within(toDo).getAllByRole('checkbox')).toEqual([
-          within(toDo).getByRole('checkbox', { name: 'Wash' }),
+        const steps = await screen.findByRole('list', { name: 'Steps' })
+        expect(within(steps).getAllByRole('checkbox')).toEqual([
+          within(steps).getByRole('checkbox', { name: 'Wash' }),
         ])
         expect(
           screen.getByText(
             '2 more steps show up once the steps they depend on are done.',
           ),
         ).toBeInTheDocument()
-        expect(
-          screen.queryByRole('list', { name: 'Completed' }),
-        ).not.toBeInTheDocument()
         expect(screen.getByText('0 of 3 done')).toBeInTheDocument()
 
         await user.click(screen.getByRole('checkbox', { name: 'Wash' }))
 
+        // A done step stays where it is, and the step it unlocks shows up after it.
         expect(
-          within(
-            await screen.findByRole('list', { name: 'Completed' }),
-          ).getByRole('checkbox', { name: 'Wash' }),
-        ).toBeChecked()
-        expect(
-          within(screen.getByRole('list', { name: 'To do' })).getByRole(
-            'checkbox',
-            { name: 'Pack' },
-          ),
+          await screen.findByRole('checkbox', { name: 'Pack' }),
         ).not.toBeChecked()
+        expect(screen.getByRole('checkbox', { name: 'Wash' })).toBeChecked()
+        expect(within(steps).getAllByRole('checkbox')).toEqual([
+          screen.getByRole('checkbox', { name: 'Wash' }),
+          screen.getByRole('checkbox', { name: 'Pack' }),
+        ])
         expect(
           screen.queryByRole('checkbox', { name: 'Leave' }),
         ).not.toBeInTheDocument()
@@ -2492,10 +2487,8 @@ describe('App', () => {
         await user.click(screen.getByRole('checkbox', { name: 'Pack' }))
         await user.click(await screen.findByRole('checkbox', { name: 'Leave' }))
 
-        expect(
-          await screen.findByText('Every step is done.'),
-        ).toBeInTheDocument()
-        expect(screen.getByText('3 of 3 done')).toBeInTheDocument()
+        expect(await screen.findByText('3 of 3 done')).toBeInTheDocument()
+        expect(screen.queryByText(/show up once/)).not.toBeInTheDocument()
       })
 
       it('does not let a step be un-done while a done step depends on it', async () => {
@@ -2521,12 +2514,7 @@ describe('App', () => {
         await user.click(screen.getByRole('checkbox', { name: 'Pack' }))
 
         // Unticking Pack hides Leave again and lets Wash be unticked.
-        expect(
-          within(screen.getByRole('list', { name: 'To do' })).getByRole(
-            'checkbox',
-            { name: 'Pack' },
-          ),
-        ).not.toBeChecked()
+        expect(screen.getByRole('checkbox', { name: 'Pack' })).not.toBeChecked()
         expect(
           screen.queryByRole('checkbox', { name: 'Leave' }),
         ).not.toBeInTheDocument()
@@ -2638,13 +2626,8 @@ describe('App', () => {
         await user.type(field, 'All good{Enter}')
 
         expect(await screen.findByText('2 of 3 done')).toBeInTheDocument()
-        // It's done now, so it moves to the completed steps and keeps focus there.
-        expect(
-          within(screen.getByRole('list', { name: 'Completed' })).getByRole(
-            'textbox',
-            { name: 'Notes' },
-          ),
-        ).toHaveFocus()
+        // It's done now, and stays where it is with focus.
+        expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveFocus()
         await user.tab()
         await waitFor(() => {
           expect(syncs(fetchMock)).toHaveLength(1)
