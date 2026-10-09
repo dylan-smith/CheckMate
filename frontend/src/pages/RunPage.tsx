@@ -4,6 +4,7 @@ import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Checkbox from '@mui/material/Checkbox'
 import CircularProgress from '@mui/material/CircularProgress'
+import Collapse from '@mui/material/Collapse'
 import FormControl from '@mui/material/FormControl'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import FormHelperText from '@mui/material/FormHelperText'
@@ -17,6 +18,8 @@ import RadioGroup from '@mui/material/RadioGroup'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
+import useMediaQuery from '@mui/material/useMediaQuery'
+import { TransitionGroup } from 'react-transition-group'
 import { Link, useNavigate, useParams } from 'react-router'
 import { describeFetchError } from '../api/checklists'
 import { getRun, getRunByKey } from '../api/runs'
@@ -370,6 +373,8 @@ function RunView({ clientKey }: { clientKey: string }) {
   // The text or number step whose field had focus when it last saved, so it keeps focus if that moves the step.
   const [refocusStepId, setRefocusStepId] = useState<number | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
+  // Steps slide in and out as they unlock or lock again, unless the device asks for less motion.
+  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   // Ticks still saving and each text field's saveDraft, so completing the run can wait for them first.
   const pendingTicks = useRef(new Set<Promise<LocalRunStep | null>>())
   const saveDrafts = useRef(new Map<number, SaveDraft>())
@@ -704,7 +709,7 @@ function RunView({ clientKey }: { clientKey: string }) {
     ? steps.length
     : steps.filter((step) => step.isDone || step.stepId !== null).length
 
-  function renderStep(step: LocalRunStep, index: number) {
+  function renderStep(step: LocalRunStep) {
     const { stepId } = step
     // A step deleted from the checklist can't be saved any more.
     const disabled = isComplete || completing || deleting || stepId === null
@@ -722,7 +727,7 @@ function RunView({ clientKey }: { clientKey: string }) {
     const canUndo = doneDependents.length === 0
     return (
       <ListItem
-        key={stepId ?? `deleted-${index}`}
+        component="div"
         disableGutters
         sx={{ flexDirection: 'column', alignItems: 'flex-start' }}
       >
@@ -876,11 +881,20 @@ function RunView({ clientKey }: { clientKey: string }) {
               <>
                 {/* Steps keep their place in the checklist's order as they're done. A completed run shows every step. */}
                 <List aria-label="Steps" sx={{ my: 1 }}>
-                  {run.steps.map(
-                    (step, index) =>
-                      (isComplete || step.isDone || isToDo(step)) &&
-                      renderStep(step, index),
-                  )}
+                  <TransitionGroup component={null}>
+                    {run.steps.map(
+                      (step, index) =>
+                        (isComplete || step.isDone || isToDo(step)) && (
+                          <Collapse
+                            key={step.stepId ?? `deleted-${index}`}
+                            component="li"
+                            timeout={reduceMotion ? 0 : 'auto'}
+                          >
+                            {renderStep(step)}
+                          </Collapse>
+                        ),
+                    )}
+                  </TransitionGroup>
                 </List>
                 {!isComplete && lockedCount > 0 && (
                   <Typography color="text.secondary" sx={{ mb: 1 }}>
