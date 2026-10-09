@@ -4,6 +4,7 @@ import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Checkbox from '@mui/material/Checkbox'
 import CircularProgress from '@mui/material/CircularProgress'
+import Collapse from '@mui/material/Collapse'
 import FormControl from '@mui/material/FormControl'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import FormHelperText from '@mui/material/FormHelperText'
@@ -16,7 +17,10 @@ import Radio from '@mui/material/Radio'
 import RadioGroup from '@mui/material/RadioGroup'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
+import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
+import useMediaQuery from '@mui/material/useMediaQuery'
+import { TransitionGroup } from 'react-transition-group'
 import { Link, useNavigate, useParams } from 'react-router'
 import { describeFetchError } from '../api/checklists'
 import { getRun, getRunByKey } from '../api/runs'
@@ -369,7 +373,11 @@ function RunView({ clientKey }: { clientKey: string }) {
   const [deleting, setDeleting] = useState(false)
   // The text or number step whose field had focus when it last saved, so it keeps focus if that moves the step.
   const [refocusStepId, setRefocusStepId] = useState<number | null>(null)
+  // The step whose "can't be un-done" tooltip is showing.
+  const [reasonStepId, setReasonStepId] = useState<number | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
+  // Steps slide in and out as they unlock or lock again, unless the device asks for less motion.
+  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   // Ticks still saving and each text field's saveDraft, so completing the run can wait for them first.
   const pendingTicks = useRef(new Set<Promise<LocalRunStep | null>>())
   const saveDrafts = useRef(new Map<number, SaveDraft>())
@@ -704,7 +712,7 @@ function RunView({ clientKey }: { clientKey: string }) {
     ? steps.length
     : steps.filter((step) => step.isDone || step.stepId !== null).length
 
-  function renderStep(step: LocalRunStep, index: number) {
+  function renderStep(step: LocalRunStep) {
     const { stepId } = step
     // A step deleted from the checklist can't be saved any more.
     const disabled = isComplete || completing || deleting || stepId === null
@@ -720,85 +728,98 @@ function RunView({ clientKey }: { clientKey: string }) {
               other.dependsOnStepIds.includes(stepId),
           )
     const canUndo = doneDependents.length === 0
+    // Says why in a tooltip rather than under the step, so the list doesn't move as it comes and goes. A tap shows
+    // it too: the tooltip's own touch handling only opens for a disabled element, and this one wraps the whole
+    // field. Every step has the tooltip, so a field isn't remounted when it turns on.
+    const cantUndoReason = canUndo
+      ? ''
+      : `Can't be un-done while ${doneDependents.map((other) => `"${other.text}"`).join(', ')} ${doneDependents.length === 1 ? 'is' : 'are'} done.`
     return (
       <ListItem
-        key={stepId ?? `deleted-${index}`}
+        component="div"
         disableGutters
         sx={{ flexDirection: 'column', alignItems: 'flex-start' }}
       >
-        {step.type === 'Choice' ? (
-          <ChoiceStepField
-            step={step}
-            disabled={
-              disabled || (stepId !== null && savingStepIds.has(stepId))
-            }
-            showSaved={isComplete || stepId === null}
-            canClear={canUndo}
-            onPick={(optionId) => {
-              if (stepId !== null) {
-                handleToggle(stepId, { optionId })
+        <Tooltip
+          title={cantUndoReason}
+          describeChild
+          placement="bottom-start"
+          open={!canUndo && reasonStepId === stepId}
+          onOpen={() => setReasonStepId(stepId)}
+          onClose={() => setReasonStepId(null)}
+        >
+          <Box
+            sx={{ width: '100%' }}
+            onTouchStart={() => {
+              if (!canUndo) {
+                setReasonStepId(stepId)
               }
             }}
-          />
-        ) : kind ? (
-          <InputStepField
-            step={step}
-            kind={kind}
-            disabled={disabled}
-            showSaved={isComplete}
-            onSave={(update, hasFocus) => {
-              if (stepId === null) {
-                return Promise.resolve(null)
-              }
-              setRefocusStepId(hasFocus ? stepId : null)
-              return handleSave(stepId, update)
-            }}
-            focusOnMount={refocusStepId === stepId}
-            registerSaveDraft={(saveDraft) => {
-              if (stepId === null) {
-                return
-              }
-              if (saveDraft) {
-                saveDrafts.current.set(stepId, saveDraft)
-              } else {
-                saveDrafts.current.delete(stepId)
-              }
-            }}
-          />
-        ) : (
-          <FormControlLabel
-            sx={{ overflowWrap: 'anywhere' }}
-            control={
-              <Checkbox
-                checked={step.isDone}
+          >
+            {step.type === 'Choice' ? (
+              <ChoiceStepField
+                step={step}
                 disabled={
-                  disabled ||
-                  savingStepIds.has(stepId) ||
-                  (step.isDone && !canUndo)
+                  disabled || (stepId !== null && savingStepIds.has(stepId))
                 }
-                onChange={(event) => {
+                showSaved={isComplete || stepId === null}
+                canClear={canUndo}
+                onPick={(optionId) => {
                   if (stepId !== null) {
-                    handleToggle(stepId, {
-                      isDone: event.target.checked,
-                    })
+                    handleToggle(stepId, { optionId })
                   }
                 }}
               />
-            }
-            label={step.text}
-          />
-        )}
-        {!canUndo && (
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ overflowWrap: 'anywhere' }}
-          >
-            Can&apos;t be un-done while{' '}
-            {doneDependents.map((other) => `"${other.text}"`).join(', ')}{' '}
-            {doneDependents.length === 1 ? 'is' : 'are'} done.
-          </Typography>
-        )}
+            ) : kind ? (
+              <InputStepField
+                step={step}
+                kind={kind}
+                disabled={disabled}
+                showSaved={isComplete}
+                onSave={(update, hasFocus) => {
+                  if (stepId === null) {
+                    return Promise.resolve(null)
+                  }
+                  setRefocusStepId(hasFocus ? stepId : null)
+                  return handleSave(stepId, update)
+                }}
+                focusOnMount={refocusStepId === stepId}
+                registerSaveDraft={(saveDraft) => {
+                  if (stepId === null) {
+                    return
+                  }
+                  if (saveDraft) {
+                    saveDrafts.current.set(stepId, saveDraft)
+                  } else {
+                    saveDrafts.current.delete(stepId)
+                  }
+                }}
+              />
+            ) : (
+              <FormControlLabel
+                sx={{ overflowWrap: 'anywhere' }}
+                control={
+                  <Checkbox
+                    checked={step.isDone}
+                    disabled={
+                      disabled ||
+                      savingStepIds.has(stepId) ||
+                      (step.isDone && !canUndo)
+                    }
+                    onChange={(event) => {
+                      if (stepId !== null) {
+                        handleToggle(stepId, {
+                          isDone: event.target.checked,
+                        })
+                      }
+                    }}
+                  />
+                }
+                label={step.text}
+              />
+            )}
+          </Box>
+        </Tooltip>
       </ListItem>
     )
   }
@@ -876,11 +897,20 @@ function RunView({ clientKey }: { clientKey: string }) {
               <>
                 {/* Steps keep their place in the checklist's order as they're done. A completed run shows every step. */}
                 <List aria-label="Steps" sx={{ my: 1 }}>
-                  {run.steps.map(
-                    (step, index) =>
-                      (isComplete || step.isDone || isToDo(step)) &&
-                      renderStep(step, index),
-                  )}
+                  <TransitionGroup component={null}>
+                    {run.steps.map(
+                      (step, index) =>
+                        (isComplete || step.isDone || isToDo(step)) && (
+                          <Collapse
+                            key={step.stepId ?? `deleted-${index}`}
+                            component="li"
+                            timeout={reduceMotion ? 0 : 'auto'}
+                          >
+                            {renderStep(step)}
+                          </Collapse>
+                        ),
+                    )}
+                  </TransitionGroup>
                 </List>
                 {!isComplete && lockedCount > 0 && (
                   <Typography color="text.secondary" sx={{ mb: 1 }}>
