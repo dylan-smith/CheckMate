@@ -741,9 +741,6 @@ test.describe('Checklist management', () => {
       await expect(serve).toBeVisible()
       // Prep can't be un-done while Cook, which depends on it, is done.
       await expect(prep).toBeDisabled()
-      await expect(
-        page.getByText('Can\'t be un-done while "Cook" is done.'),
-      ).toBeVisible()
 
       // The state survives a reload.
       await page.reload()

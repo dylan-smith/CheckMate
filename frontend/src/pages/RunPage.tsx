@@ -715,16 +715,15 @@ function RunView({ clientKey }: { clientKey: string }) {
     const disabled = isComplete || completing || deleting || stepId === null
     const kind = inputKinds[step.type]
     // A done step can't be un-done while a done step depends on it, so those steps are un-done first.
-    const doneDependents =
-      isComplete || !step.isDone
-        ? []
-        : steps.filter(
-            (other) =>
-              other.isDone &&
-              stepId !== null &&
-              other.dependsOnStepIds.includes(stepId),
-          )
-    const canUndo = doneDependents.length === 0
+    const canUndo =
+      isComplete ||
+      !step.isDone ||
+      !steps.some(
+        (other) =>
+          other.isDone &&
+          stepId !== null &&
+          other.dependsOnStepIds.includes(stepId),
+      )
     return (
       <ListItem
         component="div"
@@ -792,17 +791,6 @@ function RunView({ clientKey }: { clientKey: string }) {
             }
             label={step.text}
           />
-        )}
-        {!canUndo && (
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ overflowWrap: 'anywhere' }}
-          >
-            Can&apos;t be un-done while{' '}
-            {doneDependents.map((other) => `"${other.text}"`).join(', ')}{' '}
-            {doneDependents.length === 1 ? 'is' : 'are'} done.
-          </Typography>
         )}
       </ListItem>
     )

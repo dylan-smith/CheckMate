@@ -2507,9 +2507,6 @@ describe('App', () => {
         expect(
           await screen.findByRole('checkbox', { name: 'Wash' }),
         ).toBeDisabled()
-        expect(
-          screen.getByText('Can\'t be un-done while "Pack" is done.'),
-        ).toBeInTheDocument()
 
         await user.click(screen.getByRole('checkbox', { name: 'Pack' }))
 
