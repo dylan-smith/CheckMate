@@ -18,10 +18,22 @@ import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import { Link, useNavigate, useParams } from 'react-router'
-import { ApiError, describeFetchError } from '../api/checklists'
-import { completeRun, deleteRun, getRun, saveRunStep } from '../api/runs'
+import { describeFetchError } from '../api/checklists'
+import { getRun, getRunByKey } from '../api/runs'
 import type { StepType } from '../api/checklists'
-import type { ChecklistRun, RunStep, RunStepUpdate } from '../api/runs'
+import { isClientKey } from '../offline/clientKey'
+import {
+  applyStepUpdate,
+  bump,
+  fromServerRun,
+  stepChangeError,
+  unfinishedSteps,
+  unfinishedStepsMessage,
+} from '../offline/runs'
+import type { RunStepUpdate } from '../offline/runs'
+import { useLocalStore } from '../offline/store'
+import type { LocalRun, LocalRunStep } from '../offline/store'
+import { pushRun, requestSync } from '../offline/sync'
 import { trackEvent, trackException } from '../telemetry'
 import NotFoundPage from './NotFoundPage'
 import { formatDateTime } from './formatDateTime'
@@ -34,7 +46,7 @@ type ParsedDraft = { value: string; update: RunStepUpdate } | { error: string }
 type InputKind = {
   inputMode: 'text' | 'decimal'
   maxLength: number
-  format: (step: RunStep) => string
+  format: (step: LocalRunStep) => string
   parse: (draft: string) => ParsedDraft
 }
 
@@ -83,12 +95,15 @@ const inputKinds: Partial<Record<StepType, InputKind>> = {
 type SaveDraft = () => Promise<boolean>
 
 type InputStepFieldProps = {
-  step: RunStep
+  step: LocalRunStep
   kind: InputKind
   disabled: boolean
   showSaved: boolean
   // hasFocus says whether the field had focus when it saved, so it can get it back if the save moves the step.
-  onSave: (update: RunStepUpdate, hasFocus: boolean) => Promise<RunStep | null>
+  onSave: (
+    update: RunStepUpdate,
+    hasFocus: boolean,
+  ) => Promise<LocalRunStep | null>
   // Lets completing the run save this field first.
   registerSaveDraft: (saveDraft: SaveDraft | null) => void
   // Set when a save moved the step to the other section while it had focus, which mounts the field again.
@@ -111,7 +126,13 @@ function InputStepField({
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (focusOnMount) {
+    // Unless the user has moved on to another field in the meantime, which a save on the device leaves little
+    // time for, but a quick typist manages.
+    if (
+      focusOnMount &&
+      (document.activeElement === null ||
+        document.activeElement === document.body)
+    ) {
       inputRef.current?.focus()
     }
   }, [focusOnMount])
@@ -216,7 +237,7 @@ function InputStepField({
 const maxRadioOptions = 5
 
 type ChoiceStepFieldProps = {
-  step: RunStep
+  step: LocalRunStep
   disabled: boolean
   // Once the run is complete, or the step is deleted, it shows what was picked rather than the options.
   showSaved: boolean
@@ -323,11 +344,23 @@ function ChoiceStepField({
   )
 }
 
-function RunView({ id }: { id: number }) {
+const notOnDeviceMessage =
+  "This fill-out isn't saved on this device. Connect to the internet to load it."
+
+const deviceSaveFailedMessage = "Couldn't save this change on this device."
+
+// A fill-out lives on the device: every change is kept here first and sent to the API in the background
+// (see src/offline/sync.ts), so it can be filled out with no connection. A fill-out the device hasn't got is
+// fetched from the API once and kept from then on.
+function RunView({ clientKey }: { clientKey: string }) {
   const navigate = useNavigate()
-  const [run, setRun] = useState<ChecklistRun | null>(null)
+  const store = useLocalStore()
+  const [run, setRun] = useState<LocalRun | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [loading, setLoading] = useState(true)
+  // Counts the loads, so Retry after a failed one loads again.
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [loadFailed, setLoadFailed] = useState(false)
   // Steps whose tick or picked option is still saving, so each one can only have one save in flight.
   const [savingStepIds, setSavingStepIds] = useState<ReadonlySet<number>>(
     new Set(),
@@ -336,21 +369,41 @@ function RunView({ id }: { id: number }) {
   const [deleting, setDeleting] = useState(false)
   // The text or number step whose field had focus when it last saved, so it keeps focus if that moves the step.
   const [refocusStepId, setRefocusStepId] = useState<number | null>(null)
-  // Set by a 409, before the reload that fetches the completed run, so the page can't be edited if that fails.
-  const [completedElsewhere, setCompletedElsewhere] = useState(false)
-  const [reloadFailed, setReloadFailed] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   // Ticks still saving and each text field's saveDraft, so completing the run can wait for them first.
-  const pendingTicks = useRef(new Set<Promise<RunStep | null>>())
+  const pendingTicks = useRef(new Set<Promise<LocalRunStep | null>>())
   const saveDrafts = useRef(new Map<number, SaveDraft>())
+  // The run as last shown, for checks made after awaiting a save, when the render's run is out of date.
+  const runRef = useRef(run)
+  runRef.current = run
+  // The sync engine changes the stored fill-out too (its sync state, or the API's copy after a conflict), so
+  // the page reads it again after each change, once its own saves are done.
+  const savesInFlight = useRef(0)
+  const completingRef = useRef(false)
+  const refreshPending = useRef(false)
 
   useEffect(() => {
     // Ignore a response that arrives after the user has left the page.
     let current = true
 
     async function loadRun() {
+      setLoading(true)
+      setLoadFailed(false)
+      setErrorMessage('')
       try {
-        const loaded = await getRun(id)
+        const local = await store.getRun(clientKey)
+        let loaded: LocalRun | null
+        if (local !== undefined) {
+          // Deleted here and waiting to be deleted from the API, so it's gone as far as the user is concerned.
+          loaded = local.deletedAt === null ? local : null
+        } else {
+          const server = await getRunByKey(clientKey)
+          loaded = server === null ? null : fromServerRun(server, now())
+          if (loaded !== null) {
+            // Shown even if the device can't keep it.
+            await store.putRun(loaded).catch(() => undefined)
+          }
+        }
         if (!current) {
           return
         }
@@ -363,10 +416,15 @@ function RunView({ id }: { id: number }) {
         if (!current) {
           return
         }
-        trackException(error, { operation: 'loadRun' })
-        setErrorMessage(
-          describeFetchError(error, 'Unable to load this fill-out.'),
-        )
+        setLoadFailed(true)
+        if (error instanceof TypeError) {
+          setErrorMessage(notOnDeviceMessage)
+        } else {
+          trackException(error, { operation: 'loadRun' })
+          setErrorMessage(
+            describeFetchError(error, 'Unable to load this fill-out.'),
+          )
+        }
       } finally {
         if (current) {
           setLoading(false)
@@ -379,7 +437,29 @@ function RunView({ id }: { id: number }) {
     return () => {
       current = false
     }
-  }, [id])
+  }, [clientKey, store, loadAttempt])
+
+  useEffect(() => {
+    return store.subscribe(() => {
+      // Completing writes the fill-out as complete before the page moves on, which isn't to show in between.
+      if (savesInFlight.current > 0 || completingRef.current) {
+        refreshPending.current = true
+      } else {
+        void refreshFromStore()
+      }
+    })
+  })
+
+  async function refreshFromStore() {
+    try {
+      const local = await store.getRun(clientKey)
+      if (local !== undefined && local.deletedAt === null) {
+        setRun(local)
+      }
+    } catch {
+      // The page keeps showing the run as it was.
+    }
+  }
 
   if (notFound) {
     return (
@@ -387,58 +467,14 @@ function RunView({ id }: { id: number }) {
     )
   }
 
-  // A 409 means the run was completed somewhere else. It's read-only from now on, even if reloading it fails.
-  async function showCompletedRun(error: ApiError) {
-    setCompletedElsewhere(true)
-    setErrorMessage(error.message)
-    await reloadCompletedRun()
+  function now() {
+    return new Date().toISOString()
   }
 
-  async function reloadCompletedRun() {
-    setReloadFailed(false)
-    try {
-      const loaded = await getRun(id)
-      if (loaded === null) {
-        setNotFound(true)
-      } else {
-        setRun(loaded)
-      }
-    } catch {
-      // The run is still shown as read-only, and the error alert offers to try again.
-      setReloadFailed(true)
-    }
-  }
-
-  // A 400 means the change isn't allowed yet, such as a step whose prerequisites were un-done in another tab. Show
-  // why, and fetch the run again so it shows which steps can be filled in now.
-  async function showRejectedChange(error: ApiError) {
-    setErrorMessage(error.message)
-    try {
-      const loaded = await getRun(id)
-      if (loaded === null) {
-        setNotFound(true)
-      } else {
-        setRun(loaded)
-      }
-    } catch {
-      // The error already shown explains what went wrong, so keep showing the run as it was.
-    }
-  }
-
-  // Sends a 409 to showCompletedRun and a 400 to showRejectedChange, and reports whether it was either.
-  async function showApiError(error: unknown) {
-    if (!(error instanceof ApiError)) {
-      return false
-    }
-    if (error.status === 409) {
-      await showCompletedRun(error)
-    } else {
-      await showRejectedChange(error)
-    }
-    return true
-  }
-
-  function setStep(stepId: number, change: (step: RunStep) => RunStep) {
+  function setStep(
+    stepId: number,
+    change: (step: LocalRunStep) => LocalRunStep,
+  ) {
     setRun(
       (current) =>
         current && {
@@ -450,17 +486,23 @@ function RunView({ id }: { id: number }) {
     )
   }
 
-  // Returns the saved step, or null when the save failed.
+  // Keeps the change on the device and returns the saved step, or null when it couldn't be kept.
   async function handleSave(
     stepId: number,
     update: RunStepUpdate,
-  ): Promise<RunStep | null> {
+  ): Promise<LocalRunStep | null> {
     setErrorMessage('')
-    setSavingStepIds((current) => new Set(current).add(stepId))
+    const current = runRef.current
+    if (current === null) {
+      return null
+    }
+
+    setSavingStepIds((ids) => new Set(ids).add(stepId))
+    savesInFlight.current += 1
     // Show a tick or a picked option straight away, and undo it if the save fails. A text field already
     // shows what was typed. The step can't change again while this saves, so this is what to undo to.
     const previousOptionId =
-      run?.steps.find((step) => step.stepId === stepId)?.selectedOptionId ??
+      current.steps.find((step) => step.stepId === stepId)?.selectedOptionId ??
       null
     if ('isDone' in update) {
       setStep(stepId, (step) => ({ ...step, isDone: update.isDone }))
@@ -471,12 +513,7 @@ function RunView({ id }: { id: number }) {
         selectedOptionId: update.optionId,
       }))
     }
-
-    try {
-      const saved = await saveRunStep(id, stepId, update)
-      setStep(stepId, () => saved)
-      return saved
-    } catch (error) {
+    function undo() {
       if ('isDone' in update) {
         setStep(stepId, (step) => ({ ...step, isDone: !update.isDone }))
       }
@@ -486,17 +523,56 @@ function RunView({ id }: { id: number }) {
           selectedOptionId: previousOptionId,
         }))
       }
-      if (!(await showApiError(error))) {
-        trackException(error, { operation: 'saveRunStep' })
-        setErrorMessage(describeFetchError(error, 'Unable to save step.'))
+    }
+
+    try {
+      const at = now()
+      // The page keeps the user from changes the API would refuse, so this is the last check, made on the
+      // fill-out as it's kept rather than as last shown.
+      const check = { problem: null as string | null }
+      const saved = await store.updateRun(clientKey, (stored) => {
+        check.problem = stepChangeError(stored, stepId, update)
+        if (check.problem !== null) {
+          return stored
+        }
+        return bump(
+          {
+            ...stored,
+            steps: stored.steps.map((step) =>
+              step.stepId === stepId ? applyStepUpdate(step, update, at) : step,
+            ),
+          },
+          at,
+        )
+      })
+      if (saved === undefined) {
+        setNotFound(true)
+        return null
       }
+      if (check.problem !== null) {
+        undo()
+        setErrorMessage(check.problem)
+        return null
+      }
+      setRun(saved)
+      requestSync()
+      return saved.steps.find((step) => step.stepId === stepId) ?? null
+    } catch (error) {
+      undo()
+      trackException(error, { operation: 'saveRunStep' })
+      setErrorMessage(deviceSaveFailedMessage)
       return null
     } finally {
-      setSavingStepIds((current) => {
-        const next = new Set(current)
+      setSavingStepIds((ids) => {
+        const next = new Set(ids)
         next.delete(stepId)
         return next
       })
+      savesInFlight.current -= 1
+      if (savesInFlight.current === 0 && refreshPending.current) {
+        refreshPending.current = false
+        void refreshFromStore()
+      }
     }
   }
 
@@ -509,8 +585,11 @@ function RunView({ id }: { id: number }) {
     void tick.finally(() => pendingTicks.current.delete(tick))
   }
 
+  // Completes the fill-out on the device and sends it straight away when it can. Offline, it's complete here
+  // and reaches the API later; the API can still turn it down then, which the page shows when it's opened again.
   async function handleComplete() {
     setCompleting(true)
+    completingRef.current = true
     setErrorMessage('')
 
     try {
@@ -527,55 +606,97 @@ function RunView({ id }: { id: number }) {
       if (drafts.includes(false)) {
         return
       }
-      const completed = await completeRun(id)
-      trackEvent('RunCompleted')
-      // The checklists page shows the notice as a toast.
-      void navigate('/', {
-        state: { notice: `Completed "${completed.checklistName}".` },
-      })
-    } catch (error) {
-      if (!(await showApiError(error))) {
-        trackException(error, { operation: 'completeRun' })
-        setErrorMessage(
-          describeFetchError(error, 'Unable to complete this fill-out.'),
-        )
+      // As kept, since the saves just made may not have reached the page's copy yet.
+      const current = await store.getRun(clientKey)
+      if (current === undefined) {
+        setNotFound(true)
+        return
       }
+      if (unfinishedSteps(current).length > 0) {
+        setErrorMessage(unfinishedStepsMessage)
+        return
+      }
+
+      const at = now()
+      const completed = await store.updateRun(clientKey, (stored) =>
+        bump({ ...stored, completedAt: at }, at),
+      )
+      if (completed === undefined) {
+        setNotFound(true)
+        return
+      }
+
+      // The page moves on once the API has it, or once it's clear the API can't be reached, so it doesn't
+      // show as complete here first.
+      const outcome = await pushRun(clientKey)
+      if (outcome === 'synced' || outcome === 'pending') {
+        trackEvent('RunCompleted')
+        // The checklists page shows the notice as a toast.
+        void navigate('/', {
+          state: {
+            notice:
+              outcome === 'synced'
+                ? `Completed "${completed.checklistName}".`
+                : `Completed "${completed.checklistName}". It's saved on this device and will sync when you're online.`,
+          },
+        })
+        return
+      }
+
+      // The API said no, and the store has its answer: a message to fix, or its own completed copy.
+      const latest = await store.getRun(clientKey)
+      if (outcome === 'rejected') {
+        setErrorMessage(
+          latest?.syncError?.message ?? 'Unable to complete this fill-out.',
+        )
+        const reopened = await store.updateRun(clientKey, (stored) =>
+          bump({ ...stored, completedAt: null }, now()),
+        )
+        setRun(reopened ?? latest ?? completed)
+      } else if (latest !== undefined) {
+        setRun(latest)
+      }
+    } catch (error) {
+      trackException(error, { operation: 'completeRun' })
+      setErrorMessage(deviceSaveFailedMessage)
     } finally {
+      completingRef.current = false
+      refreshPending.current = false
       setCompleting(false)
     }
   }
 
-  // Deletes the run whether it's in progress or complete, and goes back to its checklist.
+  // Deletes the run whether it's in progress or complete, and goes back to its checklist. The API's copy, if it
+  // has one, is deleted when the device next syncs.
   async function handleDelete(checklistId: number) {
     setDeleting(true)
     setErrorMessage('')
 
     try {
-      await deleteRun(id)
+      await store.deleteRun(clientKey)
       trackEvent('RunDeleted')
+      requestSync()
       void navigate(`/checklists/${checklistId}`)
     } catch (error) {
       trackException(error, { operation: 'deleteRun' })
-      setErrorMessage(
-        describeFetchError(error, 'Unable to delete this fill-out.'),
-      )
+      setErrorMessage('Unable to delete this fill-out.')
       setDeleting(false)
     }
   }
 
-  const isComplete = run?.completedAt != null || completedElsewhere
+  const isComplete = run?.completedAt != null
   const steps = run?.steps ?? []
   const doneCount = steps.filter((step) => step.isDone).length
-  // Worked out from the steps as shown, rather than each step's isLocked, so a tick unlocks the steps after it
-  // straight away.
+  // Worked out from the steps as shown, so a tick unlocks the steps after it straight away.
   const doneStepIds = new Set(
     steps.filter((step) => step.isDone).map((step) => step.stepId),
   )
   // A step deleted from the checklist before it was done can't be done any more, so an open run leaves it out.
-  const isOpenStep = (step: RunStep) => !step.isDone && step.stepId !== null
-  const isLocked = (step: RunStep) =>
+  const isOpenStep = (step: LocalRunStep) =>
+    !step.isDone && step.stepId !== null
+  const isLocked = (step: LocalRunStep) =>
     step.dependsOnStepIds.some((stepId) => !doneStepIds.has(stepId))
-  const isToDo = (step: RunStep) => isOpenStep(step) && !isLocked(step)
+  const isToDo = (step: LocalRunStep) => isOpenStep(step) && !isLocked(step)
   const toDoCount = steps.filter(isToDo).length
   const lockedCount = steps.filter(
     (step) => isOpenStep(step) && isLocked(step),
@@ -584,7 +705,7 @@ function RunView({ id }: { id: number }) {
     ? steps.length
     : steps.filter((step) => step.isDone || step.stepId !== null).length
 
-  function renderStep(step: RunStep, index: number) {
+  function renderStep(step: LocalRunStep, index: number) {
     const { stepId } = step
     // A step deleted from the checklist can't be saved any more.
     const disabled = isComplete || completing || deleting || stepId === null
@@ -697,18 +818,31 @@ function RunView({ id }: { id: number }) {
         <Alert
           severity="error"
           action={
-            reloadFailed && (
+            loadFailed && (
               <Button
                 color="inherit"
                 size="small"
-                onClick={() => void reloadCompletedRun()}
+                onClick={() => setLoadAttempt((attempt) => attempt + 1)}
               >
-                Reload
+                Retry
               </Button>
             )
           }
         >
           {errorMessage}
+        </Alert>
+      )}
+
+      {run?.syncError?.kind === 'rejected' && (
+        <Alert severity="warning">
+          Not synced yet: {run.syncError.message}
+        </Alert>
+      )}
+
+      {run?.syncError?.kind === 'conflict' && (
+        <Alert severity="info">
+          This fill-out was completed on another device, so it shows what was
+          saved there.
         </Alert>
       )}
 
@@ -826,13 +960,69 @@ function RunView({ id }: { id: number }) {
   )
 }
 
+// Links from before fill-outs had keys name the API's id, so the fill-out is looked up and the page moves on to
+// its key.
+function LegacyRunRedirect({ id }: { id: number }) {
+  const navigate = useNavigate()
+  const [notFound, setNotFound] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
+
+  useEffect(() => {
+    let current = true
+
+    async function findRun() {
+      try {
+        const run = await getRun(id)
+        if (!current) {
+          return
+        }
+        if (run === null) {
+          setNotFound(true)
+        } else {
+          void navigate(`/runs/${run.clientKey}`, { replace: true })
+        }
+      } catch (error) {
+        if (current) {
+          setErrorMessage(
+            describeFetchError(error, 'Unable to load this fill-out.'),
+          )
+        }
+      }
+    }
+
+    void findRun()
+
+    return () => {
+      current = false
+    }
+  }, [id, navigate])
+
+  if (notFound) {
+    return (
+      <NotFoundPage message="That fill-out doesn't exist. Its checklist may have been deleted." />
+    )
+  }
+  if (errorMessage) {
+    return <Alert severity="error">{errorMessage}</Alert>
+  }
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+      <CircularProgress aria-label="Loading" />
+    </Box>
+  )
+}
+
 function RunPage() {
-  const id = parseId(useParams().runId)
+  const { key } = useParams()
+  // Keyed so going back or forward between two runs starts each one with fresh state.
+  if (isClientKey(key)) {
+    return <RunView key={key} clientKey={key} />
+  }
+  const id = parseId(key)
   if (id === null) {
     return <NotFoundPage />
   }
-  // Keyed by id so going back or forward between two runs starts each one with fresh state.
-  return <RunView key={id} id={id} />
+  return <LegacyRunRedirect key={id} id={id} />
 }
 
 export default RunPage

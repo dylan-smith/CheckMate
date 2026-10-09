@@ -76,14 +76,17 @@ test.describe('Accessibility', () => {
       }
       const runResponse = await request.post(`${checklistsApiUrl}/${id}/runs`)
       expect(runResponse.ok()).toBe(true)
-      const { id: runId } = (await runResponse.json()) as { id: number }
+      const { id: runId, clientKey } = (await runResponse.json()) as {
+        id: number
+        clientKey: string
+      }
       const tickResponse = await request.put(
         `http://localhost:5269/api/runs/${runId}/steps/${stepIds[0]}`,
         { data: { isDone: true } },
       )
       expect(tickResponse.ok()).toBe(true)
 
-      await page.goto(`/runs/${runId}`)
+      await page.goto(`/runs/${clientKey}`)
       await expect(page.getByRole('heading', { name })).toBeVisible()
       await expect(
         page.getByRole('checkbox', { name: 'A11y run step', exact: true }),

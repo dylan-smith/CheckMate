@@ -59,6 +59,12 @@ Every API endpoint except `/health`, `/openapi/v1.json` and `/scalar` needs a si
 
 Locally, `dotnet run` and `npm run dev` need nothing more: sign in with the test sign-in form. To call the API from Scalar or curl, add a header such as `Authorization: Bearer test:Me`.
 
+### Filling out offline
+
+Fill-outs live on the device first. Every checklist the app sees while online is kept in the browser's IndexedDB (one database per signed-in user), so any of them can be filled out with no connection, for example a pre-dive checklist at a site with no signal. Starting a fill-out gives it a key the device chooses, and each answer is saved on the device with the time it was given. A sync engine (`frontend/src/offline/sync.ts`) sends changed fill-outs to `PUT /api/checklists/{id}/runs/{clientKey}` whenever it can: on start, a second after each change, when the browser comes back online or the app comes back into view, and with a growing wait after the API couldn't be reached. The same fill-out sent twice changes nothing, so a lost reply is safe. The header shows "Offline" or "N to sync" while anything is waiting, and a toast says when fill-outs that had been waiting get through.
+
+The API keeps the times the device recorded (clamped to its own clock if they're in the future), decides whether each step is done the same way the device did, and checks the whole fill-out at once; a rejection shows on the fill-out as "Not synced yet" with the reason, and is sent again once the fill-out changes. A fill-out completed on another device wins: the device takes the API's copy and says so. Creating and editing checklists still needs a connection, and the pages say so when the browser is offline. Synced, completed fill-outs are dropped from the device after seven days; the API keeps them. Signing out keeps the device's fill-outs for the next sign-in by the same user, which matters because a Google sign-in expires after about an hour and the first sync after a long time offline signs the user in again.
+
 ### Dev Container
 
 The repo includes a dev container (`.devcontainer/`) with everything preinstalled: .NET 10, Node 24, Playwright Chromium, the Azure CLI with Bicep, the GitHub CLI and Claude Code. It also runs a SQL Server 2022 container next to the app. Open the repo in VS Code and choose **Dev Containers: Reopen in Container**, or open it in GitHub Codespaces. Docker is required locally.

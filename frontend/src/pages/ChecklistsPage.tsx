@@ -20,14 +20,28 @@ import {
   ApiError,
   createChecklist,
   describeFetchError,
-  listChecklists,
 } from '../api/checklists'
 import type { Checklist } from '../api/checklists'
-import { startRun } from '../api/runs'
+import {
+  loadChecklist,
+  loadChecklists,
+  prefetchChecklists,
+} from '../offline/checklists'
+import { newClientKey } from '../offline/clientKey'
+import { useOnline } from '../offline/online'
+import { createLocalRun } from '../offline/runs'
+import { useLocalStore } from '../offline/store'
+import { requestSync } from '../offline/sync'
 import { trackEvent, trackException } from '../telemetry'
 
 // How long a notice toast stays up, in milliseconds.
 const noticeDuration = 4000
+
+export const offlineMessage =
+  "You're offline. Checklists saved on this device can still be filled out, but making or changing one needs a connection."
+
+export const cachedCopyMessage =
+  "CheckMate couldn't be reached, so this is the copy saved on this device."
 
 // A page that navigates here can pass { notice } in the location state to show it as a toast.
 function readNotice(state: unknown) {
@@ -45,10 +59,13 @@ function SlideDown(props: SlideProps) {
 
 function ChecklistsPage() {
   const [checklists, setChecklists] = useState<Checklist[]>([])
+  const [fromCache, setFromCache] = useState(false)
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const location = useLocation()
+  const online = useOnline()
+  const store = useLocalStore()
   const [submitting, setSubmitting] = useState(false)
   // The checklist whose fill-out is being started, so its button can say so.
   const [startingId, setStartingId] = useState<number | null>(null)
@@ -58,7 +75,7 @@ function ChecklistsPage() {
   const [noticeOpen, setNoticeOpen] = useState(notice !== '')
 
   useEffect(() => {
-    void loadChecklists()
+    void load()
   }, [])
 
   // Clear the notice from history so a reload or going back doesn't show it again.
@@ -69,12 +86,18 @@ function ChecklistsPage() {
     }
   }, [hasLocationState, navigate])
 
-  async function loadChecklists() {
+  async function load() {
     setLoading(true)
     setErrorMessage('')
 
     try {
-      setChecklists(await listChecklists())
+      const loaded = await loadChecklists()
+      setChecklists(loaded.data)
+      setFromCache(loaded.fromCache)
+      // Keeps every checklist's steps on the device too, so any of them can be filled out offline later.
+      if (!loaded.fromCache) {
+        prefetchChecklists(loaded.data)
+      }
     } catch (error) {
       trackException(error, { operation: 'load' })
       setErrorMessage(describeFetchError(error, 'Unable to load checklists.'))
@@ -99,7 +122,7 @@ function ChecklistsPage() {
       await createChecklist(trimmedName)
       trackEvent('ChecklistCreated')
       setName('')
-      await loadChecklists()
+      await load()
     } catch (error) {
       // A duplicate name is the user's to fix, not a failure to report.
       if (!(error instanceof ApiError)) {
@@ -111,14 +134,25 @@ function ChecklistsPage() {
     }
   }
 
+  // Starts the fill-out on the device, from the checklist as the API has it or, offline, as the device has it.
   async function handleFillOut(checklistId: number) {
     setStartingId(checklistId)
     setErrorMessage('')
 
     try {
-      const run = await startRun(checklistId)
+      const loaded = await loadChecklist(checklistId)
+      if (loaded === null) {
+        throw new Error('The checklist has been deleted.')
+      }
+      const run = createLocalRun(
+        loaded.data,
+        newClientKey(),
+        new Date().toISOString(),
+      )
+      await store.putRun(run)
       trackEvent('RunStarted')
-      void navigate(`/runs/${run.id}`)
+      requestSync()
+      void navigate(`/runs/${run.clientKey}`)
     } catch (error) {
       trackException(error, { operation: 'startRun' })
       setErrorMessage(
@@ -131,6 +165,12 @@ function ChecklistsPage() {
   return (
     <>
       <Stack spacing={2}>
+        {!online ? (
+          <Alert severity="info">{offlineMessage}</Alert>
+        ) : (
+          fromCache && <Alert severity="info">{cachedCopyMessage}</Alert>
+        )}
+
         <Paper component="section" elevation={2} sx={{ p: 3 }}>
           <Typography variant="h5" component="h2" sx={{ mb: 2 }}>
             Create checklist
@@ -150,7 +190,11 @@ function ChecklistsPage() {
               placeholder="e.g. Daily chores"
             />
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-              <Button type="submit" variant="contained" disabled={submitting}>
+              <Button
+                type="submit"
+                variant="contained"
+                disabled={submitting || !online}
+              >
                 {submitting ? 'Saving…' : 'Create checklist'}
               </Button>
             </Stack>

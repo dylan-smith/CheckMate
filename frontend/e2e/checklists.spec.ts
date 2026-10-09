@@ -435,7 +435,7 @@ test.describe('Checklist management', () => {
       // Filling out starts with one click from the checklists page.
       await page.reload()
       await page.getByRole('button', { name: 'Fill out "Opening up"' }).click()
-      await expect(page).toHaveURL(/\/runs\/\d+$/)
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/)
 
       const unlock = page.getByRole('checkbox', { name: 'Unlock door' })
       await unlock.check()
@@ -506,7 +506,7 @@ test.describe('Checklist management', () => {
       )
 
       await page.getByRole('button', { name: 'Fill out' }).click()
-      await expect(page).toHaveURL(/\/runs\/\d+$/)
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/)
       const cash = page.getByRole('textbox', { name: 'Cash in till' })
       await cash.fill('  $250  ')
       await cash.press('Enter')
@@ -550,7 +550,7 @@ test.describe('Checklist management', () => {
       await page
         .getByRole('button', { name: 'Fill out "Fridge check"' })
         .click()
-      await expect(page).toHaveURL(/\/runs\/\d+$/)
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/)
       const temperature = page.getByRole('textbox', {
         name: 'Fridge temperature',
       })
@@ -629,7 +629,7 @@ test.describe('Checklist management', () => {
       )
 
       await page.getByRole('button', { name: 'Fill out' }).click()
-      await expect(page).toHaveURL(/\/runs\/\d+$/)
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/)
       const rainy = page.getByRole('radio', { name: 'Rainy' })
       await rainy.check()
       await expect(page.getByText('1 of 1 done')).toBeVisible()
@@ -717,7 +717,7 @@ test.describe('Checklist management', () => {
 
       await page.goto(`/checklists/${id}`)
       await page.getByRole('button', { name: 'Fill out' }).click()
-      await expect(page).toHaveURL(/\/runs\/\d+$/)
+      await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}$/)
 
       const toDo = page.getByRole('list', { name: 'To do' })
       const completed = page.getByRole('list', { name: 'Completed' })
@@ -882,9 +882,9 @@ test.describe('Checklist management', () => {
       const startRun = async () => {
         const response = await request.post(`${checklistsApiUrl}/${id}/runs`)
         expect(response.ok()).toBe(true)
-        return ((await response.json()) as { id: number }).id
+        return (await response.json()) as { id: number; clientKey: string }
       }
-      const completedId = await startRun()
+      const { id: completedId } = await startRun()
       // Every step must be done before a run can be completed.
       expect(
         (
@@ -901,7 +901,7 @@ test.describe('Checklist management', () => {
           )
         ).ok(),
       ).toBe(true)
-      const inProgressId = await startRun()
+      const { id: inProgressId, clientKey: inProgressKey } = await startRun()
 
       await page.goto(`/checklists/${id}`)
       const fillOuts = page.getByRole('list', { name: 'Fill-outs' })
@@ -918,7 +918,7 @@ test.describe('Checklist management', () => {
 
       // The one in progress, from its own page.
       await fillOuts.getByRole('link').click()
-      await expect(page).toHaveURL(new RegExp(`/runs/${inProgressId}$`))
+      await expect(page).toHaveURL(new RegExp(`/runs/${inProgressKey}$`))
       await expect(
         page.getByRole('checkbox', { name: 'Only step' }),
       ).toBeEnabled()
@@ -928,15 +928,17 @@ test.describe('Checklist management', () => {
       await expect(page).toHaveURL(new RegExp(`/checklists/${id}$`))
       await expect(page.getByText('No fill-outs yet.')).toBeVisible()
 
-      // Both are gone for good.
+      // Both are gone for good. The one deleted from its page goes from the API once the device has synced.
       await page.reload()
       await expect(page.getByText('No fill-outs yet.')).toBeVisible()
       for (const runId of [completedId, inProgressId]) {
-        expect(
-          (
-            await request.get(`http://localhost:5269/api/runs/${runId}`)
-          ).status(),
-        ).toBe(404)
+        await expect
+          .poll(async () =>
+            (
+              await request.get(`http://localhost:5269/api/runs/${runId}`)
+            ).status(),
+          )
+          .toBe(404)
       }
     })
 
@@ -953,7 +955,10 @@ test.describe('Checklist management', () => {
       ])
       const runResponse = await request.post(`${checklistsApiUrl}/${id}/runs`)
       expect(runResponse.ok()).toBe(true)
-      const { id: runId } = (await runResponse.json()) as { id: number }
+      const { id: runId, clientKey } = (await runResponse.json()) as {
+        id: number
+        clientKey: string
+      }
       // Done before it's deleted, since a deleted step that wasn't done is left out of an open run.
       expect(
         (
@@ -974,7 +979,9 @@ test.describe('Checklist management', () => {
       ).toBe(true)
       expect((await request.delete(`${stepsUrl}/${deletedId}`)).ok()).toBe(true)
 
+      // A link from before fill-outs had keys still opens the fill-out, by its key.
       await page.goto(`/runs/${runId}`)
+      await expect(page).toHaveURL(new RegExp(`/runs/${clientKey}$`))
       await expect(
         page.getByRole('checkbox', { name: 'Original text' }),
       ).toBeVisible()
