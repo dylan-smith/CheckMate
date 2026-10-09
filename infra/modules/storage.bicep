@@ -10,6 +10,9 @@ param storageAccountName string
 @minValue(1)
 param backupRetentionDays int = 30
 
+@description('Custom domain (e.g. app.example.com) the static website is also served on. Leave empty for none.')
+param customDomainName string = ''
+
 // The static website itself ($web container, index/404 documents) is a data-plane setting that ARM
 // can't manage; CI enables it with `az storage blob service-properties update --static-website`.
 resource storageAccount 'Microsoft.Storage/storageAccounts@2025-01-01' = {
@@ -26,6 +29,15 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2025-01-01' = {
     allowBlobPublicAccess: true
     allowSharedKeyAccess: true
     allowCrossTenantReplication: false
+    // Registers the domain so the static website answers requests for it. Azure checks it through the
+    // asverify.<domain> CNAME, so the domain itself can point at the web endpoint through a proxy (Cloudflare),
+    // which also serves it over HTTPS.
+    customDomain: empty(customDomainName)
+      ? null
+      : {
+          name: customDomainName
+          useSubDomainName: true
+        }
   }
 }
 
@@ -75,6 +87,11 @@ resource lifecyclePolicy 'Microsoft.Storage/storageAccounts/managementPolicies@2
 
 @description('Primary web endpoint for the static website.')
 output primaryWebEndpoint string = storageAccount.properties.primaryEndpoints.web
+
+@description('Origin the frontend is served on: the custom domain when there is one, otherwise the web endpoint.')
+output frontendOrigin string = empty(customDomainName)
+  ? replace(storageAccount.properties.primaryEndpoints.web, '.net/', '.net')
+  : 'https://${customDomainName}'
 
 @description('Resource ID of the Storage Account.')
 output storageAccountId string = storageAccount.id

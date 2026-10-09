@@ -874,14 +874,7 @@ jobs:
 
       - name: Resolve frontend origin
         id: resolve-frontend-origin
-        shell: bash
-        run: |
-          FRONTEND_ORIGIN="$(az storage account show \
-            --name "${AZURE_STORAGE_ACCOUNT_NAME}" \
-            --query 'primaryEndpoints.web' \
-            --output tsv)"
-          FRONTEND_ORIGIN="${FRONTEND_ORIGIN%/}"
-          echo "frontend-origin=${FRONTEND_ORIGIN}" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/resolve-frontend-origin.sh
         env:
           AZURE_STORAGE_ACCOUNT_NAME: ${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}
 

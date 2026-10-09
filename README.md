@@ -182,7 +182,7 @@ infra/
 │   ├── appservice.bicep # App Service Plan + App Service (Linux/.NET 10) and its app settings
 │   ├── monitoring.bicep # Log Analytics Workspace + Application Insights
 │   ├── sql.bicep        # Azure SQL Server (Entra-only auth) + serverless Database and its diagnostic logs
-│   ├── storage.bicep    # Storage Account for the frontend static website
+│   ├── storage.bicep    # Storage Account for the frontend static website and its custom domain
 │   └── workbook.bicep   # "CheckMate Health" Azure Monitor Workbook
 └── workbooks/
     └── health.workbook.json # Workbook content, with placeholder tokens for resource IDs
@@ -289,9 +289,27 @@ Setting up previews for a new environment: create the `CheckMate-Preview` resour
 | Component | Azure Service | Endpoint |
 |-----------|--------------|----------|
 | Backend API | Azure App Service (Linux/.NET 10) | `https://checkmate-heesaxh5agdygvew.westus2-01.azurewebsites.net` |
-| Frontend | Azure Storage Account (static website) | `https://checkmateweb.z22.web.core.windows.net` |
+| Frontend | Azure Storage Account (static website), proxied by Cloudflare | `https://checkmate.diveintelligence.com` (also `https://checkmateweb.z22.web.core.windows.net`) |
 | Database | Azure SQL serverless database (Entra-only auth) | — |
 | Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs and SQL errors, timeouts, blocks, deadlocks and automatic tuning go to the `CheckMate` workspace), plus the **CheckMate Health** workbook | — |
+
+### Custom Domain
+
+The frontend is served on `checkmate.diveintelligence.com` (`frontendCustomDomain` in `infra/main.bicepparam`). The storage account's static website can't serve a custom domain over HTTPS by itself, so Cloudflare proxies the domain to it and serves it over HTTPS. Bicep registers the domain on the storage account, so the static website answers requests for it, and allows it in the API's CORS origins next to the web endpoint, which keeps working. The API stays on its `azurewebsites.net` URL, because the Free (F1) App Service plan doesn't support custom domains.
+
+Before the first deployment with the domain (Azure checks it then, and the deployment fails if it can't), set up the `diveintelligence.com` zone in Cloudflare:
+
+| Type | Name | Target | Proxy status |
+|------|------|--------|--------------|
+| CNAME | `asverify.checkmate` | `asverify.checkmateweb.blob.core.windows.net` | DNS only |
+| CNAME | `checkmate` | `checkmateweb.z22.web.core.windows.net` | Proxied |
+
+- Keep the `asverify` record, since every deployment sends the domain again.
+- Under **Rules → Configuration Rules**, add a rule for hostname `checkmate.diveintelligence.com` that sets **SSL** to **Full**. The storage account's certificate is for `*.web.core.windows.net`, so **Full (strict)** fails, and **Flexible** connects over HTTP, which the storage account refuses.
+- Turn on **SSL/TLS → Edge Certificates → Always Use HTTPS**, since the service worker and Google sign-in need HTTPS.
+- In the Google Cloud console, add `https://checkmate.diveintelligence.com` to the OAuth client's **Authorized JavaScript origins**, or Google sign-in won't load there.
+
+Browsers keep each origin's data apart, so an installed app and fill-outs saved offline on the old URL stay there. Sync them before moving to the new URL.
 
 ### Database Backups
 
