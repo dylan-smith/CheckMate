@@ -741,6 +741,10 @@ test.describe('Checklist management', () => {
       await expect(serve).toBeVisible()
       // Prep can't be un-done while Cook, which depends on it, is done.
       await expect(prep).toBeDisabled()
+      await steps.getByText('Prep', { exact: true }).hover()
+      await expect(page.getByRole('tooltip')).toHaveText(
+        'Can\'t be un-done while "Cook" is done.',
+      )
 
       // The state survives a reload.
       await page.reload()

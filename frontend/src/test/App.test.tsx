@@ -2507,6 +2507,14 @@ describe('App', () => {
         expect(
           await screen.findByRole('checkbox', { name: 'Wash' }),
         ).toBeDisabled()
+        // The reason is in a tooltip, so it doesn't move the list.
+        expect(
+          screen.queryByText('Can\'t be un-done while "Pack" is done.'),
+        ).not.toBeInTheDocument()
+        await user.hover(screen.getByText('Wash'))
+        expect(await screen.findByRole('tooltip')).toHaveTextContent(
+          'Can\'t be un-done while "Pack" is done.',
+        )
 
         await user.click(screen.getByRole('checkbox', { name: 'Pack' }))
 
@@ -2519,6 +2527,23 @@ describe('App', () => {
           expect(screen.getByRole('checkbox', { name: 'Wash' })).toBeEnabled()
         })
         expect(screen.queryByText(/Can't be un-done/)).not.toBeInTheDocument()
+      })
+
+      it("says why a step can't be un-done when it's tapped", async () => {
+        mockRunPage({
+          ...chainRun,
+          steps: [
+            checkboxStep(11, 'Wash', { isDone: true }),
+            checkboxStep(12, 'Pack', { isDone: true, dependsOnStepIds: [11] }),
+          ],
+        })
+
+        renderAt(runPath)
+
+        fireEvent.touchStart(await screen.findByText('Wash'))
+        expect(await screen.findByRole('tooltip')).toHaveTextContent(
+          'Can\'t be un-done while "Pack" is done.',
+        )
       })
 
       it('shows why the API would not take the fill-out, until it changes', async () => {
