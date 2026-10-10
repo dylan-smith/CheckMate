@@ -47,7 +47,7 @@ The frontend dev server starts at `http://localhost:5173`. Set the `VITE_API_BAS
 
 A production build registers a service worker that keeps the app itself (`index.html`, the bundles and the icons) on the device, so the app opens with no connection, and a web app manifest that lets it be installed on a phone's home screen (Chrome: menu → **Install app**; iOS Safari: Share → **Add to Home Screen**). The service worker caches nothing else: API calls, Google sign-in and telemetry always go to the network. When a new version is deployed, the app shows "A new version of CheckMate is available" with a **Reload** button; a user who ignores it gets the new version the next time the app is fully closed and opened again. Safari can clear a site's storage after seven days without a visit unless the app is installed on the home screen.
 
-The icons in `frontend/public` are generated from `favicon.svg`. To regenerate them after changing the logo, run `npx --yes @vite-pwa/assets-generator@2 --preset minimal-2023 public/favicon.svg` in `frontend` and keep `pwa-192x192.png`, `pwa-512x512.png` and `maskable-icon-512x512.png`.
+The icons in `frontend/public` are generated from `favicon.svg`. To regenerate them after changing the logo, run `npx --yes @vite-pwa/assets-generator@2 --preset minimal-2023 public/favicon.svg` in `frontend` and keep `pwa-192x192.png`, `pwa-512x512.png` and `maskable-icon-512x512.png`. Rename `apple-touch-icon-180x180.png` to `apple-touch-icon.png`, and delete the other files it makes.
 
 ### Sign-in
 
