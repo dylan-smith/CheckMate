@@ -18,6 +18,10 @@ param storageAccountName = 'checkmateweb'
 // Database backups (BACPAC exports taken by CI before migrations, in the db-backups container)
 param backupRetentionDays = 30
 
+// Custom domain for the frontend. Cloudflare proxies it to the static website and serves it over HTTPS; see the
+// README's "Custom Domain" section for the DNS records it needs before deploying.
+param frontendCustomDomain = 'checkmate.diveintelligence.com'
+
 // SQL Server and Database (Entra-only auth; 'checkmate' is taken globally)
 param sqlServerName = 'checkmate-sql'
 param sqlDatabaseName = 'CheckMate'

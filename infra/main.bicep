@@ -56,6 +56,9 @@ param serviceToken string
 @minValue(1)
 param backupRetentionDays int = 30
 
+@description('Custom domain the frontend is served on (e.g. app.example.com), proxied through Cloudflare. Leave empty to use the storage account\'s web endpoint.')
+param frontendCustomDomain string = ''
+
 @description('Name of the Log Analytics Workspace.')
 param logAnalyticsWorkspaceName string
 
@@ -98,6 +101,7 @@ module storage 'modules/storage.bicep' = {
     location: storageLocation
     storageAccountName: storageAccountName
     backupRetentionDays: backupRetentionDays
+    customDomainName: frontendCustomDomain
   }
 }
 
@@ -126,8 +130,8 @@ module appService 'modules/appservice.bicep' = {
     appInsightsInstrumentationKey: monitoring.outputs.appInsightsInstrumentationKey
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     sqlConnectionString: sqlConnectionString
-    // The browser sends the origin without a trailing slash.
-    corsAllowedOrigin: replace(storage.outputs.primaryWebEndpoint, '.net/', '.net')
+    // The web endpoint keeps working next to the custom domain. The browser sends the origin without a trailing slash.
+    corsAllowedOrigins: union([storage.outputs.frontendOrigin], [replace(storage.outputs.primaryWebEndpoint, '.net/', '.net')])
     googleClientId: googleClientId
     serviceToken: serviceToken
   }
@@ -145,7 +149,7 @@ module workbook 'modules/workbook.bicep' = {
     storageAccountId: storage.outputs.storageAccountId
     actionGroupId: alerts.outputs.actionGroupId
     apiUrl: appService.outputs.appServiceUrl
-    frontendUrl: storage.outputs.primaryWebEndpoint
+    frontendUrl: storage.outputs.frontendOrigin
   }
 }
 
@@ -174,6 +178,9 @@ output appServiceUrl string = appService.outputs.appServiceUrl
 
 @description('Primary web endpoint for the frontend static website.')
 output frontendWebEndpoint string = storage.outputs.primaryWebEndpoint
+
+@description('Origin the frontend is served on (the custom domain when there is one).')
+output frontendOrigin string = storage.outputs.frontendOrigin
 
 @description('Fully qualified domain name of the SQL Server.')
 output sqlServerFqdn string = sql.outputs.sqlServerFqdn
