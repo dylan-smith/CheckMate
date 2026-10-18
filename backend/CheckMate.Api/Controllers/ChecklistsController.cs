@@ -223,10 +223,8 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
         {
             var prerequisites = new HashSet<int>();
 
-            foreach (var dependsOn in requested[index].DependsOn ?? [])
+            foreach (var id in (requested[index].DependsOn ?? []).Select(dependsOn => dependsOn.Trim()))
             {
-                var id = dependsOn.Trim();
-
                 if (!indexById.TryGetValue(id, out var prerequisite))
                 {
                     ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), $"Step {index + 1} depends on '{id}', which isn't the id of any step.");
