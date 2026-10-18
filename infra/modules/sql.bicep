@@ -17,20 +17,8 @@ param entraAdminObjectId string = ''
 @allowed(['User', 'Group', 'Application'])
 param entraAdminPrincipalType string = 'User'
 
-@description('Serverless vCore maximum capacity.')
-param maxCapacity int = 2
-
-@description('Serverless minimum capacity (vCores).')
-param minCapacity string = '0.5'
-
-@description('Minutes of inactivity before the serverless database auto-pauses.')
-param autoPauseDelay int = 60
-
-@description('Maximum database size in bytes.')
-param maxSizeBytes int = 34359738368
-
-@description('Use the Azure SQL free offer (monthly free vCore-seconds and storage).')
-param useFreeLimit bool = true
+@description('Maximum database size in bytes. 2 GB is the most the Basic tier allows.')
+param maxSizeBytes int = 2147483648
 
 @description('Resource ID of the Log Analytics Workspace for database diagnostic logs.')
 param logAnalyticsWorkspaceId string
@@ -73,25 +61,19 @@ resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-08-01' = {
   parent: sqlServer
   name: databaseName
   location: location
+  // Basic (5 DTU) is the cheapest tier that never pauses, so the first request after a quiet spell isn't
+  // held up by a serverless resume. PR previews stay on the serverless free offer (preview.bicep).
   sku: {
-    name: 'GP_S_Gen5'
-    tier: 'GeneralPurpose'
-    family: 'Gen5'
-    capacity: maxCapacity
+    name: 'Basic'
+    tier: 'Basic'
+    capacity: 5
   }
-  // freeLimitExhaustionBehavior is only valid with the free offer, so it's omitted (not sent as null) otherwise.
-  properties: union(
-    {
-      collation: 'SQL_Latin1_General_CP1_CI_AS'
-      maxSizeBytes: maxSizeBytes
-      minCapacity: json(minCapacity)
-      autoPauseDelay: autoPauseDelay
-      zoneRedundant: false
-      requestedBackupStorageRedundancy: 'Local'
-      useFreeLimit: useFreeLimit
-    },
-    useFreeLimit ? { freeLimitExhaustionBehavior: 'AutoPause' } : {}
-  )
+  properties: {
+    collation: 'SQL_Latin1_General_CP1_CI_AS'
+    maxSizeBytes: maxSizeBytes
+    zoneRedundant: false
+    requestedBackupStorageRedundancy: 'Local'
+  }
 }
 
 // Only the low-volume health categories; Query Store and wait statistics are left off to keep

@@ -47,7 +47,7 @@ param slackWebhookUrl = readEnvironmentVariable('SLACK_WEBHOOK_URL', '')
 // Claude investigates fired alerts when ALERT_INVESTIGATION_TOKEN is set too (.github/workflows/alert-investigation.yml)
 param alertInvestigationToken = readEnvironmentVariable('ALERT_INVESTIGATION_TOKEN', '')
 param githubRepository = 'dylan-smith/CheckMate'
-param monthlyBudget = 10
+param monthlyBudget = 15
 // The month the budget was first deployed. Azure won't change it on an existing budget, so a new environment should
 // use the first of the month it's created in.
 param budgetStartDate = '2026-10-01'

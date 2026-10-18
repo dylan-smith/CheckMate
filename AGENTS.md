@@ -13,7 +13,7 @@ CheckMate is a checklist management app.
 - `backend/CheckMate.Api.Tests`: xUnit backend tests.
 - `frontend`: React 19 + TypeScript + Material UI (Vite). Unit tests use Vitest in `src/test`,
   and Playwright E2E tests are in `e2e`.
-- `infra`: Bicep templates for Azure (App Service, Azure SQL serverless, Storage static website,
+- `infra`: Bicep templates for Azure (App Service, Azure SQL, Storage static website,
   monitoring). `preview.bicep` is a pull request's preview environment, and `preview-shared.bicep`
   the plan and SQL server every preview shares (deployed from the PR's base branch).
 - `.github/workflows/ci.yml`: build, test, CodeQL, E2E, PR what-if preview, deploy each PR to a
@@ -102,7 +102,8 @@ npm run test:e2e
 - When the schema changes, review the preview seed data (`.github/scripts/preview-seed-data.json`,
   loaded through the API by `.github/scripts/seed-preview.sh`) and update it if needed, so new
   previews show the new data (e.g. a new step type, or a new field on checklists or fill-outs).
-- Production is Azure SQL serverless, which auto-pauses. Keep the transient-error retry handling
+- Production is an always-on Azure SQL Basic database, and PR previews are Azure SQL serverless, which
+  auto-pauses. Keep the transient-error retry handling
   in `Program.cs` and `DbUpRunner.cs` intact.
 
 ### Infrastructure

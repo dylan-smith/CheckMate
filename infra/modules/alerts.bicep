@@ -45,9 +45,6 @@ param budgetStartDate string
 // Cloud role name the frontend's telemetry initializer sets (frontend/src/telemetry.ts).
 var frontendRoleName = 'CheckMate.Web'
 
-// The Azure SQL free offer includes 100,000 vCore-seconds a month; alert when 20% is left.
-var sqlFreeVCoreSecondsThreshold = 20000
-
 var slackEnabled = !empty(slackWebhookUrl)
 
 // Claude's findings go to the same Slack channel, so investigations need Slack too.
@@ -92,8 +89,8 @@ var alertSteps = union(
   {
     '${slowApiName}': [
       'On the *API* tab of the ${workbookLink}, check *Operations* and *SQL call duration* for what\'s slow. ${performanceLink} breaks it down further.'
-      'Cold starts and database resumes make a few requests slow; if that\'s all it is, close the alert.'
-      'If SQL is slow, check ${queryPerformanceLink}. If everything is slow, check whether the CPU quota is nearly used up.'
+      'Cold starts make a few requests slow; if that\'s all it is, close the alert.'
+      'If SQL is slow, check ${queryPerformanceLink} and *DTU %* on the *Infrastructure* tab. If everything is slow, check whether the CPU quota is nearly used up.'
     ]
     '${slowPageLoadsName}': [
       'On the *Frontend* tab of the ${workbookLink}, check *Page load time* for the slow pages, and *Browser-observed API duration*.'
@@ -435,7 +432,7 @@ var actions = [
   }
 ]
 
-// Pings a lightweight endpoint that doesn't touch SQL, so the serverless database can still auto-pause.
+// Pings a lightweight endpoint that doesn't touch SQL, so it reports the API on its own.
 // One location every 15 minutes (the longest interval allowed) keeps the cost to a couple of dollars a month.
 var availabilityTestName = 'CheckMate API health'
 
@@ -522,11 +519,11 @@ var metricAlerts = [
   }
   {
     name: 'CheckMate API dependency failures'
-    description: 'The API had more than 10 failed dependency calls (mostly SQL) in 15 minutes, more than auto-pause resume retries explain.'
+    description: 'The API had more than 10 failed dependency calls (mostly SQL) in 15 minutes, more than transient-error retries explain.'
     steps: [
       'On the *API* tab of the ${workbookLink}, check *SQL calls* and *All outgoing dependencies* for what\'s failing, and *Database errors* and the database *Connections* chart on the *Infrastructure* tab.'
-      'A few failures while the database resumes from auto-pause are normal, and the API retries them. If they keep failing, check the ${resourceHealthLinks}.'
-      'If the month\'s free SQL vCore-seconds ran out, the database stays paused until next month (see *Free amount remaining* on the *Infrastructure* tab).'
+      'A few transient failures (for example during Azure maintenance) are normal, and the API retries them. If they keep failing, check the ${resourceHealthLinks}.'
+      'Timeouts while *DTU %* on the *Infrastructure* tab is near 100% mean the database is overloaded; see *CheckMate SQL DTU*.'
       'Login or permission errors mean the App Service identity lost its database user; see Identities & Permissions in the README.'
     ]
     severity: 2
@@ -610,22 +607,22 @@ var metricAlerts = [
     dimensions: []
   }
   {
-    name: 'CheckMate SQL free offer running out'
-    description: 'Less than 20% of this month\'s free SQL vCore-seconds remain. When they run out the database pauses until next month.'
+    name: 'CheckMate SQL DTU'
+    description: 'The database averaged more than 80% of its Basic tier\'s 5 DTUs over 30 minutes, so queries are queuing.'
     steps: [
-      'On the *Infrastructure* tab of the ${workbookLink}, check *Free amount remaining* and *App CPU billed* for when the database was busy.'
-      'Look for what keeps it awake: anything calling the API regularly (bots, ${loadTestRunsLink}) stops it auto-pausing. ${performanceLink} shows which operations are called most.'
-      'When the free vCore-seconds run out the database pauses until the 1st of next month, and every API call that needs the database fails until then.'
+      'On the *Infrastructure* tab of the ${workbookLink}, check *DTU %* and *CPU %* for when the database was busy.'
+      'Find what used it: ${queryPerformanceLink} shows the most expensive queries, and ${performanceLink} which operations are called most. ${loadTestRunsLink} add up quickly.'
+      'If normal traffic needs more, change the `sku` in `infra/modules/sql.bicep` to Standard S0 (10 DTUs, about $15 a month).'
     ]
     severity: 2
     scope: sqlDatabaseId
     namespace: 'Microsoft.Sql/servers/databases'
-    metric: 'free_amount_remaining'
-    timeAggregation: 'Minimum'
-    operator: 'LessThan'
-    threshold: sqlFreeVCoreSecondsThreshold
-    windowSize: 'PT1H'
-    frequency: 'PT1H'
+    metric: 'dtu_consumption_percent'
+    timeAggregation: 'Average'
+    operator: 'GreaterThan'
+    threshold: 80
+    windowSize: 'PT30M'
+    frequency: 'PT15M'
     dimensions: []
   }
   {
@@ -653,7 +650,7 @@ var metricAlerts = [
     steps: [
       'On the *Infrastructure* tab of the ${workbookLink}, check *Data space used %* for how fast it\'s growing.'
       'Find the biggest tables, and whether something is creating far more data than expected (for example checklists left behind by tests).'
-      'Clean up the data. `maxSizeBytes` in `infra/modules/sql.bicep` is already at the free offer\'s 32 GB limit.'
+      'Clean up the data. `maxSizeBytes` in `infra/modules/sql.bicep` is already at the Basic tier\'s 2 GB limit, so more room means moving the `sku` to Standard S0 (250 GB).'
     ]
     severity: 3
     scope: sqlDatabaseId
