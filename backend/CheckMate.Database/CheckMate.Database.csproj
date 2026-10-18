@@ -6,6 +6,8 @@
 
   <ItemGroup>
     <PackageReference Include="dbup-sqlserver" Version="7.2.0" />
+    <!-- Newer than the 9.0.11 that SqlClient brings in, which has known vulnerabilities. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
   </ItemGroup>
 
   <ItemGroup>
