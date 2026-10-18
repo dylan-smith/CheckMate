@@ -90,7 +90,7 @@ var alertSteps = union(
     '${slowApiName}': [
       'On the *API* tab of the ${workbookLink}, check *Operations* and *SQL call duration* for what\'s slow. ${performanceLink} breaks it down further.'
       'Cold starts make a few requests slow; if that\'s all it is, close the alert.'
-      'If SQL is slow, check ${queryPerformanceLink} and *DTU %* on the *Infrastructure* tab. If everything is slow, check whether the CPU quota is nearly used up.'
+      'If SQL is slow, check ${queryPerformanceLink} and *CPU %* on the *Infrastructure* tab. If everything is slow, check whether the CPU quota is nearly used up.'
     ]
     '${slowPageLoadsName}': [
       'On the *Frontend* tab of the ${workbookLink}, check *Page load time* for the slow pages, and *Browser-observed API duration*.'
@@ -472,7 +472,6 @@ resource availabilityTest 'Microsoft.Insights/webtests@2022-06-15' = {
 }
 
 // Metric alerts. A missing `dimensions` means no filter; `timeAggregation` must be one the metric supports.
-// `skipMetricValidation` (optional) creates the rule even when Azure Monitor doesn't list the metric yet.
 var metricAlerts = [
   {
     name: 'CheckMate API down'
@@ -524,7 +523,7 @@ var metricAlerts = [
     steps: [
       'On the *API* tab of the ${workbookLink}, check *SQL calls* and *All outgoing dependencies* for what\'s failing, and *Database errors* and the database *Connections* chart on the *Infrastructure* tab.'
       'A few transient failures (for example during Azure maintenance) are normal, and the API retries them. If they keep failing, check the ${resourceHealthLinks}.'
-      'Timeouts while *DTU %* on the *Infrastructure* tab is near 100% mean the database is overloaded; see *CheckMate SQL DTU*.'
+      'Timeouts while *CPU %* on the *Infrastructure* tab is near 100% mean the database is overloaded; see *CheckMate SQL CPU*.'
       'Login or permission errors mean the App Service identity lost its database user; see Identities & Permissions in the README.'
     ]
     severity: 2
@@ -608,26 +607,25 @@ var metricAlerts = [
     dimensions: []
   }
   {
-    name: 'CheckMate SQL DTU'
-    description: 'The database averaged more than 80% of its Basic tier\'s 5 DTUs over 30 minutes, so queries are queuing.'
+    name: 'CheckMate SQL CPU'
+    description: 'The database averaged more than 80% of its Basic tier\'s CPU over 30 minutes, so queries are queuing.'
     steps: [
-      'On the *Infrastructure* tab of the ${workbookLink}, check *DTU %* and *CPU %* for when the database was busy.'
+      'On the *Infrastructure* tab of the ${workbookLink}, check *CPU %* for when the database was busy.'
       'Find what used it: ${queryPerformanceLink} shows the most expensive queries, and ${performanceLink} which operations are called most. ${loadTestRunsLink} add up quickly.'
       'If normal traffic needs more, change the `sku` in `infra/modules/sql.bicep` to Standard S0 (10 DTUs, about $15 a month).'
     ]
     severity: 2
     scope: sqlDatabaseId
     namespace: 'Microsoft.Sql/servers/databases'
-    metric: 'dtu_consumption_percent'
+    // dtu_consumption_percent would also count reads and writes, but Azure Monitor kept the database's serverless
+    // metric list for hours after the move to Basic and wouldn't create a rule on it. CPU is in both lists.
+    metric: 'cpu_percent'
     timeAggregation: 'Average'
     operator: 'GreaterThan'
     threshold: 80
     windowSize: 'PT30M'
     frequency: 'PT15M'
     dimensions: []
-    // Azure Monitor kept listing the database's old serverless metrics for hours after the move to Basic, and
-    // rejected this rule because it couldn't find the DTU metric.
-    skipMetricValidation: true
   }
   {
     name: 'CheckMate frontend storage availability'
@@ -693,7 +691,6 @@ resource metricAlertRules 'Microsoft.Insights/metricAlerts@2018-03-01' = [
             operator: alert.operator
             threshold: alert.threshold
             dimensions: alert.dimensions
-            skipMetricValidation: alert.?skipMetricValidation ?? false
           }
         ]
       }
