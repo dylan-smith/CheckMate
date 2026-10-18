@@ -100,7 +100,7 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options, Cu
             .IsRequired();
 
         modelBuilder.Entity<ChecklistStep>()
-            .HasOne<Checklist>()
+            .HasOne(step => step.Checklist)
             .WithMany()
             .HasForeignKey(step => step.ChecklistId)
             .OnDelete(DeleteBehavior.Cascade);
@@ -142,7 +142,7 @@ public class ChecklistDbContext(DbContextOptions<ChecklistDbContext> options, Cu
 
         // No cascade in the database (see 0008-CreateStepDependenciesTable.sql), so the app deletes these rows itself.
         modelBuilder.Entity<StepDependency>()
-            .HasOne<ChecklistStep>()
+            .HasOne(dependency => dependency.DependsOnStep)
             .WithMany()
             .HasForeignKey(dependency => dependency.DependsOnStepId)
             .OnDelete(DeleteBehavior.ClientCascade);

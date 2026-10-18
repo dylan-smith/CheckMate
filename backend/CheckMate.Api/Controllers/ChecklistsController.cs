@@ -14,6 +14,8 @@ namespace CheckMate.Api.Controllers;
 [Route("api/[controller]")]
 public class ChecklistsController(ChecklistDbContext dbContext, ILogger<ChecklistsController> logger) : ControllerBase
 {
+    private const int MaxNameLength = 200;
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Checklist>>> GetAll()
     {
@@ -104,6 +106,197 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
         logger.LogInformation("Created checklist {ChecklistId}", checklist.Id);
 
         return CreatedAtAction(nameof(GetById), new { id = checklist.Id }, checklist);
+    }
+
+    /// <summary>
+    /// Creates a checklist with all its steps at once, from an exported file. A name already in use gets a number
+    /// added, like "Daily (2)", so the response has the name it was saved with.
+    /// </summary>
+    [HttpPost("import")]
+    public async Task<ActionResult<ChecklistDetailResponse>> Import([FromBody] ChecklistImportRequest request)
+    {
+        var trimmedName = request.Name.Trim();
+
+        if (trimmedName.Length == 0)
+        {
+            ModelState.AddModelError(nameof(request.Name), "Checklist name is required.");
+            return ValidationProblem(ModelState);
+        }
+
+        if (BuildImportedSteps(request.Steps) is not { } steps)
+        {
+            logger.LogWarning("Rejected a checklist import");
+            return ValidationProblem(ModelState);
+        }
+
+        var checklist = new Checklist { Name = await UnusedNameAsync(trimmedName) };
+
+        foreach (var step in steps)
+        {
+            step.Checklist = checklist;
+        }
+
+        dbContext.Checklists.Add(checklist);
+        dbContext.ChecklistSteps.AddRange(steps);
+
+        try
+        {
+            await dbContext.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            if (await HasDuplicateNameAsync(checklist.Name))
+            {
+                logger.LogWarning("Checklist import failed due to concurrent duplicate name");
+                return Conflict(new { message = "A checklist with this name was just created. Try importing again." });
+            }
+
+            throw;
+        }
+
+        logger.LogInformation("Imported checklist {ChecklistId} with {StepCount} steps", checklist.Id, steps.Count);
+
+        return CreatedAtAction(
+            nameof(GetById),
+            new { id = checklist.Id },
+            new ChecklistDetailResponse(checklist.Id, checklist.Name, [.. steps.Select(ChecklistStepResponse.From)]));
+    }
+
+    // Checks the imported steps and makes them, with their options and prerequisites, or adds the problems to
+    // ModelState and returns null. Prerequisites name other steps by the file's own IDs.
+    private List<ChecklistStep>? BuildImportedSteps(IReadOnlyList<ChecklistImportStep> requested)
+    {
+        var steps = new List<ChecklistStep>();
+        var indexById = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        for (var index = 0; index < requested.Count; index++)
+        {
+            var item = requested[index];
+            var prefix = $"Step {index + 1}: ";
+            var text = item.Text.Trim();
+            var options = item.Options ?? [];
+
+            if (text.Length == 0)
+            {
+                ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), prefix + "Step text is required.");
+            }
+            else if (StepOptionRules.Validate(item.Type, options) is { } optionError)
+            {
+                ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), prefix + optionError);
+            }
+            else if (options.Any(option => option.Trim().Length > 200))
+            {
+                ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), prefix + "Option text can be at most 200 characters.");
+            }
+
+            if (item.Id is not null)
+            {
+                var id = item.Id.Trim();
+
+                if (id.Length == 0)
+                {
+                    ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), prefix + "A step's id can't be empty.");
+                }
+                else if (!indexById.TryAdd(id, index))
+                {
+                    ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), prefix + $"Another step already has the id '{id}'.");
+                }
+            }
+
+            steps.Add(new ChecklistStep
+            {
+                Text = text,
+                Type = item.Type,
+                SortOrder = index,
+                Options = [.. options.Select((option, optionIndex) => new StepOption { Text = option.Trim(), SortOrder = optionIndex })]
+            });
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return null;
+        }
+
+        var graph = new Dictionary<int, IReadOnlyCollection<int>>();
+
+        for (var index = 0; index < requested.Count; index++)
+        {
+            var prerequisites = new HashSet<int>();
+
+            foreach (var dependsOn in requested[index].DependsOn ?? [])
+            {
+                var id = dependsOn.Trim();
+
+                if (!indexById.TryGetValue(id, out var prerequisite))
+                {
+                    ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), $"Step {index + 1} depends on '{id}', which isn't the id of any step.");
+                }
+                else if (prerequisite == index)
+                {
+                    ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), $"Step {index + 1}: A step can't depend on itself.");
+                }
+                else
+                {
+                    prerequisites.Add(prerequisite);
+                }
+            }
+
+            graph[index] = prerequisites;
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return null;
+        }
+
+        // A step is in a loop when one of its prerequisites leads back to it.
+        foreach (var (index, prerequisites) in graph)
+        {
+            foreach (var prerequisite in prerequisites)
+            {
+                if (StepDependencyGraph.FindPath(graph, prerequisite, index) is { } path)
+                {
+                    var loop = path.Prepend(index).Select(stepIndex => $"\"{steps[stepIndex].Text}\"");
+                    ModelState.AddModelError(
+                        nameof(ChecklistImportRequest.Steps),
+                        $"Steps can't depend on each other in a loop: {string.Join(" depends on ", loop)}.");
+                    return null;
+                }
+            }
+        }
+
+        for (var index = 0; index < steps.Count; index++)
+        {
+            steps[index].DependsOn = [.. graph[index].Order().Select(prerequisite => new StepDependency { DependsOnStep = steps[prerequisite] })];
+        }
+
+        return steps;
+    }
+
+    // The name, or the first of "Name (2)", "Name (3)" and so on that the user doesn't already have, shortening the
+    // name if it has to so the number still fits.
+    private async Task<string> UnusedNameAsync(string name)
+    {
+        if (!await HasDuplicateNameAsync(name))
+        {
+            return name;
+        }
+
+        var existing = (await dbContext.Checklists.AsNoTracking().Select(item => item.Name).ToListAsync())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        for (var number = 2; ; number++)
+        {
+            var suffix = $" ({number})";
+            var candidate = (name.Length + suffix.Length > MaxNameLength
+                ? name[..(MaxNameLength - suffix.Length)].TrimEnd()
+                : name) + suffix;
+
+            if (!existing.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
     }
 
     [HttpPut("{id:int}")]

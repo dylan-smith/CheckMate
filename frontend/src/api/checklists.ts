@@ -145,6 +145,47 @@ export async function deleteChecklist(id: number) {
   }
 }
 
+// A step read from a checklist file. id is the file's own name for it, which dependsOn uses, and isn't saved.
+export type ChecklistImportStep = {
+  id?: string
+  text: string
+  type: StepType
+  options?: string[]
+  dependsOn?: string[]
+}
+
+export type ChecklistImport = {
+  name: string
+  steps: ChecklistImportStep[]
+}
+
+// Creates the whole checklist at once. A name that's already used gets a number added, so the result has the name
+// it was saved with.
+export async function importChecklist(checklist: ChecklistImport) {
+  const response = await apiFetch(`${checklistsUrl}/import`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(checklist),
+  })
+
+  // A 400 explains what's wrong with the file, such as a step depending on an id no step has.
+  if (response.status === 400) {
+    const error = (await response.json()) as ValidationErrorResponse
+    const message = Object.values(error.errors ?? {}).flat()[0]
+    throw new ApiError(400, message ?? 'Unable to import checklist.')
+  }
+  if (response.status === 409) {
+    const error = (await response.json()) as ErrorResponse
+    throw new ApiError(409, error.message ?? 'Unable to import checklist.')
+  }
+  if (!response.ok) {
+    throw new Error('Unable to import checklist.')
+  }
+  return (await response.json()) as ChecklistDetail
+}
+
 function stepsUrl(checklistId: number) {
   return `${checklistsUrl}/${checklistId}/steps`
 }

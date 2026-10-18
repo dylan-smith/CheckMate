@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import type { SubmitEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ChangeEvent, SubmitEvent } from 'react'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -20,8 +20,10 @@ import {
   ApiError,
   createChecklist,
   describeFetchError,
+  importChecklist,
 } from '../api/checklists'
 import type { Checklist } from '../api/checklists'
+import { ChecklistFileError, parseChecklistYaml } from '../checklistFile'
 import {
   loadChecklist,
   loadChecklists,
@@ -67,11 +69,13 @@ function ChecklistsPage() {
   const online = useOnline()
   const store = useLocalStore()
   const [submitting, setSubmitting] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
   // The checklist whose fill-out is being started, so its button can say so.
   const [startingId, setStartingId] = useState<number | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
   // The text is kept after closing so it doesn't vanish while the toast slides away.
-  const [notice] = useState(() => readNotice(location.state))
+  const [notice, setNotice] = useState(() => readNotice(location.state))
   const [noticeOpen, setNoticeOpen] = useState(notice !== '')
 
   useEffect(() => {
@@ -131,6 +135,44 @@ function ChecklistsPage() {
       setErrorMessage(describeFetchError(error, 'Unable to save checklist.'))
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  // Creates a checklist from a file made by a checklist page's Export button, or written by hand in that format.
+  async function handleImport(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    // Clear the picker so choosing the same file again, say after fixing it, still imports it.
+    input.value = ''
+    if (!file) {
+      return
+    }
+
+    setImporting(true)
+    setErrorMessage('')
+
+    try {
+      const imported = await importChecklist(
+        parseChecklistYaml(await file.text()),
+      )
+      trackEvent('ChecklistImported')
+      setNotice(`Imported “${imported.name}”.`)
+      setNoticeOpen(true)
+      await load()
+    } catch (error) {
+      // A file that can't be read or that the API refuses is the user's to fix, not a failure to report.
+      if (error instanceof ChecklistFileError) {
+        setErrorMessage(error.message)
+      } else {
+        if (!(error instanceof ApiError)) {
+          trackException(error, { operation: 'import' })
+        }
+        setErrorMessage(
+          describeFetchError(error, 'Unable to import checklist.'),
+        )
+      }
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -197,6 +239,24 @@ function ChecklistsPage() {
               >
                 {submitting ? 'Saving…' : 'Create checklist'}
               </Button>
+              {/* The file input is hidden, so the button opens its file picker. */}
+              <Button
+                type="button"
+                variant="outlined"
+                disabled={importing || !online}
+                onClick={() => fileInput.current?.click()}
+              >
+                {importing ? 'Importing…' : 'Import from file'}
+              </Button>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".yml,.yaml"
+                aria-label="Import from file"
+                hidden
+                disabled={importing || !online}
+                onChange={(event) => void handleImport(event)}
+              />
             </Stack>
           </Box>
         </Paper>
