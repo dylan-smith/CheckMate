@@ -472,6 +472,7 @@ resource availabilityTest 'Microsoft.Insights/webtests@2022-06-15' = {
 }
 
 // Metric alerts. A missing `dimensions` means no filter; `timeAggregation` must be one the metric supports.
+// `skipMetricValidation` (optional) creates the rule even when Azure Monitor doesn't list the metric yet.
 var metricAlerts = [
   {
     name: 'CheckMate API down'
@@ -624,6 +625,9 @@ var metricAlerts = [
     windowSize: 'PT30M'
     frequency: 'PT15M'
     dimensions: []
+    // Azure Monitor kept listing the database's old serverless metrics for hours after the move to Basic, and
+    // rejected this rule because it couldn't find the DTU metric.
+    skipMetricValidation: true
   }
   {
     name: 'CheckMate frontend storage availability'
@@ -689,6 +693,7 @@ resource metricAlertRules 'Microsoft.Insights/metricAlerts@2018-03-01' = [
             operator: alert.operator
             threshold: alert.threshold
             dimensions: alert.dimensions
+            skipMetricValidation: alert.?skipMetricValidation ?? false
           }
         ]
       }
