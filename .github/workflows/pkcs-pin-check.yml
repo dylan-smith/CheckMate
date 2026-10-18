@@ -1,0 +1,41 @@
+name: Pkcs Pin Check
+
+# Nightly check for whether the backend still needs its direct reference to System.Security.Cryptography.Pkcs,
+# which pins it past the vulnerable version SqlClient brings in. Once the backend builds without warnings and has
+# no vulnerable packages without it, opens a PR that removes the reference and deletes this workflow.
+#
+# Requires the TS_COMPAT_PR_TOKEN secret: a fine-grained PAT for this repo with
+# Contents, Pull requests and Workflows read/write. GITHUB_TOKEN can't be used because it
+# isn't allowed to push changes to workflow files.
+
+on:
+  schedule:
+    - cron: '30 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check whether the Pkcs pin is still needed
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: chore/remove-pkcs-pin
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Try building without the pin
+        id: try
+        run: bash .github/scripts/pkcs-pin-try.sh
+
+      - name: Open PR to remove the pin
+        if: steps.try.outputs.needed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.TS_COMPAT_PR_TOKEN }}
+        run: bash .github/scripts/pkcs-pin-open-pr.sh
