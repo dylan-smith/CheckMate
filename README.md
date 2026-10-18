@@ -181,7 +181,7 @@ infra/
 │   ├── alerts.bicep     # Alert rules, action group, availability test, Slack notifier and budget
 │   ├── appservice.bicep # App Service Plan + App Service (Linux/.NET 10) and its app settings
 │   ├── monitoring.bicep # Log Analytics Workspace + Application Insights
-│   ├── sql.bicep        # Azure SQL Server (Entra-only auth) + serverless Database and its diagnostic logs
+│   ├── sql.bicep        # Azure SQL Server (Entra-only auth) + Basic tier Database and its diagnostic logs
 │   ├── storage.bicep    # Storage Account for the frontend static website and its custom domain
 │   └── workbook.bicep   # "CheckMate Health" Azure Monitor Workbook
 └── workbooks/
@@ -210,7 +210,7 @@ To put some data on the workbook, run the **Generate Load** workflow (`.github/w
 | Browser errors | More than 5 frontend exceptions in an hour | 2 |
 | Browser API call failures | More than 5 failed API calls from the frontend in an hour | 2 |
 | CPU quota | More than 45 of the F1 plan's 60 daily CPU minutes used in 24 hours (the app stops when they run out) | 2 |
-| SQL free offer running out | Less than 20% of the month's free vCore-seconds left (the database pauses until next month when they run out) | 2 |
+| SQL DTU | The database averages more than 80% of its Basic tier's 5 DTUs over 30 minutes | 2 |
 | Frontend storage availability | Blob storage less than 99% available over an hour | 2 |
 | Slow API | Average response time over 5 seconds for 30 minutes (at least 10 requests, not counting deployment calls) | 3 |
 | Slow page loads | 75th percentile page load over 4 seconds in 6 hours (at least 5 loads) | 3 |
@@ -218,7 +218,7 @@ To put some data on the workbook, run the **Generate Load** workflow (`.github/w
 | Failure anomalies | Application Insights smart detection sees an unusual rise in failures | 3 |
 | Monthly budget | Resource group costs pass 80% of `monthlyBudget`, or are forecast to pass 100% | — |
 
-`/health` doesn't check the database, so the availability test doesn't stop the serverless database from auto-pausing. A backend deployment turns the availability test off while it has the API paused and back on when it finishes, so a deployment doesn't fire **API down**. If a deployment leaves the API paused, the test is still turned back on so the alert fires.
+`/health` doesn't check the database, so **API down** reports the API on its own. A backend deployment turns the availability test off while it has the API paused and back on when it finishes, so a deployment doesn't fire **API down**. If a deployment leaves the API paused, the test is still turned back on so the alert fires.
 
 To set up Slack, create a Slack app with an **Incoming Webhook** for the alerts channel and save the webhook URL as the `SLACK_WEBHOOK_URL` repository secret. The next deployment creates the Logic App. To get push notifications, sign in to the Azure mobile app as `alertEmail`. To check the whole chain, open the action group in the portal and choose **Test**.
 
@@ -268,7 +268,7 @@ Previews live in the `CheckMate-Preview` resource group and are kept cheap by sh
 | App Service plan `CheckMate-Preview-Plan` | Shared | Free (F1) Linux plan: 60 CPU minutes a day, 1 GB and at most 10 web apps, shared by every preview. When the minutes run out, every preview stops until the next day. `appServicePlanSku` in `preview-shared.bicepparam` can raise it to B1 |
 | SQL server `checkmate-preview-sql` | Shared | Entra-only auth; the `checkmate-preview-deploy` identity is its Entra admin (set by `preview-shared.bicep`) |
 | Web app `checkmate-pr-<N>` | Per PR | Same settings as production minus Application Insights (telemetry is off). The API URL has a random suffix, so take it from the PR comment |
-| Database `CheckMate-pr-<N>` | Per PR | Serverless, auto-pauses after an hour, is reset to sample checklists on every deployment (see below), and uses the [SQL free offer](https://learn.microsoft.com/azure/azure-sql/database/free-offer) like production. The offer covers 10 databases per subscription including production's; if a deployment fails because they're used up, close stale PRs or set `useFreeLimit = false` in `preview.bicepparam` (about $0.25 an hour while active, nothing while paused) |
+| Database `CheckMate-pr-<N>` | Per PR | Serverless, auto-pauses after an hour, is reset to sample checklists on every deployment (see below), and uses the [SQL free offer](https://learn.microsoft.com/azure/azure-sql/database/free-offer). The offer covers 10 databases per subscription; if a deployment fails because they're used up, close stale PRs or set `useFreeLimit = false` in `preview.bicepparam` (about $0.25 an hour while active, nothing while paused) |
 | Storage account `checkmatepr<N><suffix>` | Per PR | Static website, deployed exactly like production. Storage account names are unique across Azure, so the name ends with 5 characters derived from the resource group |
 
 The first request after a while can take a minute while the app and database start. Each deployment runs the PR's migrations against its database, then creates the web app's database user from its managed identity's client ID (`.github/scripts/preview-db-user.sql`), so no database users are set up by hand. A deployment still running for the PR finishes before a newer push deploys (closing the PR cancels it). The database is recreated empty when a migration script it already ran has been edited, or its last migration run didn't finish (`.github/scripts/preview-migrations.sh`); otherwise it's kept, and scripts added since run against it. Previews have no Google sign-in (Google won't accept their origins), so they use test sign-in instead. Every deployment then deletes the checklists of the test user **Preview User** (the name the sign-in page suggests) and adds the sample checklists in `.github/scripts/preview-seed-data.json`, through the API, covering every step type and some steps that depend on others (a step's `dependsOn` names earlier steps of its checklist by their text), with some completed and in-progress fill-outs; edit that file to change them. So each push starts the preview over from the sample data, and anything reviewers changed as Preview User is lost; checklists made under other names are kept. The `migrations` tag is carried through each Bicep deployment, which would otherwise replace it. If a preview is still broken, close and reopen the PR.
@@ -290,7 +290,7 @@ Setting up previews for a new environment: create the `CheckMate-Preview` resour
 |-----------|--------------|----------|
 | Backend API | Azure App Service (Linux/.NET 10) | `https://checkmate-heesaxh5agdygvew.westus2-01.azurewebsites.net` |
 | Frontend | Azure Storage Account (static website), proxied by Cloudflare | `https://checkmate.diveintelligence.com` (also `https://checkmateweb.z22.web.core.windows.net`) |
-| Database | Azure SQL serverless database (Entra-only auth) | — |
+| Database | Azure SQL Basic tier database (5 DTU, 2 GB, always on; Entra-only auth) | — |
 | Monitoring | Log Analytics + Application Insights (App Service HTTP/console/app/platform logs and SQL errors, timeouts, blocks, deadlocks and automatic tuning go to the `CheckMate` workspace), plus the **CheckMate Health** workbook | — |
 
 ### Custom Domain
