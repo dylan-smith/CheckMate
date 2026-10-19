@@ -6,4 +6,6 @@ public class StepDependency
     public int StepId { get; set; }
 
     public int DependsOnStepId { get; set; }
+
+    public ChecklistStep? DependsOnStep { get; set; }
 }

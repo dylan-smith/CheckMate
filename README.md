@@ -9,7 +9,7 @@ A checklist management app with:
 ## Features
 
 - Sign in with a Google account; each user only sees their own checklists and fill-outs
-- Create, edit, and delete checklists
+- Create, edit, and delete checklists, and export or import them as YAML files
 - Enforces unique checklist names for each user
 - RESTful API with OpenAPI support
 
@@ -64,6 +64,28 @@ Locally, `dotnet run` and `npm run dev` need nothing more: sign in with the test
 Fill-outs live on the device first. Every checklist the app sees while online is kept in the browser's IndexedDB (one database per signed-in user), so any of them can be filled out with no connection, for example a pre-dive checklist at a site with no signal. Starting a fill-out gives it a key the device chooses, and each answer is saved on the device with the time it was given. A sync engine (`frontend/src/offline/sync.ts`) sends changed fill-outs to `PUT /api/checklists/{id}/runs/{clientKey}` whenever it can: on start, a second after each change, when the browser comes back online or the app comes back into view, and with a growing wait after the API couldn't be reached. The same fill-out sent twice changes nothing, so a lost reply is safe. The header shows "Offline" or "N to sync" while anything is waiting, and a toast says when fill-outs that had been waiting get through.
 
 The API keeps the times the device recorded (clamped to its own clock if they're in the future), decides whether each step is done the same way the device did, and checks the whole fill-out at once; a rejection shows on the fill-out as "Not synced yet" with the reason, and is sent again once the fill-out changes. A fill-out completed on another device wins: the device takes the API's copy and says so. Creating and editing checklists still needs a connection, and the pages say so when the browser is offline. Synced, completed fill-outs are dropped from the device after seven days; the API keeps them. Signing out keeps the device's fill-outs for the next sign-in by the same user, which matters because a Google sign-in expires after about an hour and the first sync after a long time offline signs the user in again.
+
+### Exporting and importing checklists
+
+A checklist's **Export** button downloads it as a YAML file, and **Import from file** on the checklists page creates a checklist from one, so checklists can be shared between users or kept as a backup. Only the checklist itself is in the file, not its fill-outs. An imported checklist whose name is already used gets a number added, like "Pre-flight (2)". The file can be written or edited by hand:
+
+```yaml
+checkmate: 1 # the file format's version
+name: Pre-flight
+steps:
+  - Walk around # a checkbox step can be just its text
+  - id: fuel # only needed when another step depends on it; not saved
+    text: Fuel on board (litres)
+    type: Number # Checkbox (the default), Text, Number or Choice
+  - id: weather
+    text: Weather
+    type: Choice
+    options: [Clear, Cloudy, Rain]
+  - text: Take off
+    dependsOn: [fuel, weather] # the ids of the steps that must be done first
+```
+
+The API does all of the work: `GET /api/checklists/{id}/export` writes the file and `POST /api/checklists/import` (with the file as an `application/yaml` body) reads it, both through `ChecklistFile` in `backend/CheckMate.Api/Models/`. An import checks the whole file and creates the checklist at once, so a file it refuses leaves nothing behind. Both need a connection.
 
 ### Dev Container
 
