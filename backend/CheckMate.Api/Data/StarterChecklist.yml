@@ -1,0 +1,102 @@
+# CheckMate checklist. Import it from the checklists page.
+checkmate: 1
+name: Gemini CCR Build
+steps:
+  - id: analyze-oxygen
+    text: Analyze oxygen
+    type: Number
+  - text: Analyze diluent
+    type: Number
+  - text: Check HUD battery voltage
+    type: Number
+  - id: confirm-oxygen-cells-expiry
+    text: Confirm oxygen cells expiry
+    type: Text
+  - id: pack-scrubbers
+    text: Pack scrubbers
+  - id: insert-scrubbers-into-cans
+    text: Insert scrubbers into cans
+    dependsOn:
+      - pack-scrubbers
+  - text: Confirm scrubber duration
+    type: Text
+    dependsOn:
+      - pack-scrubbers
+  - text: Confirm stack timer
+    type: Text
+    dependsOn:
+      - pack-scrubbers
+  - text: Check computer battery voltage
+    type: Number
+  - id: measure-mv-in-air-cell-1
+    text: 'Measure mV in air (cell #1)'
+    type: Number
+  - id: measure-mv-in-air-cell-2
+    text: 'Measure mV in air (cell #2)'
+    type: Number
+  - id: measure-mv-in-air-cell-3
+    text: 'Measure mV in air (cell #3)'
+    type: Number
+  - id: inspect-head-o-rings
+    text: Inspect head o-rings
+  - id: inspect-can-o-rings
+    text: Inspect can o-rings
+  - id: install-heads-with-line-lock
+    text: Install heads with line-lock
+    dependsOn:
+      - confirm-oxygen-cells-expiry
+      - insert-scrubbers-into-cans
+      - inspect-head-o-rings
+  - id: attach-counter-lung-to-wing
+    text: Attach counter lung to wing
+  - id: attach-counter-lung-to-cans
+    text: Attach counter lung to cans
+    dependsOn:
+      - inspect-can-o-rings
+      - install-heads-with-line-lock
+      - attach-counter-lung-to-wing
+  - id: flow-test-mushroom-valves
+    text: Flow test mushroom valves
+  - id: assemble-breathing-loop
+    text: Assemble breathing loop
+    dependsOn:
+      - install-heads-with-line-lock
+      - flow-test-mushroom-valves
+  - id: mount-oxygen-cylinder-regulator-and-rout
+    text: Mount oxygen cylinder, regulator, and route hose
+    dependsOn:
+      - analyze-oxygen
+  - id: positive-pressure-test
+    text: Positive pressure test
+    dependsOn:
+      - attach-counter-lung-to-cans
+      - assemble-breathing-loop
+      - measure-mv-in-air-cell-1
+      - measure-mv-in-air-cell-2
+      - measure-mv-in-air-cell-3
+  - id: negative-pressure-test
+    text: Negative pressure test
+    dependsOn:
+      - attach-counter-lung-to-cans
+      - assemble-breathing-loop
+      - measure-mv-in-air-cell-1
+      - measure-mv-in-air-cell-2
+      - measure-mv-in-air-cell-3
+  - id: flush-with-oxygen
+    text: Flush with oxygen
+    dependsOn:
+      - mount-oxygen-cylinder-regulator-and-rout
+      - positive-pressure-test
+      - negative-pressure-test
+  - text: 'Measure mV in oxygen (cell #1)'
+    type: Number
+    dependsOn:
+      - flush-with-oxygen
+  - text: 'Measure mV in oxygen (cell #2)'
+    type: Number
+    dependsOn:
+      - flush-with-oxygen
+  - text: 'Measure mV in oxygen (cell #3)'
+    type: Number
+    dependsOn:
+      - flush-with-oxygen
