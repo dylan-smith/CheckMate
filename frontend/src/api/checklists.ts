@@ -145,29 +145,32 @@ export async function deleteChecklist(id: number) {
   }
 }
 
-// A step read from a checklist file. id is the file's own name for it, which dependsOn uses, and isn't saved.
-export type ChecklistImportStep = {
-  id?: string
-  text: string
-  type: StepType
-  options?: string[]
-  dependsOn?: string[]
+// The checklist as a YAML file to share or keep, which importChecklist reads back, or null when there's no checklist
+// with this id. The API names the file.
+export async function exportChecklist(id: number) {
+  const response = await apiFetch(`${checklistsUrl}/${id}/export`)
+  if (response.status === 404) {
+    return null
+  }
+  if (!response.ok) {
+    throw new Error('Unable to export checklist.')
+  }
+  const fileName =
+    /filename="?([^";]+)"?/.exec(
+      response.headers.get('Content-Disposition') ?? '',
+    )?.[1] ?? 'checklist.yml'
+  return { fileName, file: await response.blob() }
 }
 
-export type ChecklistImport = {
-  name: string
-  steps: ChecklistImportStep[]
-}
-
-// Creates the whole checklist at once. A name that's already used gets a number added, so the result has the name
-// it was saved with.
-export async function importChecklist(checklist: ChecklistImport) {
+// Creates a whole checklist from a file made by exportChecklist, or written by hand. The API reads the file, and a
+// name that's already used gets a number added, so the result has the name it was saved with.
+export async function importChecklist(file: Blob) {
   const response = await apiFetch(`${checklistsUrl}/import`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
+      'Content-Type': 'application/yaml',
     },
-    body: JSON.stringify(checklist),
+    body: file,
   })
 
   // A 400 explains what's wrong with the file, such as a step depending on an id no step has.

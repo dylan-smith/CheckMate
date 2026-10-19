@@ -466,12 +466,8 @@ describe('App', () => {
       renderAt('/')
       await screen.findByText('No checklists yet.')
 
-      await user.upload(
-        screen.getByLabelText('Import from file'),
-        file(
-          'checkmate: 1\nname: Packing\nsteps:\n  - id: bag\n    text: Bag\n  - text: Go\n    dependsOn: [bag]\n',
-        ),
-      )
+      const uploaded = file('checkmate: 1\nname: Packing\n')
+      await user.upload(screen.getByLabelText('Import from file'), uploaded)
 
       expect(await screen.findByText('Imported “Packing (2)”.')).toBeVisible()
       expect(screen.getByText('Packing (2)')).toBeInTheDocument()
@@ -479,35 +475,10 @@ describe('App', () => {
         expect.stringMatching(/\/api\/checklists\/import$/),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({
-            name: 'Packing',
-            steps: [
-              { id: 'bag', text: 'Bag', type: 'Checkbox' },
-              { text: 'Go', type: 'Checkbox', dependsOn: ['bag'] },
-            ],
-          }),
+          body: uploaded,
         }),
       )
       expect(trackEvent).toHaveBeenCalledWith('ChecklistImported')
-    })
-
-    it('shows what is wrong with a file that is not a checklist without calling the API', async () => {
-      const user = userEvent.setup()
-      mockFetch(async () => jsonResponse([]))
-
-      renderAt('/')
-      await screen.findByText('No checklists yet.')
-
-      await user.upload(
-        screen.getByLabelText('Import from file'),
-        file('name: Shopping\n'),
-      )
-
-      expect(
-        await screen.findByText("This file isn't a CheckMate checklist."),
-      ).toBeInTheDocument()
-      expect(fetch).toHaveBeenCalledTimes(1)
-      expect(trackException).not.toHaveBeenCalled()
     })
 
     it('shows the reason the API refuses the file without reporting it', async () => {
@@ -575,21 +546,17 @@ describe('App', () => {
           expect(this.href).toBe('blob:checklist')
         })
 
-      mockFetch(async () =>
-        jsonResponse({
-          id: 7,
-          name: 'Packing list',
-          steps: [
-            {
-              id: 1,
-              text: 'Passport',
-              type: 'Checkbox',
-              sortOrder: 0,
-              options: [],
-              dependsOnStepIds: [],
-            },
-          ],
-        }),
+      const yaml = 'checkmate: 1\nname: Packing list\n'
+      mockFetch(async (url) =>
+        url.endsWith('/export')
+          ? new Response(yaml, {
+              headers: {
+                'Content-Type': 'application/yaml',
+                'Content-Disposition':
+                  "attachment; filename=packing-list.yml; filename*=UTF-8''packing-list.yml",
+              },
+            })
+          : jsonResponse({ id: 7, name: 'Packing list', steps: [] }),
       )
 
       renderAt('/checklists/7')
@@ -598,11 +565,26 @@ describe('App', () => {
       await waitFor(() => {
         expect(click).toHaveBeenCalledTimes(1)
       })
-      expect(await blobs[0].text()).toContain(
-        'name: Packing list\nsteps:\n  - text: Passport\n',
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/7\/export$/),
+        expect.anything(),
       )
+      expect(await blobs[0].text()).toBe(yaml)
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:checklist')
       expect(trackEvent).toHaveBeenCalledWith('ChecklistExported')
+    })
+
+    it('is disabled offline', async () => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+      mockFetch(async () =>
+        jsonResponse({ id: 7, name: 'Packing list', steps: [] }),
+      )
+
+      renderAt('/checklists/7')
+
+      expect(
+        await screen.findByRole('button', { name: 'Export' }),
+      ).toBeDisabled()
     })
   })
 

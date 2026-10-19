@@ -23,7 +23,6 @@ import {
   importChecklist,
 } from '../api/checklists'
 import type { Checklist } from '../api/checklists'
-import { ChecklistFileError, parseChecklistYaml } from '../checklistFile'
 import {
   loadChecklist,
   loadChecklists,
@@ -152,25 +151,17 @@ function ChecklistsPage() {
     setErrorMessage('')
 
     try {
-      const imported = await importChecklist(
-        parseChecklistYaml(await file.text()),
-      )
+      const imported = await importChecklist(file)
       trackEvent('ChecklistImported')
       setNotice(`Imported “${imported.name}”.`)
       setNoticeOpen(true)
       await load()
     } catch (error) {
-      // A file that can't be read or that the API refuses is the user's to fix, not a failure to report.
-      if (error instanceof ChecklistFileError) {
-        setErrorMessage(error.message)
-      } else {
-        if (!(error instanceof ApiError)) {
-          trackException(error, { operation: 'import' })
-        }
-        setErrorMessage(
-          describeFetchError(error, 'Unable to import checklist.'),
-        )
+      // A file the API refuses is the user's to fix, not a failure to report.
+      if (!(error instanceof ApiError)) {
+        trackException(error, { operation: 'import' })
       }
+      setErrorMessage(describeFetchError(error, 'Unable to import checklist.'))
     } finally {
       setImporting(false)
     }

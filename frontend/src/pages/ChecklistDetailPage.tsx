@@ -13,10 +13,10 @@ import {
   ApiError,
   deleteChecklist,
   describeFetchError,
+  exportChecklist,
   updateChecklist,
 } from '../api/checklists'
 import type { ChecklistDetail as ChecklistDetailData } from '../api/checklists'
-import { checklistFileName, toChecklistYaml } from '../checklistFile'
 import { loadChecklist } from '../offline/checklists'
 import { newClientKey } from '../offline/clientKey'
 import { useOnline } from '../offline/online'
@@ -161,23 +161,21 @@ function ChecklistDetail({ id }: { id: number }) {
     }
   }
 
-  // Downloads the checklist as a file to share or keep, which the checklists page's Import button reads back. It
-  // uses the checklist as the API has it now, like handleFillOut, or offline as the device has it.
+  // Downloads the checklist as the YAML file the API makes, to share or keep. The checklists page's Import button
+  // reads it back.
   async function handleExport() {
     setErrorMessage('')
 
     try {
-      const loaded = await loadChecklist(id)
-      if (loaded === null) {
+      const exported = await exportChecklist(id)
+      if (exported === null) {
         setNotFound(true)
         return
       }
-      const url = URL.createObjectURL(
-        new Blob([toChecklistYaml(loaded.data)], { type: 'application/yaml' }),
-      )
+      const url = URL.createObjectURL(exported.file)
       const link = document.createElement('a')
       link.href = url
-      link.download = checklistFileName(loaded.data.name)
+      link.download = exported.fileName
       link.click()
       URL.revokeObjectURL(url)
       trackEvent('ChecklistExported')
@@ -266,6 +264,7 @@ function ChecklistDetail({ id }: { id: number }) {
                   <Button
                     type="button"
                     variant="outlined"
+                    disabled={!online}
                     onClick={() => void handleExport()}
                   >
                     Export

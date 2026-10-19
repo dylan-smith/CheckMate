@@ -85,7 +85,7 @@ steps:
     dependsOn: [fuel, weather] # the ids of the steps that must be done first
 ```
 
-`frontend/src/checklistFile.ts` reads and writes the file, and `POST /api/checklists/import` creates the whole checklist at once, so a file it refuses leaves nothing behind.
+The API does all of the work: `GET /api/checklists/{id}/export` writes the file and `POST /api/checklists/import` (with the file as an `application/yaml` body) reads it, both through `ChecklistFile` in `backend/CheckMate.Api/Models/`. An import checks the whole file and creates the checklist at once, so a file it refuses leaves nothing behind. Both need a connection.
 
 ### Dev Container
 

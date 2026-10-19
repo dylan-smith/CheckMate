@@ -67,10 +67,12 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
         }
 
         // The frontend's telemetry adds a traceparent header, which makes every request preflighted, so let
-        // browsers cache the preflight response.
+        // browsers cache the preflight response. A checklist export names its file in Content-Disposition, which
+        // the frontend reads to save it.
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
+            .WithExposedHeaders("Content-Disposition")
             .SetPreflightMaxAge(TimeSpan.FromMinutes(10));
     }));
 

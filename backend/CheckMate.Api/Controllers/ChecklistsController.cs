@@ -1,3 +1,4 @@
+using System.Text;
 using CheckMate.Api.Contracts;
 using CheckMate.Api.Data;
 using CheckMate.Api.Models;
@@ -15,6 +16,14 @@ namespace CheckMate.Api.Controllers;
 public class ChecklistsController(ChecklistDbContext dbContext, ILogger<ChecklistsController> logger) : ControllerBase
 {
     private const int MaxNameLength = 200;
+
+    // Limits on an imported checklist file, matching what the step endpoints allow (see ChecklistStepRequest).
+    private const int MaxImportBytes = 1024 * 1024;
+    private const int MaxImportSteps = 500;
+    private const int MaxStepTextLength = 500;
+    private const int MaxStepIdLength = 100;
+    private const int MaxOptions = 50;
+    private const int MaxOptionTextLength = 200;
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Checklist>>> GetAll()
@@ -46,19 +55,52 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
             return NotFound();
         }
 
-        var steps = await dbContext.ChecklistSteps
-            .AsNoTracking()
-            .Include(step => step.Options)
-            .Include(step => step.DependsOn)
-            .Where(step => step.ChecklistId == id)
-            .OrderBy(step => step.SortOrder)
-            .ThenBy(step => step.Id)
-            .ToListAsync();
+        var steps = await LoadStepsAsync(id);
 
         return Ok(new ChecklistDetailResponse(
             checklist.Id,
             checklist.Name,
             [.. steps.Select(ChecklistStepResponse.From)]));
+    }
+
+    /// <summary>
+    /// Downloads the checklist as a YAML file to share or keep, which <see cref="Import"/> reads back. Fill-outs
+    /// aren't part of it.
+    /// </summary>
+    [HttpGet("{id:int}/export")]
+    public async Task<IActionResult> Export(int id)
+    {
+        var checklist = await dbContext.Checklists
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == id);
+
+        if (checklist is null)
+        {
+            logger.LogWarning("Checklist {ChecklistId} not found for export", id);
+            return NotFound();
+        }
+
+        var steps = await LoadStepsAsync(id);
+
+        logger.LogInformation("Exported checklist {ChecklistId}", id);
+
+        return File(
+            Encoding.UTF8.GetBytes(ChecklistFile.Write(checklist.Name, steps)),
+            ChecklistFile.ContentType,
+            ChecklistFile.FileName(checklist.Name));
+    }
+
+    // The checklist's steps in order, with their options and prerequisites.
+    private Task<List<ChecklistStep>> LoadStepsAsync(int checklistId)
+    {
+        return dbContext.ChecklistSteps
+            .AsNoTracking()
+            .Include(step => step.Options)
+            .Include(step => step.DependsOn)
+            .Where(step => step.ChecklistId == checklistId)
+            .OrderBy(step => step.SortOrder)
+            .ThenBy(step => step.Id)
+            .ToListAsync();
     }
 
     [HttpPost]
@@ -109,21 +151,39 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
     }
 
     /// <summary>
-    /// Creates a checklist with all its steps at once, from an exported file. A name already in use gets a number
-    /// added, like "Daily (2)", so the response has the name it was saved with.
+    /// Creates a checklist with all its steps at once, from a YAML file made by <see cref="Export"/> or written by
+    /// hand, sent as the request body. A name already in use gets a number added, like "Daily (2)", so the response
+    /// has the name it was saved with.
     /// </summary>
     [HttpPost("import")]
-    public async Task<ActionResult<ChecklistDetailResponse>> Import([FromBody] ChecklistImportRequest request)
+    [Consumes(ChecklistFile.ContentType, "text/yaml", "text/plain")]
+    [RequestSizeLimit(MaxImportBytes)]
+    public async Task<ActionResult<ChecklistDetailResponse>> Import()
     {
-        var trimmedName = request.Name.Trim();
+        using var reader = new StreamReader(Request.Body, Encoding.UTF8);
+        var text = await reader.ReadToEndAsync(HttpContext.RequestAborted);
+        ChecklistImport file;
 
-        if (trimmedName.Length == 0)
+        try
         {
-            ModelState.AddModelError(nameof(request.Name), "Checklist name is required.");
+            file = ChecklistFile.Read(text);
+        }
+        catch (ChecklistFileException exception)
+        {
+            logger.LogWarning("Rejected a checklist file that couldn't be read");
+            ModelState.AddModelError("File", exception.Message);
             return ValidationProblem(ModelState);
         }
 
-        if (BuildImportedSteps(request.Steps) is not { } steps)
+        var trimmedName = file.Name.Trim();
+
+        if (trimmedName.Length > MaxNameLength)
+        {
+            ModelState.AddModelError(nameof(file.Name), $"The checklist name can be at most {MaxNameLength} characters.");
+            return ValidationProblem(ModelState);
+        }
+
+        if (BuildImportedSteps(file.Steps) is not { } steps)
         {
             logger.LogWarning("Rejected a checklist import");
             return ValidationProblem(ModelState);
@@ -169,6 +229,12 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
         var steps = new List<ChecklistStep>();
         var indexById = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
+        if (requested.Count > MaxImportSteps)
+        {
+            ModelState.AddModelError(nameof(ChecklistImport.Steps), $"A checklist file can have at most {MaxImportSteps} steps.");
+            return null;
+        }
+
         for (var index = 0; index < requested.Count; index++)
         {
             var item = requested[index];
@@ -178,15 +244,23 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
 
             if (text.Length == 0)
             {
-                ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), prefix + "Step text is required.");
+                ModelState.AddModelError(nameof(ChecklistImport.Steps), prefix + "Step text is required.");
+            }
+            else if (text.Length > MaxStepTextLength)
+            {
+                ModelState.AddModelError(nameof(ChecklistImport.Steps), prefix + $"Step text can be at most {MaxStepTextLength} characters.");
+            }
+            else if (options.Count > MaxOptions)
+            {
+                ModelState.AddModelError(nameof(ChecklistImport.Steps), prefix + $"A step can have at most {MaxOptions} options.");
             }
             else if (StepOptionRules.Validate(item.Type, options) is { } optionError)
             {
-                ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), prefix + optionError);
+                ModelState.AddModelError(nameof(ChecklistImport.Steps), prefix + optionError);
             }
-            else if (options.Any(option => option.Trim().Length > 200))
+            else if (options.Any(option => option.Trim().Length > MaxOptionTextLength))
             {
-                ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), prefix + "Option text can be at most 200 characters.");
+                ModelState.AddModelError(nameof(ChecklistImport.Steps), prefix + $"Option text can be at most {MaxOptionTextLength} characters.");
             }
 
             if (item.Id is not null)
@@ -195,11 +269,15 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
 
                 if (id.Length == 0)
                 {
-                    ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), prefix + "A step's id can't be empty.");
+                    ModelState.AddModelError(nameof(ChecklistImport.Steps), prefix + "A step's id can't be empty.");
+                }
+                else if (id.Length > MaxStepIdLength)
+                {
+                    ModelState.AddModelError(nameof(ChecklistImport.Steps), prefix + $"A step's id can be at most {MaxStepIdLength} characters.");
                 }
                 else if (!indexById.TryAdd(id, index))
                 {
-                    ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), prefix + $"Another step already has the id '{id}'.");
+                    ModelState.AddModelError(nameof(ChecklistImport.Steps), prefix + $"Another step already has the id '{id}'.");
                 }
             }
 
@@ -227,11 +305,11 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
             {
                 if (!indexById.TryGetValue(id, out var prerequisite))
                 {
-                    ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), $"Step {index + 1} depends on '{id}', which isn't the id of any step.");
+                    ModelState.AddModelError(nameof(ChecklistImport.Steps), $"Step {index + 1} depends on '{id}', which isn't the id of any step.");
                 }
                 else if (prerequisite == index)
                 {
-                    ModelState.AddModelError(nameof(ChecklistImportRequest.Steps), $"Step {index + 1}: A step can't depend on itself.");
+                    ModelState.AddModelError(nameof(ChecklistImport.Steps), $"Step {index + 1}: A step can't depend on itself.");
                 }
                 else
                 {
@@ -256,7 +334,7 @@ public class ChecklistsController(ChecklistDbContext dbContext, ILogger<Checklis
                 {
                     var loop = path.Prepend(index).Select(stepIndex => $"\"{steps[stepIndex].Text}\"");
                     ModelState.AddModelError(
-                        nameof(ChecklistImportRequest.Steps),
+                        nameof(ChecklistImport.Steps),
                         $"Steps can't depend on each other in a loop: {string.Join(" depends on ", loop)}.");
                     return null;
                 }
