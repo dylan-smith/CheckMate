@@ -98,10 +98,11 @@ public static partial class ChecklistFile
     public static ChecklistImport Read(string text)
     {
         var stream = new YamlStream();
+        using var reader = new StringReader(text);
 
         try
         {
-            stream.Load(new StringReader(text));
+            stream.Load(reader);
         }
         catch (YamlException exception)
         {
@@ -152,13 +153,12 @@ public static partial class ChecklistFile
 
         var type = StepType.Checkbox;
 
-        if (Child(step, "type") is { } typeNode)
+        // Only a type's name is accepted, not the number it's stored as.
+        if (Child(step, "type") is { } typeNode
+            && (!Enum.TryParse(AsText(typeNode), ignoreCase: true, out type) || !Enum.IsDefined(type)
+                || int.TryParse(AsText(typeNode), CultureInfo.InvariantCulture, out _)))
         {
-            if (!Enum.TryParse(AsText(typeNode), ignoreCase: true, out type) || !Enum.IsDefined(type)
-                || int.TryParse(AsText(typeNode), CultureInfo.InvariantCulture, out _))
-            {
-                throw new ChecklistFileException($"{label} has an unknown type. Use Checkbox, Text, Number or Choice.");
-            }
+            throw new ChecklistFileException($"{label} has an unknown type. Use Checkbox, Text, Number or Choice.");
         }
 
         string? id = null;
