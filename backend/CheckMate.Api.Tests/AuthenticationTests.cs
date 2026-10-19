@@ -63,6 +63,36 @@ public class AuthenticationTests(WebApplicationFactory<Program> factory)
     }
 
     [Fact]
+    public async Task NewUser_GetsTheStarterChecklistOnce()
+    {
+        var webFactory = CreateFactory();
+        using var client = CreateClient(webFactory, $"test:Newcomer {Guid.NewGuid()}");
+
+        var first = await client.GetFromJsonAsync<List<ChecklistResponse>>("/api/checklists");
+        var second = await client.GetFromJsonAsync<List<ChecklistResponse>>("/api/checklists");
+
+        var starter = Assert.Single(first!);
+        Assert.Equal("Gemini CCR Build", starter.Name);
+        Assert.Equal(starter.Id, Assert.Single(second!).Id);
+        var detail = await client.GetFromJsonAsync<ChecklistDetailResponse>($"/api/checklists/{starter.Id}");
+        Assert.Equal(26, detail!.Steps.Count);
+    }
+
+    [Fact]
+    public async Task ServiceUser_DoesNotGetTheStarterChecklist()
+    {
+        var webFactory = CreateFactory(serviceToken: ServiceToken);
+        using var client = CreateClient(webFactory, ServiceToken);
+
+        await client.GetFromJsonAsync<MeResponse>("/api/me");
+
+        using var scope = webFactory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ChecklistDbContext>();
+        var serviceUser = await dbContext.Users.SingleAsync(user => user.Subject == "service:ci");
+        Assert.False(await dbContext.Checklists.IgnoreQueryFilters().AnyAsync(checklist => checklist.UserId == serviceUser.Id));
+    }
+
+    [Fact]
     public async Task TestSignIn_IsRejected_WhenNotEnabled()
     {
         using var client = CreateClient(CreateFactory(allowTestSignIn: false), "test:Alice");
@@ -139,4 +169,8 @@ public class AuthenticationTests(WebApplicationFactory<Program> factory)
     private sealed record MeResponse(string? DisplayName, string? Email);
 
     private sealed record IdResponse(int Id);
+
+    private sealed record ChecklistResponse(int Id, string Name);
+
+    private sealed record ChecklistDetailResponse(int Id, string Name, List<IdResponse> Steps);
 }

@@ -87,6 +87,8 @@ steps:
 
 The API does all of the work: `GET /api/checklists/{id}/export` writes the file and `POST /api/checklists/import` (with the file as an `application/yaml` body) reads it, both through `ChecklistFile` in `backend/CheckMate.Api/Models/`. An import checks the whole file and creates the checklist at once, so a file it refuses leaves nothing behind. Both need a connection.
 
+A new user starts with one checklist rather than none: `backend/CheckMate.Api/Data/StarterChecklist.yml`, a file in this format built into the API, is imported for them on their first request (the service account doesn't get it). To change it, export the checklist you want and replace that file.
+
 ### Dev Container
 
 The repo includes a dev container (`.devcontainer/`) with everything preinstalled: .NET 10, Node 24, Playwright Chromium, the Azure CLI with Bicep, the GitHub CLI and Claude Code. It also runs a SQL Server 2022 container next to the app. Open the repo in VS Code and choose **Dev Containers: Reopen in Container**, or open it in GitHub Codespaces. Docker is required locally.
