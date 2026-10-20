@@ -8,6 +8,8 @@ public class ChecklistStep
 
     public int ChecklistId { get; set; }
 
+    public Checklist? Checklist { get; set; }
+
     [Required]
     [MaxLength(500)]
     public string Text { get; set; } = string.Empty;

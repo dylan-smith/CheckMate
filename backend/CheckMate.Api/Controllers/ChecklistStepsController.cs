@@ -14,8 +14,6 @@ namespace CheckMate.Api.Controllers;
 [Route("api/checklists/{checklistId:int}/steps")]
 public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<ChecklistStepsController> logger) : ControllerBase
 {
-    private const int MinChoiceOptions = 2;
-
     private const string OptionPickedWhileSavingMessage =
         "A fill-out picked one of the removed options while this was saving. Try saving again.";
 
@@ -303,15 +301,10 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
     {
         var options = request.Options ?? [];
 
-        if (request.Type != StepType.Choice)
+        if (StepOptionRules.Validate(request.Type, [.. options.Select(option => option.Text)]) is { } error)
         {
-            if (options.Count > 0)
-            {
-                ModelState.AddModelError(nameof(request.Options), "Only choice steps have options.");
-                return null;
-            }
-
-            return [];
+            ModelState.AddModelError(nameof(request.Options), error);
+            return null;
         }
 
         var trimmed = options
@@ -319,19 +312,7 @@ public class ChecklistStepsController(ChecklistDbContext dbContext, ILogger<Chec
             .ToList();
         var ids = trimmed.Where(option => option.Id is not null).Select(option => option.Id!.Value).ToList();
 
-        if (trimmed.Count < MinChoiceOptions)
-        {
-            ModelState.AddModelError(nameof(request.Options), $"A choice step needs at least {MinChoiceOptions} options.");
-        }
-        else if (trimmed.Any(option => option.Text.Length == 0))
-        {
-            ModelState.AddModelError(nameof(request.Options), "Option text is required.");
-        }
-        else if (trimmed.Select(option => option.Text).Distinct(StringComparer.OrdinalIgnoreCase).Count() != trimmed.Count)
-        {
-            ModelState.AddModelError(nameof(request.Options), "Each option must be different.");
-        }
-        else if (ids.Distinct().Count() != ids.Count || !ids.All(existingOptionIds.Contains))
+        if (ids.Distinct().Count() != ids.Count || !ids.All(existingOptionIds.Contains))
         {
             ModelState.AddModelError(nameof(request.Options), "The option IDs must be options of this step.");
         }

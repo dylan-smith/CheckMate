@@ -317,6 +317,49 @@ test.describe('Checklist management', () => {
       await expect(steps.nth(2)).toContainText('Depends on: Build, Test')
     })
 
+    test('imports a checklist from a file, exports it, and imports the export as a copy', async ({
+      page,
+    }) => {
+      await page.getByLabel('Import from file').setInputFiles({
+        name: 'pre-flight.yml',
+        mimeType: 'application/yaml',
+        buffer: Buffer.from(`checkmate: 1
+name: Pre-flight
+steps:
+  - id: walk
+    text: Walk around
+  - id: weather
+    text: Weather
+    type: Choice
+    options: [Clear, Rain]
+  - text: Take off
+    dependsOn: [walk, weather]
+`),
+      })
+      await expect(page.getByText('Imported “Pre-flight”.')).toBeVisible()
+      await openChecklist(page, 'Pre-flight')
+
+      const downloadPromise = page.waitForEvent('download')
+      await page.getByRole('button', { name: 'Export' }).click()
+      const download = await downloadPromise
+      expect(download.suggestedFilename()).toBe('pre-flight.yml')
+      const exported = await download.path()
+
+      await page.getByRole('link', { name: /Back to checklists/ }).click()
+      await page.getByLabel('Import from file').setInputFiles(exported)
+      await expect(page.getByText('Imported “Pre-flight (2)”.')).toBeVisible()
+      await openChecklist(page, 'Pre-flight (2)')
+
+      const steps = page.getByRole('listitem')
+      await expect(steps).toHaveCount(3)
+      await expect(steps.nth(0)).toContainText('Walk around')
+      await expect(steps.nth(1)).toContainText('Weather')
+      await expect(steps.nth(1)).toContainText('Clear')
+      await expect(steps.nth(2)).toContainText(
+        'Depends on: Walk around, Weather',
+      )
+    })
+
     test('reorders steps by dragging, and the order persists', async ({
       page,
     }) => {

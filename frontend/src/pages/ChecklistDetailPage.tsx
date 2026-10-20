@@ -13,6 +13,7 @@ import {
   ApiError,
   deleteChecklist,
   describeFetchError,
+  exportChecklist,
   updateChecklist,
 } from '../api/checklists'
 import type { ChecklistDetail as ChecklistDetailData } from '../api/checklists'
@@ -160,6 +161,30 @@ function ChecklistDetail({ id }: { id: number }) {
     }
   }
 
+  // Downloads the checklist as the YAML file the API makes, to share or keep. The checklists page's Import button
+  // reads it back.
+  async function handleExport() {
+    setErrorMessage('')
+
+    try {
+      const exported = await exportChecklist(id)
+      if (exported === null) {
+        setNotFound(true)
+        return
+      }
+      const url = URL.createObjectURL(exported.file)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = exported.fileName
+      link.click()
+      URL.revokeObjectURL(url)
+      trackEvent('ChecklistExported')
+    } catch (error) {
+      trackException(error, { operation: 'export' })
+      setErrorMessage(describeFetchError(error, 'Unable to export checklist.'))
+    }
+  }
+
   const editing = submitting || deleting || starting || !online
 
   return (
@@ -235,6 +260,14 @@ function ChecklistDetail({ id }: { id: number }) {
                     onClick={() => void handleDelete()}
                   >
                     {deleting ? 'Deleting…' : 'Delete'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outlined"
+                    disabled={!online}
+                    onClick={() => void handleExport()}
+                  >
+                    Export
                   </Button>
                 </Stack>
               </Box>

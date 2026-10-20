@@ -447,6 +447,147 @@ describe('App', () => {
     })
   })
 
+  describe('importing a checklist', () => {
+    const file = (text: string) =>
+      new File([text], 'list.yml', { type: 'application/yaml' })
+
+    it('sends the file to the API, refreshes the list and shows the saved name', async () => {
+      const user = userEvent.setup()
+      let imported = false
+
+      mockFetch(async (_url, init) => {
+        if (init?.method === 'POST') {
+          imported = true
+          return jsonResponse({ id: 4, name: 'Packing (2)', steps: [] }, 201)
+        }
+        return jsonResponse(imported ? [{ id: 4, name: 'Packing (2)' }] : [])
+      })
+
+      renderAt('/')
+      await screen.findByText('No checklists yet.')
+
+      const uploaded = file('checkmate: 1\nname: Packing\n')
+      await user.upload(screen.getByLabelText('Import from file'), uploaded)
+
+      expect(await screen.findByText('Imported “Packing (2)”.')).toBeVisible()
+      expect(screen.getByText('Packing (2)')).toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/import$/),
+        expect.objectContaining({
+          method: 'POST',
+          body: uploaded,
+        }),
+      )
+      expect(trackEvent).toHaveBeenCalledWith('ChecklistImported')
+    })
+
+    it('shows the reason the API refuses the file without reporting it', async () => {
+      const user = userEvent.setup()
+      mockFetch(async (_url, init) =>
+        init?.method === 'POST'
+          ? jsonResponse(
+              {
+                errors: {
+                  Steps: [
+                    "Step 1 depends on 'fule', which isn't the id of any step.",
+                  ],
+                },
+              },
+              400,
+            )
+          : jsonResponse([]),
+      )
+
+      renderAt('/')
+      await screen.findByText('No checklists yet.')
+
+      await user.upload(
+        screen.getByLabelText('Import from file'),
+        file(
+          'checkmate: 1\nname: A\nsteps:\n  - text: Go\n    dependsOn: [fule]\n',
+        ),
+      )
+
+      expect(
+        await screen.findByText(
+          "Step 1 depends on 'fule', which isn't the id of any step.",
+        ),
+      ).toBeInTheDocument()
+      expect(trackException).not.toHaveBeenCalled()
+    })
+
+    it('is disabled offline', async () => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+      mockFetch(async () => jsonResponse([]))
+
+      renderAt('/')
+
+      expect(screen.getByLabelText('Import from file')).toBeDisabled()
+      await waitFor(() => {
+        expect(screen.queryByLabelText('Loading')).not.toBeInTheDocument()
+      })
+    })
+  })
+
+  describe('exporting a checklist', () => {
+    it('downloads the checklist as a YAML file', async () => {
+      const user = userEvent.setup()
+      const blobs: Blob[] = []
+      URL.createObjectURL = vi.fn((blob: Blob) => {
+        blobs.push(blob)
+        return 'blob:checklist'
+      })
+      const revokeObjectURL = vi.fn()
+      URL.revokeObjectURL = revokeObjectURL
+      const click = vi
+        .spyOn(HTMLAnchorElement.prototype, 'click')
+        .mockImplementation(function (this: HTMLAnchorElement) {
+          expect(this.download).toBe('packing-list.yml')
+          expect(this.href).toBe('blob:checklist')
+        })
+
+      const yaml = 'checkmate: 1\nname: Packing list\n'
+      mockFetch(async (url) =>
+        url.endsWith('/export')
+          ? new Response(yaml, {
+              headers: {
+                'Content-Type': 'application/yaml',
+                'Content-Disposition':
+                  "attachment; filename=packing-list.yml; filename*=UTF-8''packing-list.yml",
+              },
+            })
+          : jsonResponse({ id: 7, name: 'Packing list', steps: [] }),
+      )
+
+      renderAt('/checklists/7')
+      await user.click(await screen.findByRole('button', { name: 'Export' }))
+
+      await waitFor(() => {
+        expect(click).toHaveBeenCalledTimes(1)
+      })
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/checklists\/7\/export$/),
+        expect.anything(),
+      )
+      expect(await blobs[0].text()).toBe(yaml)
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:checklist')
+      expect(trackEvent).toHaveBeenCalledWith('ChecklistExported')
+    })
+
+    it('is disabled offline', async () => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+      mockFetch(async () =>
+        jsonResponse({ id: 7, name: 'Packing list', steps: [] }),
+      )
+
+      renderAt('/checklists/7')
+
+      expect(
+        await screen.findByRole('button', { name: 'Export' }),
+      ).toBeDisabled()
+    })
+  })
+
   describe('checklist detail page', () => {
     it('loads the checklist from a deep link', async () => {
       mockFetch(async () =>

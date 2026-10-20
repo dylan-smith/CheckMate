@@ -26,7 +26,10 @@ test('signs in as a test user, keeps the sign-in after a reload, and signs out',
   await page.getByRole('button', { name: 'Sign in as test user' }).click()
 
   await expect(page.getByText(name)).toBeVisible()
-  await expect(page.getByText('No checklists yet.')).toBeVisible()
+  // A new user starts with the starter checklist.
+  await expect(
+    page.getByRole('link', { name: 'Gemini CCR Build' }),
+  ).toBeVisible()
   await page.reload()
   await expect(page.getByText(name)).toBeVisible()
 
@@ -69,7 +72,12 @@ test('each user only sees their own checklists', async ({ browser }) => {
     ).pathname
 
     await bob.page.goto('/')
-    await expect(bob.page.getByText('No checklists yet.')).toBeVisible()
+    await expect(
+      bob.page.getByRole('link', { name: 'Gemini CCR Build' }),
+    ).toBeVisible()
+    await expect(
+      bob.page.getByRole('link', { name: checklistName }),
+    ).toBeHidden()
     await bob.page.goto(checklistUrl)
     await expect(
       bob.page.getByRole('heading', { name: 'Page not found' }),

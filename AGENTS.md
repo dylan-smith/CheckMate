@@ -65,6 +65,9 @@ npm run test:e2e
 - Keep changes minimal and scoped to the requested task. Don't edit unrelated files for style.
 - Reuse existing patterns and naming in nearby files, and match the surrounding comment density.
 - Avoid new dependencies unless they're needed.
+- Keep logic in the backend where possible, and limit the frontend to UI and rendering. Parsing, validation,
+  business rules, naming rules and generating files belong in the API: the frontend sends what the user gave it and
+  shows what comes back. The exception is what has to work offline, such as fill-outs (see "Offline fill-outs").
 - Formatting is enforced: `.editorconfig` + `dotnet format` for C#, Prettier + ESLint for the
   frontend. Line endings are LF.
 - Warnings fail the build. The backend uses `AnalysisLevel` `latest-recommended` with

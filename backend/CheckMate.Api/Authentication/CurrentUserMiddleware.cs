@@ -6,9 +6,9 @@ namespace CheckMate.Api.Authentication;
 
 /// <summary>
 /// Finds the signed-in user's row, creating it on their first request, and makes it the request's
-/// <see cref="CurrentUser"/>.
+/// <see cref="CurrentUser"/>. A new user also gets the <see cref="StarterChecklist"/>.
 /// </summary>
-public class CurrentUserMiddleware(RequestDelegate next)
+public class CurrentUserMiddleware(RequestDelegate next, ILogger<CurrentUserMiddleware> logger)
 {
     public async Task InvokeAsync(HttpContext context, ChecklistDbContext dbContext, CurrentUser currentUser)
     {
@@ -16,14 +16,15 @@ public class CurrentUserMiddleware(RequestDelegate next)
         {
             var name = context.User.FindFirst(AuthenticationSetup.NameClaim)?.Value;
             var email = context.User.FindFirst(AuthenticationSetup.EmailClaim)?.Value;
-            currentUser.UserId = await GetOrCreateUserIdAsync(dbContext, subject, name, email, context.RequestAborted);
+            currentUser.UserId = await GetOrCreateUserIdAsync(dbContext, currentUser, subject, name, email, context.RequestAborted);
         }
 
         await next(context);
     }
 
-    public static async Task<int> GetOrCreateUserIdAsync(
+    private async Task<int> GetOrCreateUserIdAsync(
         ChecklistDbContext dbContext,
+        CurrentUser currentUser,
         string subject,
         string? name,
         string? email,
@@ -39,7 +40,6 @@ public class CurrentUserMiddleware(RequestDelegate next)
             try
             {
                 await dbContext.SaveChangesAsync(cancellationToken);
-                return user.Id;
             }
             catch (DbUpdateException)
             {
@@ -51,6 +51,14 @@ public class CurrentUserMiddleware(RequestDelegate next)
                     .Select(item => item.Id)
                     .SingleAsync(cancellationToken);
             }
+
+            // The service account only checks and tidies up after CI, so it has no use for an example.
+            if (subject != LocalTokenHandler.ServiceSubject)
+            {
+                await AddStarterChecklistAsync(dbContext, currentUser, user.Id, cancellationToken);
+            }
+
+            return user.Id;
         }
 
         // Keep the name and email in step with the account, without writing on every request.
@@ -62,5 +70,28 @@ public class CurrentUserMiddleware(RequestDelegate next)
         }
 
         return user.Id;
+    }
+
+    private async Task AddStarterChecklistAsync(
+        ChecklistDbContext dbContext,
+        CurrentUser currentUser,
+        int userId,
+        CancellationToken cancellationToken)
+    {
+        // The context gives new checklists the current user, who is only known once the user's row is saved.
+        currentUser.UserId = userId;
+
+        try
+        {
+            var checklist = StarterChecklist.AddTo(dbContext);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            logger.LogInformation("Gave new user {UserId} starter checklist {ChecklistId}", userId, checklist.Id);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Signing in matters more than the example, so carry on without it.
+            dbContext.ChangeTracker.Clear();
+            logger.LogWarning(exception, "Couldn't give new user {UserId} the starter checklist", userId);
+        }
     }
 }

@@ -145,6 +145,50 @@ export async function deleteChecklist(id: number) {
   }
 }
 
+// The checklist as a YAML file to share or keep, which importChecklist reads back, or null when there's no checklist
+// with this id. The API names the file.
+export async function exportChecklist(id: number) {
+  const response = await apiFetch(`${checklistsUrl}/${id}/export`)
+  if (response.status === 404) {
+    return null
+  }
+  if (!response.ok) {
+    throw new Error('Unable to export checklist.')
+  }
+  const fileName =
+    /filename="?([^";]+)"?/.exec(
+      response.headers.get('Content-Disposition') ?? '',
+    )?.[1] ?? 'checklist.yml'
+  return { fileName, file: await response.blob() }
+}
+
+// Creates a whole checklist from a file made by exportChecklist, or written by hand. The API reads the file, and a
+// name that's already used gets a number added, so the result has the name it was saved with.
+export async function importChecklist(file: Blob) {
+  const response = await apiFetch(`${checklistsUrl}/import`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/yaml',
+    },
+    body: file,
+  })
+
+  // A 400 explains what's wrong with the file, such as a step depending on an id no step has.
+  if (response.status === 400) {
+    const error = (await response.json()) as ValidationErrorResponse
+    const message = Object.values(error.errors ?? {}).flat()[0]
+    throw new ApiError(400, message ?? 'Unable to import checklist.')
+  }
+  if (response.status === 409) {
+    const error = (await response.json()) as ErrorResponse
+    throw new ApiError(409, error.message ?? 'Unable to import checklist.')
+  }
+  if (!response.ok) {
+    throw new Error('Unable to import checklist.')
+  }
+  return (await response.json()) as ChecklistDetail
+}
+
 function stepsUrl(checklistId: number) {
   return `${checklistsUrl}/${checklistId}/steps`
 }
