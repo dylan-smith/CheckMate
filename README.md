@@ -234,7 +234,7 @@ To put some data on the workbook, run the **Generate Load** workflow (`.github/w
 | Browser errors | More than 5 frontend exceptions in an hour | 2 |
 | Browser API call failures | More than 5 failed API calls from the frontend in an hour | 2 |
 | CPU quota | More than 45 of the F1 plan's 60 daily CPU minutes used in 24 hours (the app stops when they run out) | 2 |
-| SQL CPU | The database averages more than 80% of its Basic tier's CPU over 30 minutes | 2 |
+| SQL DTU | The database averages more than 80% of its Basic tier's 5 DTUs over 30 minutes | 2 |
 | Frontend storage availability | Blob storage less than 99% available over an hour | 2 |
 | Slow API | Average response time over 5 seconds for 30 minutes (at least 10 requests, not counting deployment calls) | 3 |
 | Slow page loads | 75th percentile page load over 4 seconds in 6 hours (at least 5 loads) | 3 |
