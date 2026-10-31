@@ -12,7 +12,7 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.14" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.18.7" />
     <!-- Newer than the 9.0.11 that SqlClient brings in, which has known vulnerabilities. -->
-    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
